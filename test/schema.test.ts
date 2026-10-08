@@ -173,3 +173,12 @@ test('lists of words and names are arrays in the layout, so the form shows their
     assert.deepEqual(entry.items, [`${key}[]`]);
   }
 });
+
+test('no list in the form can be dragged to reorder', () => {
+  // Homebridge UI 5.29 makes array items draggable unless the layout says orderable: false. A dropdown inside a
+  // draggable item swallows the mouse release, so choosing a calendar type left the whole entry stuck to the pointer.
+  for (const key of ['calendars', 'calendars[].calendars', 'outOfOfficeWords']) {
+    const entry = layoutEntries().find((l) => l.key === key && (l as { type?: string }).type === 'array')!;
+    assert.equal((entry as { orderable?: boolean }).orderable, false, key);
+  }
+});

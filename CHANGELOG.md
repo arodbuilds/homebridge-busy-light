@@ -2,6 +2,12 @@
 
 All notable changes to Busy Light are recorded here. Versions follow [semantic versioning](https://semver.org).
 
+## Unreleased
+
+### Fixed
+
+- Settings form: choosing a calendar type no longer leaves the whole calendar entry stuck to the mouse pointer. No list in the form can be dragged to reorder.
+
 ## 0.1.0-beta.1 (2026-10-08)
 
 The first beta: the plugin, the command line tool and the standard Homebridge settings form. The custom settings page follows in a later beta.
