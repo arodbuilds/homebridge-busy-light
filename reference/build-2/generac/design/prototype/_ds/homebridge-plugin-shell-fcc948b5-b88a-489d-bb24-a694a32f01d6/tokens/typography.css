@@ -1,0 +1,22 @@
+/* Host system stack (Bootstrap 5). No webfonts ship with the shell. Type reads the host's body variables with the
+   host's values as fallbacks; the remaining sizes are literals in index.css (no host variable exists for them). */
+:root {
+  --font-sans: var(--bs-body-font-family, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", "Liberation Sans", Arial, sans-serif);
+  --font-mono: var(--bs-font-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+  --text-h2-size: 20px; /* literal in index.css (.h5) */
+  --text-h2-weight: 300;
+  --text-body-size: var(--bs-body-font-size, 14.4px);
+  --text-body-weight: var(--bs-body-font-weight, 300);
+  --text-body-line: var(--bs-body-line-height, 1.5);
+  --text-label-weight: 600;
+  --text-help-size: 12.6px; /* .form-text: .875em of 14.4px */
+  --text-help-line: 1.4;
+  --text-control-size: 16px; /* .form-control: 1rem */
+  --text-control-line: 24px;
+  --text-badge-size: 11.5px;
+  --text-badge-weight: 600;
+  --text-btn-sm-size: 13.5px;
+  --text-btn-sm-line: 21px;
+  --text-btn-add-size: 16px;
+  --text-step-number-size: 0.85rem;
+}

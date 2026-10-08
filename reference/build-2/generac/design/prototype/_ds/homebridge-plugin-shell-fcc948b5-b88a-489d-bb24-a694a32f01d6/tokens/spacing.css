@@ -1,0 +1,37 @@
+/* Spacing is literal px / rem in index.css (no host variable exists for it); radii read the host's border-radius
+   variables with Bootstrap's values as fallbacks. */
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --page-side-padding: 16px;
+  --section-gap: 24px;
+  --card-padding: 16px;
+  --card-strip-padding: 8px 16px;
+  --card-gap: 16px;
+  --field-gap: 16px;
+  --grid-gap: 8px;
+  --panel-padding: 12px;
+  --tile-gap: 12px;
+  --radius-control: var(--bs-border-radius, 6px);
+  --radius-card: var(--bs-border-radius, 6px);
+  --radius-button: var(--bs-border-radius-sm, 4px);
+  --radius-badge: var(--bs-border-radius-sm, 4px);
+  --radius-modal: var(--bs-border-radius-lg, 8px);
+  --border-width: var(--bs-border-width, 1px);
+  --control-height: 38px;
+  --control-side-padding: 11px;
+  --button-sm-height: 31px;
+  --button-add-height: 38px;
+  --checkbox-size: 16px;
+  --step-disc-size: 24px;
+  --mark-size: 20px;
+  --touch-target: 44px;
+  --banner-ratio: 4 / 1; /* @kind other */
+  --tile-min-width: 150px;
+  --phone-breakpoint: 600px;
+  --modal-max-width: 28rem;
+  --shadow-modal: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.3); /* literal in index.css (.ns-modal) */
+}

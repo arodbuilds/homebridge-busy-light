@@ -1,0 +1,11 @@
+/* The iframe document is never a scroll container (index.css, 1.3.2). The host links its own stylesheet after the
+   plugin's and it carries `html, body { height: 100% }`; written on :root this rule outranks it whatever the order.
+   No fixed or percentage height anywhere: the host sizes the iframe to body.scrollHeight + 10px. */
+:root, :root > body { overflow: hidden; height: auto; }
+/* Minimal page reset for previews; the host paints the body in the real page. */
+body { margin: 0; background: var(--ns-bg); color: var(--ns-text); font-family: var(--font-sans); font-size: var(--text-body-size); font-weight: var(--text-body-weight); line-height: var(--text-body-line); -webkit-font-smoothing: antialiased; }
+a { color: var(--ns-link); text-decoration: underline; }
+a:hover { color: var(--ns-link-hover); }
+*, *::before, *::after { box-sizing: border-box; }
+input::placeholder, textarea::placeholder { font-style: italic; opacity: 1; }
+.ns-help-hidden .ns-help { display: none; }
