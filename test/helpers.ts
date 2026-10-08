@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { Log } from '../src/log.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // Fixtures live next to the TS source; tests run from build-test/, so walk up.
@@ -102,4 +103,23 @@ export function networkError(code: string): never {
   const err = new TypeError('fetch failed') as TypeError & { cause: { code: string } };
   err.cause = { code };
   throw err;
+}
+
+export interface LogLine {
+  level: 'info' | 'warn' | 'error' | 'debug';
+  msg: string;
+}
+
+/** A logger that records every line. */
+export function fakeLog(): { log: Log; entries: LogLine[]; lines: (level: LogLine['level']) => string[]; all: () => string[] } {
+  const entries: LogLine[] = [];
+  const make = (level: LogLine['level']) => (msg: string) => {
+    entries.push({ level, msg });
+  };
+  return {
+    log: { info: make('info'), warn: make('warn'), error: make('error'), debug: make('debug') },
+    entries,
+    lines: (level) => entries.filter((l) => l.level === level).map((l) => l.msg),
+    all: () => entries.map((l) => l.msg),
+  };
 }
