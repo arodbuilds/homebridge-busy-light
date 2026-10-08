@@ -11,12 +11,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { HomebridgePluginUiServer } from '@homebridge/plugin-ui-utils';
 import type { MicrosoftSourceConfig } from '../config.js';
-import { DEFAULT_OUT_OF_OFFICE_WORDS, isGuid, isHost, isSourceId, normalizeCalendarUrl, normalizeColor } from '../config.js';
+import { inputAddresses } from '../addresses.js';
+import type { AddressDeps } from '../addresses.js';
+import {
+  DEFAULT_INPUT_PORT, DEFAULT_OUT_OF_OFFICE_WORDS, MAX_INPUT_PORT, MIN_INPUT_PORT, isGuid, isHost, isInputKey, isSourceId, normalizeCalendarUrl,
+  normalizeColor,
+} from '../config.js';
 import { SourceError } from '../errors.js';
 import { ensureStorageDir, readJson } from '../files.js';
 import { GRAPH, GraphClient } from '../graph.js';
 import { hostOf } from '../http.js';
 import { ICloudSource } from '../icloud.js';
+import { sendTestReport } from '../input-client.js';
 import { LifxClient, normalizeSerial } from '../lifx.js';
 import { matchesBulb } from '../light.js';
 import type { Log } from '../log.js';
@@ -25,6 +31,7 @@ import { MicrosoftAuth, TokenStore, postForm, readDeviceCode, refusalReason, sco
 import { DEFAULT_COLORS } from '../model.js';
 import { PLATFORM_NAME, RESET_MARKER, STORAGE_DIR, packageVersion } from '../names.js';
 import { readState } from '../state.js';
+import { ensureInstanceId } from '../status-api.js';
 import type { CalEvent } from '../status.js';
 import { UrlSource } from '../url-source.js';
 
@@ -61,6 +68,8 @@ export type UrlTestResponse =
   | { error: 'insecure' | 'notCalendar' | 'http' | 'network' | 'tooLarge'; host: string; code?: number };
 export type MicrosoftStartResponse = { verificationUri: string; userCode: string; expiresAt: string } | Refused | { error: 'network' };
 export type MicrosoftPollResponse = { state: 'waiting' | 'done' | 'expired' } | { state: 'refused'; reason: string; help: string };
+export type InputInfoResponse = { hostname: string | null; addresses: string[]; port: number; id: string } | { error: 'other'; message: string };
+export type InputTestResponse = { ok: true } | { error: 'notListening' | 'unauthorized' | 'other'; message: string };
 export type MicrosoftCalendarsResponse = { calendars: MicrosoftCalendarEntry[] } | { error: 'notSignedIn' | 'network' } | Refused;
 
 export interface UiServerOptions {
@@ -73,6 +82,10 @@ export interface UiServerOptions {
   lifx?: LifxClient;
   /** Waits between the /lifx/test colors (tests replace it). */
   sleep?: (ms: number) => Promise<void>;
+  /** The host's name and addresses for /input/info (tests replace them, SPEC 15 item 20). */
+  addresses?: AddressDeps;
+  /** The fetch of /input/test (tests replace it). */
+  fetch?: typeof fetch;
 }
 
 type Handler = (payload: unknown) => Promise<unknown>;
@@ -155,7 +168,46 @@ export class BusyLightUiHandlers {
       '/lifx/discover': () => this.lifxDiscover(),
       '/lifx/test': (payload) => this.lifxTest(payload),
       '/reset': async () => this.reset(),
+      '/input/info': () => this.inputInfo(),
+      '/input/test': (payload) => this.inputTest(payload),
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // /input/info and /input/test (SPEC 10.3, 18.11)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The host name when the host's `.local` name resolves to one of its own addresses, its non-internal IPv4
+   * addresses, the saved port (or the default), and the instance id, created in `instance.json` when missing. The page
+   * builds the addresses and the setup code from these. No key is read or returned.
+   */
+  async inputInfo(): Promise<InputInfoResponse> {
+    let id: string;
+    try {
+      id = ensureInstanceId(ensureStorageDir(this.opts.storagePath));
+    } catch {
+      return { error: 'other', message: 'The busy-light folder could not be written.' };
+    }
+    const found = await inputAddresses(this.opts.addresses);
+    const input = this.savedBlock()?.statusInput as Record<string, unknown> | undefined;
+    const saved = input?.port;
+    const port = typeof saved === 'number' && Number.isInteger(saved) && saved >= MIN_INPUT_PORT && saved <= MAX_INPUT_PORT ? saved : DEFAULT_INPUT_PORT;
+    return { hostname: found.hostname, addresses: found.addresses, port, id };
+  }
+
+  /**
+   * A signed In a call for 30 seconds from `Busy Light test` to the running plugin on 127.0.0.1, with the port and key
+   * the page holds (they may not be saved yet). The key signs the request and is never returned.
+   */
+  async inputTest(payload: unknown): Promise<InputTestResponse> {
+    const port = field(payload, 'port');
+    const key = text(payload, 'key');
+    if (typeof port !== 'number' || !Number.isInteger(port) || port < MIN_INPUT_PORT || port > MAX_INPUT_PORT || !isInputKey(key)) {
+      return { error: 'other', message: 'The port or the key is not valid.' };
+    }
+    const result = await sendTestReport(port, key, { now: this.now, fetch: this.opts.fetch });
+    return result.ok ? { ok: true } : { error: result.error, message: result.message };
   }
 
   /** `busy-light/` under the storage path, without creating it. */

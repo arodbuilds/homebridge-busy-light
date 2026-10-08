@@ -1,19 +1,23 @@
 /**
- * The command line tool of SPEC 10.2: status, check, login, lights, light and help. It follows the plugin's logging
- * rules (SPEC 12): no password, token, device code, calendar address or event content is ever printed; events
- * are shown as times and showAs only.
+ * The command line tool of SPEC 10.2: status, check, login, lights, light, input and help. It follows the plugin's
+ * logging rules (SPEC 12): no password, token, device code, calendar address or event content is ever printed;
+ * events are shown as times and showAs only. The status input key is printed only inside the setup code, after its
+ * warning line.
  */
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { inputAddresses, inputUrl, preferredHost, setupCode } from './addresses.js';
+import type { AddressDeps } from './addresses.js';
 import { SOURCE_TYPE_NAMES, isIPv4, normalizeColor, ownerAddresses, parseConfig } from './config.js';
 import type { BusyLightConfig } from './config.js';
 import { ensureStorageDir, readJson } from './files.js';
+import { sendTestReport } from './input-client.js';
 import { LifxClient } from './lifx.js';
 import { LightController, matchesBulb } from './light.js';
 import type { Log } from './log.js';
 import {
-  bulbName, bulbNotNamed, bulbSilent, formatTime, microsoftCode, noBulb, noCalendars, statusLine, statusUnknown, validation,
+  bulbName, bulbNotNamed, bulbSilent, count, formatTime, microsoftCode, noBulb, noCalendars, statusLine, statusUnknown, validation,
 } from './messages.js';
 import { MicrosoftAuth, TokenStore, tokenFile } from './microsoft.js';
 import { STATUS_NAMES, isStatusKey } from './model.js';
@@ -21,6 +25,7 @@ import { PLATFORM_NAME, STORAGE_DIR } from './names.js';
 import { SourceRunner } from './sources.js';
 import type { SourceState } from './sources.js';
 import { readState } from './state.js';
+import { readInstanceId } from './status-api.js';
 import { isActive, resolve } from './status.js';
 
 export const USAGE = [
@@ -32,6 +37,8 @@ export const USAGE = [
   '  login [name]                    Sign in to a Microsoft 365 calendar.',
   '  lights                          Search the network for LIFX bulbs.',
   '  light [name|ip] [#RRGGBB|off]   Send a color to a bulb (the Available color by default).',
+  '  input [--setup-code]            Show the status input: addresses, id and the apps reporting.',
+  '  input test                      Send a test call for 30 seconds to the running plugin.',
   '  help                            Show this list.',
   '',
   'The storage path defaults to /var/lib/homebridge when it exists, otherwise ~/.homebridge.',
@@ -53,6 +60,9 @@ export interface CliIo {
   lifx?: LifxClient;
   /** The default storage path candidates, for tests. */
   defaultStorage?: string[];
+  /** The host name and addresses lookups of `input`, for tests. */
+  addresses?: AddressDeps;
+  fetch?: typeof fetch;
 }
 
 export function defaultStoragePath(candidates = ['/var/lib/homebridge', path.join(os.homedir(), '.homebridge')]): string {
@@ -275,6 +285,64 @@ async function cmdLight(storage: string, args: string[], io: CliIo): Promise<num
   return answered ? 0 : 1;
 }
 
+/** `input test` (SPEC 10.2): a signed In a call for 30 seconds from `Busy Light test` to the running plugin. */
+async function cmdInputTest(config: BusyLightConfig, io: CliIo): Promise<number> {
+  const input = config.statusInput;
+  if (!input.enabled || !input.key) {
+    io.err('The status input is off. Turn it on in the plugin settings, save, and restart Homebridge.');
+    return 1;
+  }
+  const result = await sendTestReport(input.port, input.key, { now: io.now, fetch: io.fetch });
+  if (result.ok) {
+    io.out(`Busy Light received the test: ${JSON.stringify(result.body)}`);
+    return 0;
+  }
+  io.err(`The test failed (${result.error}${result.status === null ? '' : `, HTTP ${result.status}`}): ${result.message}`);
+  return 1;
+}
+
+/** `input` and `input --setup-code` (SPEC 10.2): the status input as the configuration and the state file have it. */
+async function cmdInput(storage: string, rest: string[], io: CliIo): Promise<number> {
+  const config = readConfig(storage, io);
+  if (rest[0] === 'test' && rest.length === 1) {
+    return cmdInputTest(config, io);
+  }
+  if (rest.some((a) => a !== '--setup-code')) {
+    USAGE.forEach((l) => io.err(l));
+    return 1;
+  }
+  const dir = path.join(storage, STORAGE_DIR);
+  const input = config.statusInput;
+  const id = readInstanceId(dir);
+  io.out(input.enabled ? `Status input: on, port ${input.port}.` : `Status input: off (port ${input.port} when on).`);
+  io.out(config.callSwitch.enabled ? `On a Call switch: on, turns itself off after ${count(config.callSwitch.hours, 'hour')}.` : 'On a Call switch: off.');
+  io.out(`Instance id: ${id ?? 'none yet (it is created when the status input first starts)'}.`);
+  const found = await inputAddresses(io.addresses);
+  for (const host of [...(found.hostname ? [found.hostname] : []), ...found.addresses]) {
+    io.out(`Address: ${inputUrl(host, input.port)}`);
+  }
+  const senders = readState(dir)?.inputs ?? [];
+  io.out('Apps reporting now:');
+  if (senders.length === 0) {
+    io.out('  No app has reported in the last 12 hours.');
+  }
+  for (const e of senders) {
+    const how = e.via === 'switch' ? '' : `, ${e.auth === 'plain' ? 'plain key' : 'signed'}`;
+    const from = e.app ? ` from ${e.app}` : '';
+    io.out(`  ${e.sender}: ${STATUS_NAMES[e.status]}${from}${how}, last heard ${time(e.lastHeard)}, ${e.active ? 'active' : 'expired'}.`);
+  }
+  if (rest.includes('--setup-code')) {
+    const host = preferredHost(found);
+    if (!input.enabled || !input.key || !id || !host) {
+      io.err('There is no setup code yet: turn on the status input in the plugin settings, save, and restart Homebridge.');
+      return 1;
+    }
+    io.out('The setup code contains your key. Treat it like a password.');
+    io.out(setupCode(host, input.port, input.key, id));
+  }
+  return 0;
+}
+
 /** Runs one command. Returns the exit code: 0 on success, 1 on failure. */
 export async function main(argv: string[], io: CliIo): Promise<number> {
   const args = [...argv];
@@ -302,6 +370,8 @@ export async function main(argv: string[], io: CliIo): Promise<number> {
       return await cmdLights(io);
     case 'light':
       return await cmdLight(storage, rest, io);
+    case 'input':
+      return await cmdInput(storage, rest, io);
     case 'help':
     case '--help':
     case '-h':

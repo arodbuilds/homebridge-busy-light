@@ -276,14 +276,15 @@
   margin: 0;
 }
 
-/* Colors (SPEC 11.3 D): a row per status, the name on the left and the swatch, the hex value and Off on the right;
-   on a phone the controls wrap under the name. */
+/* Colors (SPEC 11.3 D): a row per status, the name on the left and the preset swatches as a radio group on the right;
+   below 600 px each swatch has its name under it and the group wraps under the status name. Custom shows the picker
+   and the hex value on their own line. */
 .bl-color-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 12px;
-  padding: 6px 0;
+  padding: 8px 0;
   border-bottom: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.35));
 }
 
@@ -296,17 +297,97 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 4px 8px;
-  flex: 1 1 12rem;
+  flex: 1 1 10rem;
   min-width: 0;
   margin: 0;
   font-weight: 600;
 }
 
-.bl-color-controls {
+.bl-presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.busy-light-ui .bl-preset {
   display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 32px;
+  padding: 3px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.busy-light-ui .bl-preset:focus-visible {
+  outline: 2px solid var(--bs-primary, #0d6efd);
+  outline-offset: 1px;
+}
+
+.bl-preset-swatch {
+  display: block;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.5));
+  box-sizing: border-box;
+}
+
+/* The chosen swatch carries a ring in the text colour, so it reads in both themes. */
+.busy-light-ui .bl-preset[aria-checked="true"] .bl-preset-swatch {
+  box-shadow: 0 0 0 2px var(--bs-body-bg, #fff), 0 0 0 4px var(--bs-body-color, #212529);
+}
+
+/* Off: an outlined circle with a line through it. */
+.bl-preset-off {
+  position: relative;
+  background: transparent;
+  border: 2px solid var(--bs-secondary-color, #6c757d);
+}
+
+.bl-preset-off::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--bs-secondary-color, #6c757d);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.bl-preset-label {
+  display: none;
+}
+
+@media (max-width: 599.98px) {
+  .bl-preset-label {
+    display: block;
+  }
+
+  .bl-color-name {
+    flex-basis: 100%;
+  }
+}
+
+.bl-color-custom {
+  display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 12px;
+  flex: 1 0 100%;
+  justify-content: flex-end;
+}
+
+.bl-color-custom[hidden] {
+  display: none;
 }
 
 .busy-light-ui .bl-color-swatch {
@@ -318,11 +399,6 @@
 
 .busy-light-ui .bl-color-hex {
   width: 7.5rem;
-}
-
-.busy-light-ui .bl-color-off {
-  margin: 0;
-  min-height: 0;
 }
 
 .busy-light-ui .bl-color-row > .invalid-feedback {
@@ -384,4 +460,77 @@
 .bl-reset {
   margin-top: 0.25rem;
   margin-bottom: 1rem;
+}
+
+/* Status from other apps (SPEC 11.3 I): the addresses and setup code as read-only monospace lines that wrap rather
+   than widen the frame, locked like the key field beside them, then the key, Test and its result, and the apps
+   reporting now. */
+.busy-light-ui .bl-readonly {
+  background-color: var(--bs-secondary-bg, rgba(128, 128, 128, 0.12));
+  color: inherit;
+  height: auto;
+  min-height: 38px;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  user-select: all;
+}
+
+.bl-readonly-line + .bl-readonly-line {
+  margin-top: 2px;
+}
+
+.busy-light-ui .bl-input-body {
+  margin: 0.25rem 0 0.5rem;
+}
+
+.busy-light-ui .bl-input-result:empty {
+  display: none;
+}
+
+.busy-light-ui .bl-test .bl-actions {
+  margin-bottom: 0;
+}
+
+.busy-light-ui .bl-input-advanced {
+  margin: 0 0 1rem;
+}
+
+.bl-senders-heading {
+  font-size: 1rem;
+  margin: 1rem 0 0.25rem;
+}
+
+.bl-senders {
+  margin: 0 0 1rem;
+}
+
+.bl-sender-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 16px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.35));
+}
+
+.bl-sender-row:first-child {
+  border-top: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.35));
+}
+
+.bl-sender-text {
+  flex: 1 1 14rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.busy-light-ui .bl-sender-status,
+.busy-light-ui .bl-sender-meta {
+  margin-top: 0;
+}
+
+.bl-sender-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }

@@ -2,6 +2,31 @@
 
 All notable changes to Busy Light are recorded here. Versions follow [semantic versioning](https://semver.org).
 
+## 0.1.0-beta.3 (2026-10-08)
+
+Status from other apps. Other apps on your home network can now tell Busy Light you are on a call or busy, and the Home app gets an optional On a Call switch. Each calendar can have its own check interval, and colors are chosen from presets. A configuration written by an earlier beta keeps working unchanged, with the new features off.
+
+### Added
+
+- Status from other apps: a small HTTP API on the local network (port 8582 by default), off until you turn it on. Apps report a status (Out of office, Do not disturb, In a call, In a meeting, Busy, Away, Available or Offline) with their name and, optionally, the app it comes from, and withdraw it with `clear`. Reports count like Teams presence in the order of the status table, last 3 minutes unless repeated, and survive a Homebridge restart. The full description for app builders is in `docs/status-input.md`.
+- Signed requests, so an app never sends the key over the network, with a replay rule that refuses a captured report sent again, even after the call ends or across a restart. The key itself is accepted from Apple Shortcuts and curl while "Allow the plain key" is on. Requests from outside the local network are refused, and each address is limited to 60 requests a minute.
+- The settings page's Status from other apps section: the addresses (by name when the network supports it), the key with Copy and Replace, a setup code to paste into an app, Test, the port under Advanced, and Apps reporting now, which shows each app's last status, whether it is still active, and whether it signs its requests.
+- The On a Call switch: an optional Home app switch that reports In a call while it is on, for shortcuts, Siri, Home tiles and automations, and turns itself off after 3 hours (1 to 12).
+- Command line: `homebridge-busy-light input` shows the status input, its addresses and the apps reporting now; `input --setup-code` prints the setup code; `input test` sends a test call.
+- A check interval for each calendar, under Advanced on its card (`calendars[].calendarSeconds`, 60 to 600 seconds), so a calendar that changes rarely can be read less often.
+- Right now names the app a status came from, for example "From CallWatch on Alex’s iMac (Microsoft Teams)."
+
+### Changed
+
+- Colors are chosen from presets (Red, Orange, Yellow, Green, Blue, Purple, White, Off) or Custom, which shows the color picker and the hex field. The configuration format is unchanged; a color that is not a preset shows as Custom.
+- The Lights card says which bulb the running plugin uses as soon as the page opens, without searching the network.
+- "Teams only" marks a status only while no Microsoft 365 calendar uses Teams status and Status from other apps is off, since another app can report those statuses.
+- The status is unknown only when no calendar can be read and no app is reporting.
+
+### Fixed
+
+- The Microsoft 365 sign-in file is noticed when it is replaced within the same clock tick, so a sign-in from the command line is never missed by the running plugin.
+
 ## 0.1.0-beta.2 (2026-10-08)
 
 The settings page. Busy Light now has its own page in the Homebridge UI in place of the standard form, and calendars are picked from a list instead of typed by name. A configuration written by the first beta keeps working unchanged.

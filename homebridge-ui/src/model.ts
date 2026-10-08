@@ -40,6 +40,8 @@ export interface UiSource {
   clientId: string;
   useTeamsStatus: boolean;
   useCalendar: boolean;
+  /** This card's own check interval (SPEC 9.1 item 19), or null for the platform's. */
+  calendarSeconds: number | null;
 }
 
 export interface UiLifx {
@@ -49,6 +51,21 @@ export interface UiLifx {
   host: string;
   brightness: number;
   refreshSeconds: number;
+}
+
+/** The status input (SPEC 9.1 item 17). */
+export interface UiStatusInput {
+  enabled: boolean;
+  port: number;
+  /** A secret: drafts never hold it (SPEC 11.2 addition 4). */
+  key: string;
+  allowPlainKey: boolean;
+}
+
+/** The On a Call switch (SPEC 9.1 item 18). */
+export interface UiCallSwitch {
+  enabled: boolean;
+  hours: number;
 }
 
 export interface UiConfig {
@@ -65,6 +82,8 @@ export interface UiConfig {
   /** The out of office words as one text field, separated by commas. */
   outOfOfficeWords: string;
   debug: boolean;
+  statusInput: UiStatusInput;
+  callSwitch: UiCallSwitch;
   /** Keys the page does not edit, written back untouched. */
   extra: Record<string, unknown>;
   /** Calendar entries the page cannot edit (an unknown type), written back untouched. */
@@ -86,6 +105,8 @@ export const DEFAULTS = {
   ignoreAllDayBusy: true,
   outOfOfficeWords: ['Out of office', 'OOO', 'Vacation', 'PTO'],
   debug: false,
+  statusInput: { enabled: false, port: 8582, key: '', allowPlainKey: true } as UiStatusInput,
+  callSwitch: { enabled: false, hours: 3 } as UiCallSwitch,
 };
 
 /** The limits of SPEC 9.1, for the number fields and their messages. */
@@ -94,12 +115,33 @@ export const LIMITS = {
   calendarSeconds: [60, 600],
   brightness: [1, 100],
   refreshSeconds: [0, 86400],
+  port: [1024, 65535],
+  hours: [1, 12],
+  sourceCalendarSeconds: [60, 600],
 } as const;
 
 const KNOWN = new Set([
   'platform', 'name', 'calendars', 'colors', 'lifx', 'sensors', 'overrideSwitch', 'pollSeconds', 'calendarSeconds', 'ignoreAllDayBusy',
-  'outOfOfficeWords', 'debug',
+  'outOfOfficeWords', 'debug', 'statusInput', 'callSwitch',
 ]);
+
+/** The key's rule (SPEC 18.8 item 1). */
+export function isInputKey(value: string): boolean {
+  return /^[A-Za-z0-9_-]{32,128}$/.test(value);
+}
+
+/**
+ * A new status input key (SPEC 18.8 item 1): 32 random bytes from `crypto.getRandomValues` (available over plain http,
+ * unlike `crypto.randomUUID`), written base64url without padding: 43 characters.
+ */
+export function newInputKey(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  let binary = '';
+  for (const b of bytes) {
+    binary += String.fromCharCode(b);
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
 
 /** The id derived from a name, as the plugin derives it (SPEC 9.1 item 2). */
 export function deriveId(name: string): string {
@@ -142,7 +184,7 @@ function readUse(value: unknown): Use {
 export function emptySource(type: SourceType, id: string): UiSource {
   return {
     type, id, name: '', appleId: '', appPassword: '', calendars: [], url: '', email: '', use: 'all', tenantId: '', clientId: '',
-    useTeamsStatus: true, useCalendar: true,
+    useTeamsStatus: true, useCalendar: true, calendarSeconds: null,
   };
 }
 
@@ -175,6 +217,7 @@ function readSource(raw: Record<string, unknown>, taken: Set<string>): UiSource 
   taken.add(id);
   const s = emptySource(type, id);
   s.name = name;
+  s.calendarSeconds = typeof raw.calendarSeconds === 'number' && Number.isFinite(raw.calendarSeconds) ? raw.calendarSeconds : null;
   if (type === 'icloud') {
     s.appleId = str(raw.appleId);
     s.appPassword = typeof raw.appPassword === 'string' ? raw.appPassword : '';
@@ -206,6 +249,8 @@ export function emptyConfig(): UiConfig {
     ignoreAllDayBusy: DEFAULTS.ignoreAllDayBusy,
     outOfOfficeWords: DEFAULTS.outOfOfficeWords.join(', '),
     debug: DEFAULTS.debug,
+    statusInput: { ...DEFAULTS.statusInput },
+    callSwitch: { ...DEFAULTS.callSwitch },
     extra: {},
     otherCalendars: [],
   };
@@ -260,6 +305,15 @@ export function readConfig(raw: unknown): UiConfig {
     c.outOfOfficeWords = raw.outOfOfficeWords.filter((w): w is string => typeof w === 'string' && w.trim() !== '').map((w) => w.trim()).join(', ');
   }
   c.debug = bool(raw.debug, DEFAULTS.debug);
+  const input = isObject(raw.statusInput) ? raw.statusInput : {};
+  c.statusInput = {
+    enabled: bool(input.enabled, DEFAULTS.statusInput.enabled),
+    port: num(input.port, DEFAULTS.statusInput.port),
+    key: typeof input.key === 'string' ? input.key.trim() : '',
+    allowPlainKey: bool(input.allowPlainKey, DEFAULTS.statusInput.allowPlainKey),
+  };
+  const call = isObject(raw.callSwitch) ? raw.callSwitch : {};
+  c.callSwitch = { enabled: bool(call.enabled, DEFAULTS.callSwitch.enabled), hours: num(call.hours, DEFAULTS.callSwitch.hours) };
   for (const [key, value] of Object.entries(raw)) {
     if (!KNOWN.has(key)) {
       c.extra[key] = value;
@@ -281,7 +335,7 @@ function exportChoice(c: UiChoice): unknown {
   return c.id === null ? { name: c.name, use: c.use } : { id: c.id, name: c.name, use: c.use };
 }
 
-export function exportSource(s: UiSource): Record<string, unknown> {
+function exportSourceFields(s: UiSource): Record<string, unknown> {
   const base = { type: s.type, id: s.id, name: s.name.trim() };
   switch (s.type) {
   case 'icloud':
@@ -301,6 +355,14 @@ export function exportSource(s: UiSource): Record<string, unknown> {
     return block;
   }
   }
+}
+
+export function exportSource(s: UiSource): Record<string, unknown> {
+  const block = exportSourceFields(s);
+  if (s.calendarSeconds !== null) {
+    block.calendarSeconds = s.calendarSeconds;
+  }
+  return block;
 }
 
 /** The block for `updatePluginConfig`. Every field is written, so the file reads as the page shows. */
@@ -324,17 +386,21 @@ export function exportConfig(c: UiConfig): Record<string, unknown> {
     ignoreAllDayBusy: c.ignoreAllDayBusy,
     outOfOfficeWords: splitWords(c.outOfOfficeWords),
     debug: c.debug,
+    statusInput: { enabled: c.statusInput.enabled, port: c.statusInput.port, key: c.statusInput.key, allowPlainKey: c.statusInput.allowPlainKey },
+    callSwitch: { enabled: c.callSwitch.enabled, hours: c.callSwitch.hours },
   };
 }
 
 /**
- * The fields that hold a secret (SPEC 11.2 addition 4, CLAUDE.md): the app-specific password and every calendar
- * address, Google's secret address and a Calendar URL alike. A draft never holds them.
+ * The fields that hold a secret (SPEC 11.2 addition 4, CLAUDE.md): the app-specific password, every calendar
+ * address, Google's secret address and a Calendar URL alike, and the status input key. A draft never holds them.
  */
 export function withoutSecrets(block: Record<string, unknown>): Record<string, unknown> {
   const calendars = Array.isArray(block.calendars) ? block.calendars : [];
+  const input = isObject(block.statusInput) ? { ...block.statusInput, key: '' } : block.statusInput;
   return {
     ...block,
+    ...(input === undefined ? {} : { statusInput: input }),
     calendars: calendars.map((item) => {
       if (!isObject(item)) {
         return item;
@@ -351,8 +417,14 @@ export function withoutSecrets(block: Record<string, unknown>): Record<string, u
   };
 }
 
-/** Puts back the secret fields a draft left empty, from the source of the same id and type in the saved configuration. */
+/**
+ * Puts back the secret fields a draft left empty: from the source of the same id and type in the saved configuration,
+ * and the saved status input key.
+ */
 export function restoreSecrets(draft: UiConfig, saved: UiConfig): void {
+  if (!draft.statusInput.key) {
+    draft.statusInput.key = saved.statusInput.key;
+  }
   for (const s of draft.calendars) {
     const match = saved.calendars.find((o) => o.id === s.id && o.type === s.type);
     if (!match) {

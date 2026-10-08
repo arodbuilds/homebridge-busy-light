@@ -7,20 +7,24 @@ import path from 'node:path';
 import type { API, CharacteristicValue, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig, Service } from 'homebridge';
 import { parseConfig } from './config.js';
 import type { BusyLightConfig } from './config.js';
-import { BusyLightEngine } from './engine.js';
+import { BusyLightEngine, systemClock } from './engine.js';
 import type { Clock } from './engine.js';
 import { ensureStorageDir } from './files.js';
 import type { LifxClient } from './lifx.js';
 import { withDebug } from './log.js';
 import type { Log } from './log.js';
-import { validation } from './messages.js';
+import { HOME_APP_SENDER } from './inputs.js';
+import { callSwitchTimeout, validation } from './messages.js';
 import { SENSOR_NAMES, SENSOR_STATUSES } from './model.js';
 import type { SensorKey, Status } from './model.js';
 import { PLATFORM_NAME, PLUGIN_NAME, RESET_MARKER, packageVersion } from './names.js';
+import { StatusInputServer } from './status-api.js';
+import type { InputServerOptions } from './status-api.js';
 
 export const MANUFACTURER = 'Busy Light';
 export const SENSOR_MODEL = 'Status sensor';
 export const OVERRIDE_MODEL = 'Override switch';
+export const CALL_SWITCH_MODEL = 'Call switch';
 
 /** UUIDs come from the key, never the display name, so renaming keeps rooms and automations (SPEC 7 item 3). */
 export function sensorUuidSeed(key: SensorKey): string {
@@ -28,25 +32,33 @@ export function sensorUuidSeed(key: SensorKey): string {
 }
 
 export const OVERRIDE_UUID_SEED = 'busy-light:override';
+export const CALL_SWITCH_UUID_SEED = 'busy-light:call-switch';
 
 /** Whether a sensor detects occupancy for a status. Unknown turns every sensor off. */
 export function sensorOn(key: SensorKey, status: Status | null): boolean {
   return status !== null && status !== 'unknown' && SENSOR_STATUSES[key].includes(status);
 }
 
-/** Test seams: a clock and a LIFX client. */
+/** Test seams: a clock, a LIFX client, and the status input's server factory (so no test opens a socket). */
 export interface PlatformDeps {
   clock?: Clock;
   lifx?: LifxClient;
+  createServer?: InputServerOptions['createServer'];
 }
 
 export class BusyLightPlatform implements DynamicPlatformPlugin {
   readonly config: BusyLightConfig;
   engine: BusyLightEngine | null = null;
+  /** The status API (SPEC 18.3), while `statusInput.enabled` is on. */
+  inputServer: StatusInputServer | null = null;
   private readonly log: Log;
   private readonly cached = new Map<string, PlatformAccessory>();
   private readonly sensors = new Map<SensorKey, Service>();
   private overrideAccessory: PlatformAccessory | null = null;
+  /** The On a Call switch (SPEC 18.9), when enabled. Its context holds `callOnAt`, the time it was turned on. */
+  private callAccessory: PlatformAccessory | null = null;
+  private callTimer: unknown = null;
+  private readonly clock: Clock;
 
   constructor(
     log: Logging,
@@ -56,6 +68,7 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
   ) {
     const { config, issues } = parseConfig(rawConfig);
     this.config = config;
+    this.clock = deps.clock ?? systemClock;
     this.log = withDebug(log, config.debug);
     for (const issue of issues) {
       this.log[issue.level](validation(issue.path, issue.message));
@@ -67,7 +80,11 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
         this.log.error(`Could not start: ${(err as Error).message}`);
       }
     });
-    this.api.on('shutdown', () => this.engine?.stop());
+    this.api.on('shutdown', () => {
+      this.inputServer?.stop();
+      this.stopCallTimer();
+      this.engine?.stop();
+    });
   }
 
   configureAccessory(accessory: PlatformAccessory): void {
@@ -89,6 +106,21 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
       onStatus: (status) => this.showStatus(status),
     });
     this.engine.start();
+    this.restoreCallSwitch();
+    if (this.config.statusInput.enabled) {
+      this.inputServer = new StatusInputServer({
+        config: this.config.statusInput,
+        engine: this.engine,
+        log: this.log,
+        version: packageVersion(),
+        storageDir,
+        now: this.deps.clock?.now,
+        createServer: this.deps.createServer,
+      });
+      const server = this.inputServer;
+      this.engine.inputServerStatus = () => ({ ...server.state, id: server.id });
+      void server.start().then(() => this.engine?.writeState());
+    }
   }
 
   /**
@@ -150,6 +182,28 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
       this.overrideAccessory = accessory;
     }
 
+    if (this.config.callSwitch.enabled) {
+      const uuid = this.api.hap.uuid.generate(CALL_SWITCH_UUID_SEED);
+      const name = `${this.config.name} On a Call`;
+      keep.add(uuid);
+      const accessory = this.accessory(uuid, name);
+      if (typeof accessory.context.callOnAt !== 'number') {
+        accessory.context.callOnAt = null;
+      }
+      accessory.getService(S.AccessoryInformation)!
+        .setCharacteristic(C.Manufacturer, MANUFACTURER)
+        .setCharacteristic(C.Model, CALL_SWITCH_MODEL)
+        .setCharacteristic(C.SerialNumber, 'call-switch')
+        .setCharacteristic(C.FirmwareRevision, version);
+      const service = accessory.getService(S.Switch) ?? accessory.addService(S.Switch, name);
+      this.name(service, name);
+      service.updateCharacteristic(C.On, accessory.context.callOnAt !== null);
+      service.getCharacteristic(C.On)
+        .onGet(() => accessory.context.callOnAt !== null)
+        .onSet((value: CharacteristicValue) => this.setCall(value === true));
+      this.callAccessory = accessory;
+    }
+
     const stale = [...this.cached.values()].filter((a) => !keep.has(a.UUID));
     if (stale.length) {
       this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, stale);
@@ -191,6 +245,76 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
       this.api.updatePlatformAccessories([this.overrideAccessory]);
     }
     void this.engine?.setOverride(on);
+  }
+
+  /**
+   * The On a Call switch turned on or off from HomeKit (SPEC 18.9 item 2). HomeKit is answered at once; the report and
+   * the status follow. Turning it on again while it is on starts the safety period again.
+   */
+  private setCall(on: boolean): void {
+    const accessory = this.callAccessory;
+    if (!accessory) {
+      return;
+    }
+    accessory.context.callOnAt = on ? this.clock.now() : null;
+    this.api.updatePlatformAccessories([accessory]);
+    this.stopCallTimer();
+    if (on) {
+      this.startCallTimer(accessory.context.callOnAt as number);
+      void this.engine?.report({ sender: HOME_APP_SENDER, status: 'inCall', app: null, via: 'switch', auth: null, ttlMs: null });
+    } else {
+      void this.engine?.clearInput(HOME_APP_SENDER, null);
+    }
+  }
+
+  /** After a restart: the switch is on again with the time remaining, or turned off when the time has passed (18.9 item 3). */
+  private restoreCallSwitch(): void {
+    const onAt = this.callAccessory?.context.callOnAt;
+    if (typeof onAt !== 'number') {
+      return;
+    }
+    if (this.clock.now() >= onAt + this.callHoursMs) {
+      this.callTimedOut();
+      return;
+    }
+    this.startCallTimer(onAt);
+    void this.engine?.report({ sender: HOME_APP_SENDER, status: 'inCall', app: null, via: 'switch', auth: null, ttlMs: null });
+  }
+
+  private get callHoursMs(): number {
+    return this.config.callSwitch.hours * 3_600_000;
+  }
+
+  private startCallTimer(onAt: number): void {
+    this.callTimer = this.clock.setTimeout(() => {
+      this.callTimer = null;
+      this.callTimedOut();
+    }, Math.max(0, onAt + this.callHoursMs - this.clock.now()));
+  }
+
+  private stopCallTimer(): void {
+    if (this.callTimer !== null) {
+      this.clock.clearTimeout(this.callTimer);
+      this.callTimer = null;
+    }
+  }
+
+  /** The safety timeout (SPEC 18.9 item 3): the switch turns itself off and its report is withdrawn. */
+  private callTimedOut(): void {
+    const accessory = this.callAccessory;
+    if (!accessory) {
+      return;
+    }
+    accessory.context.callOnAt = null;
+    this.api.updatePlatformAccessories([accessory]);
+    accessory.getService(this.api.hap.Service.Switch)?.updateCharacteristic(this.api.hap.Characteristic.On, false);
+    this.log.info(callSwitchTimeout(this.config.name, this.config.callSwitch.hours));
+    void this.engine?.clearInput(HOME_APP_SENDER, null);
+  }
+
+  /** The On a Call switch's accessory (tests). */
+  callSwitchAccessory(): PlatformAccessory | null {
+    return this.callAccessory;
   }
 
   /** Every sensor follows the status; unknown turns them all off. */

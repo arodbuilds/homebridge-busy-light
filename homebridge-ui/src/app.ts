@@ -2,7 +2,7 @@ import type { StatusKey } from './copy.js';
 import type { SourceType, UiConfig } from './model.js';
 import type { UiIssue } from './validate.js';
 
-export type Section = 'rightNow' | 'calendars' | 'colors' | 'lights' | 'settings';
+export type Section = 'rightNow' | 'calendars' | 'statusInput' | 'colors' | 'lights' | 'settings';
 
 export type SourceState = 'checking' | 'connected' | 'signInNeeded' | 'notReachable';
 
@@ -18,16 +18,50 @@ export interface StatusSource {
   help?: string;
 }
 
-/** The state file of SPEC 10.1, as /status returns it. */
+/** A sender of the state file's `inputs` (SPEC 10.1, 18.7 item 5). */
+export interface StatusInputEntry {
+  sender: string;
+  status: StatusKey;
+  app: string | null;
+  via: 'api' | 'switch';
+  auth: 'signed' | 'plain' | null;
+  lastHeard: string;
+  expiresAt: string | null;
+  active: boolean;
+}
+
+/** The state file of SPEC 10.1, as /status returns it. The build 3 fields are absent in a build 2 state file. */
 export interface StatusData {
   version: 1;
   updatedAt: string;
   status: StatusKey | 'unknown' | null;
-  reason: { source: string | null; until: string | null } | null;
+  reason: { source: string | null; until: string | null; app?: string } | null;
   override: boolean;
   sources: StatusSource[];
   signIn: unknown;
-  light: { enabled: boolean; label: string | null; host: string | null; found: string | null } | null;
+  light: { enabled: boolean; label: string | null; host: string | null; found: string | null; answered?: boolean | null } | null;
+  statusInput?: { enabled: boolean; port: number; listening: boolean; error: string | null; id: string | null };
+  inputs?: StatusInputEntry[];
+}
+
+/** What /input/info answers (SPEC 10.3). */
+export interface InputInfo {
+  hostname: string | null;
+  addresses: string[];
+  port: number;
+  id: string;
+}
+
+/** The status input section's own state (SPEC 11.3 I). */
+export interface InputUiState {
+  info: InputInfo | null;
+  loading: boolean;
+  /** /input/info gave no answer; it is asked again when the checkbox is ticked. */
+  failed: boolean;
+  testing: boolean;
+  result: { kind: 'received' | 'notListening' | 'unauthorized' | 'other'; message: string } | null;
+  copied: 'key' | 'code' | null;
+  replaceOpen: boolean;
 }
 
 /** An iCloud calendar as /icloud/calendars lists it. */
@@ -109,6 +143,7 @@ export interface UiState {
   tests: Map<string, { busy: boolean; result: TestResult | null }>;
   microsoft: Map<string, MicrosoftState>;
   lifx: LifxState;
+  input: InputUiState;
   resetOpen: boolean;
   /** Reset was confirmed: the done state stands where the dialog was until a reload. */
   resetDone: boolean;

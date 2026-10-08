@@ -37,6 +37,8 @@ interface SourceBase {
   /** Names the Microsoft token file and identifies the source in the state file. */
   id: string;
   name: string;
+  /** This source's own reload interval (SPEC 9.1 item 19). Absent means the platform's `calendarSeconds`. */
+  calendarSeconds?: number;
 }
 
 export interface ICloudSourceConfig extends SourceBase {
@@ -86,6 +88,25 @@ export interface LifxConfig {
   refreshSeconds: number;
 }
 
+/** The status input of SPEC section 18 (9.1 item 17). */
+export interface StatusInputConfig {
+  /** Off when the key is missing or invalid, whatever the block says. */
+  enabled: boolean;
+  /** 1024 to 65535. */
+  port: number;
+  /** 32 to 128 of `A-Z a-z 0-9 - _` (SPEC 18.8 item 1), or empty. Never logged and never in the state file. */
+  key: string;
+  /** Accept `Authorization: Bearer <key>` (SPEC 18.8 item 9); off answers 401 `plain_key_off`. */
+  allowPlainKey: boolean;
+}
+
+/** The On a Call switch of SPEC 18.9 (9.1 item 18). */
+export interface CallSwitchConfig {
+  enabled: boolean;
+  /** It turns itself off this many hours after it was turned on: 1 to 12. */
+  hours: number;
+}
+
 export interface BusyLightConfig {
   name: string;
   calendars: SourceConfig[];
@@ -99,6 +120,8 @@ export interface BusyLightConfig {
   ignoreAllDayBusy: boolean;
   outOfOfficeWords: string[];
   debug: boolean;
+  statusInput: StatusInputConfig;
+  callSwitch: CallSwitchConfig;
 }
 
 export interface ConfigIssue {
@@ -117,6 +140,14 @@ export const MIN_CALENDAR_SECONDS = 60;
 export const MAX_REFRESH_SECONDS = 86_400;
 /** Below the 15 minutes events stay fresh (SPEC 6.5), so one slow or failed reload does not drop them. */
 export const MAX_CALENDAR_SECONDS = 600;
+export const DEFAULT_INPUT_PORT = 8582;
+export const MIN_INPUT_PORT = 1024;
+export const MAX_INPUT_PORT = 65535;
+export const DEFAULT_CALL_HOURS = 3;
+export const MIN_CALL_HOURS = 1;
+export const MAX_CALL_HOURS = 12;
+/** The status input key's rule (SPEC 18.8 item 1). */
+export const INPUT_KEY_MESSAGE = 'must be 32 to 128 letters, digits, hyphens or underscores';
 
 export function defaultConfig(): BusyLightConfig {
   return {
@@ -131,17 +162,25 @@ export function defaultConfig(): BusyLightConfig {
     ignoreAllDayBusy: true,
     outOfOfficeWords: [...DEFAULT_OUT_OF_OFFICE_WORDS],
     debug: false,
+    statusInput: { enabled: false, port: DEFAULT_INPUT_PORT, key: '', allowPlainKey: true },
+    callSwitch: { enabled: false, hours: DEFAULT_CALL_HOURS },
   };
 }
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const COLOR = /^#[0-9a-f]{6}$/i;
 const EXPLICIT_ID = /^[a-z0-9-]{1,64}$/;
+const INPUT_KEY = /^[A-Za-z0-9_-]{32,128}$/;
 const HOST_NAME = /^(?=.{1,253}\.?$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.?$/i;
 
 /** A Microsoft tenant or client ID. */
 export function isGuid(value: string): boolean {
   return GUID.test(value);
+}
+
+/** A status input key: 32 to 128 letters, digits, hyphens or underscores (SPEC 18.8 item 1). */
+export function isInputKey(value: string): boolean {
+  return INPUT_KEY.test(value);
 }
 
 /** An explicit source id: 1 to 64 lower case letters, digits and hyphens (SPEC 9.1 item 9). It names the token file. */
@@ -370,34 +409,9 @@ function requireCalendarUrl(raw: unknown, path: string, issues: Issues): string 
   return url;
 }
 
-function readSource(raw: unknown, path: string, issues: Issues): SourceConfig | null {
-  if (!isObject(raw)) {
-    issues.error(path, 'must be a calendar entry');
-    return null;
-  }
-  const name = requireText(raw.name, `${path}.name`, issues);
-  if (name === null) {
-    return null;
-  }
-  if (name.length === 0 || [...name].length > 64 || hasControl(name)) {
-    issues.error(`${path}.name`, 'must be 1 to 64 printable characters');
-    return null;
-  }
-  let id: string;
-  if (isMissing(raw.id)) {
-    id = deriveId(name);
-  } else if (typeof raw.id === 'string' && EXPLICIT_ID.test(raw.id.trim())) {
-    id = raw.id.trim();
-  } else {
-    issues.error(`${path}.id`, 'must be 1 to 64 lower case letters, digits and hyphens');
-    return null;
-  }
-  const type = raw.type;
-  if (typeof type !== 'string' || !(SOURCE_TYPES as readonly string[]).includes(type)) {
-    issues.error(`${path}.type`, 'must be icloud, google, microsoft or url');
-    return null;
-  }
-  switch (type as SourceType) {
+/** The fields of one source type, after its name, id and type have been read. */
+function readSourceFields(raw: Record<string, unknown>, type: SourceType, id: string, name: string, path: string, issues: Issues): SourceConfig | null {
+  switch (type) {
   case 'icloud': {
     const appleId = requireText(raw.appleId, `${path}.appleId`, issues);
     if (appleId === null) {
@@ -447,6 +461,45 @@ function readSource(raw: unknown, path: string, issues: Issues): SourceConfig | 
     return { type: 'microsoft', id, name, tenantId, clientId, useTeamsStatus, useCalendar, calendars };
   }
   }
+}
+
+function readSource(raw: unknown, path: string, issues: Issues): SourceConfig | null {
+  if (!isObject(raw)) {
+    issues.error(path, 'must be a calendar entry');
+    return null;
+  }
+  const name = requireText(raw.name, `${path}.name`, issues);
+  if (name === null) {
+    return null;
+  }
+  if (name.length === 0 || [...name].length > 64 || hasControl(name)) {
+    issues.error(`${path}.name`, 'must be 1 to 64 printable characters');
+    return null;
+  }
+  let id: string;
+  if (isMissing(raw.id)) {
+    id = deriveId(name);
+  } else if (typeof raw.id === 'string' && EXPLICIT_ID.test(raw.id.trim())) {
+    id = raw.id.trim();
+  } else {
+    issues.error(`${path}.id`, 'must be 1 to 64 lower case letters, digits and hyphens');
+    return null;
+  }
+  const type = raw.type;
+  if (typeof type !== 'string' || !(SOURCE_TYPES as readonly string[]).includes(type)) {
+    issues.error(`${path}.type`, 'must be icloud, google, microsoft or url');
+    return null;
+  }
+  const source = readSourceFields(raw, type as SourceType, id, name, path, issues);
+  if (source) {
+    // SPEC 9.1 item 19: missing means the platform's interval; invalid falls back to it with a warning.
+    const own = readInteger(raw.calendarSeconds, `${path}.calendarSeconds`, 0, MIN_CALENDAR_SECONDS, MAX_CALENDAR_SECONDS,
+      `must be a whole number from ${MIN_CALENDAR_SECONDS} to ${MAX_CALENDAR_SECONDS}`, issues);
+    if (own > 0) {
+      source.calendarSeconds = own;
+    }
+  }
+  return source;
 }
 
 function readSources(raw: unknown, issues: Issues): SourceConfig[] {
@@ -531,6 +584,46 @@ function readLifx(raw: unknown, issues: Issues): LifxConfig {
   return lifx;
 }
 
+/** SPEC 9.1 item 17. With the input on and no valid key, it stays off with one error. */
+function readStatusInput(raw: unknown, issues: Issues): StatusInputConfig {
+  const input = defaultConfig().statusInput;
+  if (isMissing(raw)) {
+    return input;
+  }
+  if (!isObject(raw)) {
+    issues.warn('statusInput', 'must be a set of status input settings');
+    return input;
+  }
+  input.enabled = readBoolean(raw.enabled, 'statusInput.enabled', input.enabled, issues);
+  input.port = readInteger(raw.port, 'statusInput.port', input.port, MIN_INPUT_PORT, MAX_INPUT_PORT,
+    `must be a whole number from ${MIN_INPUT_PORT} to ${MAX_INPUT_PORT}`, issues);
+  input.allowPlainKey = readBoolean(raw.allowPlainKey, 'statusInput.allowPlainKey', input.allowPlainKey, issues);
+  const key = typeof raw.key === 'string' ? raw.key.trim() : '';
+  if (isInputKey(key)) {
+    input.key = key;
+  } else if (input.enabled) {
+    issues.error('statusInput.key', INPUT_KEY_MESSAGE);
+    input.enabled = false;
+  }
+  return input;
+}
+
+/** SPEC 9.1 item 18. */
+function readCallSwitch(raw: unknown, issues: Issues): CallSwitchConfig {
+  const call = defaultConfig().callSwitch;
+  if (isMissing(raw)) {
+    return call;
+  }
+  if (!isObject(raw)) {
+    issues.warn('callSwitch', 'must be a set of call switch settings');
+    return call;
+  }
+  call.enabled = readBoolean(raw.enabled, 'callSwitch.enabled', call.enabled, issues);
+  call.hours = readInteger(raw.hours, 'callSwitch.hours', call.hours, MIN_CALL_HOURS, MAX_CALL_HOURS,
+    `must be a whole number from ${MIN_CALL_HOURS} to ${MAX_CALL_HOURS}`, issues);
+  return call;
+}
+
 function readSensors(raw: unknown, issues: Issues): SensorKey[] {
   if (isMissing(raw)) {
     return [...DEFAULT_SENSORS];
@@ -568,6 +661,8 @@ export function parseConfig(raw: unknown): { config: BusyLightConfig; issues: Co
   config.ignoreAllDayBusy = readBoolean(block.ignoreAllDayBusy, 'ignoreAllDayBusy', config.ignoreAllDayBusy, issues);
   config.outOfOfficeWords = readTextList(block.outOfOfficeWords, 'outOfOfficeWords', DEFAULT_OUT_OF_OFFICE_WORDS, issues);
   config.debug = readBoolean(block.debug, 'debug', config.debug, issues);
+  config.statusInput = readStatusInput(block.statusInput, issues);
+  config.callSwitch = readCallSwitch(block.callSwitch, issues);
   return { config, issues: issues.list };
 }
 

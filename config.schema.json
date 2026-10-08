@@ -156,6 +156,12 @@
                 }
               ],
               "default": "all"
+            },
+            "calendarSeconds": {
+              "title": "Check for changes every (seconds)",
+              "type": "integer",
+              "minimum": 60,
+              "maximum": 600
             }
           }
         }
@@ -327,6 +333,53 @@
         "title": "Debug logging",
         "type": "boolean",
         "default": false
+      },
+      "statusInput": {
+        "title": "Status from other apps",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "title": "Let other apps set your status",
+            "type": "boolean",
+            "default": false
+          },
+          "port": {
+            "title": "Port",
+            "type": "integer",
+            "default": 8582,
+            "minimum": 1024,
+            "maximum": 65535
+          },
+          "key": {
+            "title": "Key",
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{32,128}$"
+          },
+          "allowPlainKey": {
+            "title": "Allow the plain key",
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "callSwitch": {
+        "title": "On a Call switch",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "title": "Add an On a Call switch to the Home app",
+            "description": "Turn it on from a shortcut, Siri or a Home tile while you are on a call. Useful for apps that should not make network requests themselves.",
+            "type": "boolean",
+            "default": false
+          },
+          "hours": {
+            "title": "Turn it off by itself after (hours)",
+            "type": "integer",
+            "default": 3,
+            "minimum": 1,
+            "maximum": 12
+          }
+        }
       }
     }
   },
@@ -414,9 +467,48 @@
           "condition": {
             "functionBody": "return model.calendars[arrayIndices].type === 'microsoft';"
           }
-        }
+        },
+        "calendars[].calendarSeconds"
       ],
       "orderable": false
+    },
+    {
+      "type": "fieldset",
+      "title": "Status from other apps",
+      "items": [
+        "statusInput.enabled",
+        {
+          "key": "statusInput.port",
+          "condition": {
+            "functionBody": "return !!model.statusInput && model.statusInput.enabled === true;"
+          }
+        },
+        {
+          "key": "statusInput.key",
+          "condition": {
+            "functionBody": "return !!model.statusInput && model.statusInput.enabled === true;"
+          }
+        },
+        {
+          "key": "statusInput.allowPlainKey",
+          "condition": {
+            "functionBody": "return !!model.statusInput && model.statusInput.enabled === true;"
+          }
+        }
+      ]
+    },
+    {
+      "type": "fieldset",
+      "title": "On a Call switch",
+      "items": [
+        "callSwitch.enabled",
+        {
+          "key": "callSwitch.hours",
+          "condition": {
+            "functionBody": "return !!model.callSwitch && model.callSwitch.enabled === true;"
+          }
+        }
+      ]
     },
     {
       "type": "fieldset",

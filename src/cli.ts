@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * homebridge-busy-light <status | check | login [name] | lights | light [name|ip] [#RRGGBB|off] | help> [-U <storage path>]
+ * homebridge-busy-light <status | check | login [name] | lights | light [name|ip] [#RRGGBB|off] | input [--setup-code | test] | help>
+ *   [-U <storage path>]
  *
  * Run it as the same user Homebridge runs as, so a Microsoft sign-in lands where the plugin looks for it.
  */

@@ -13,6 +13,9 @@ import { ADMIN_HELP_URL } from '../src/messages.js';
 import { writeState } from '../src/state.js';
 import type { StateFile } from '../src/state.js';
 import { BusyLightUiHandlers, PENDING_SIGN_IN_MS, countToday, todayBounds } from '../src/ui/server.js';
+import type { UiServerOptions } from '../src/ui/server.js';
+import type { AddressDeps } from '../src/addresses.js';
+import { signature } from '../src/status-api.js';
 import { FakeFetch, FakeNetwork, fakeLog, fixture, fixtureTitles, json, networkError, redirect, text, tmpDir } from './helpers.js';
 
 // Today is the host's local day; the fixture counts below are for UTC.
@@ -494,8 +497,59 @@ test('/reset deletes every file in busy-light/ and leaves only the marker (SPEC 
 test('the routes are the endpoints of SPEC 10.3', () => {
   assert.deepEqual(Object.keys(handlers().routes()), [
     '/version', '/status', '/icloud/calendars', '/url/test', '/microsoft/start', '/microsoft/poll', '/microsoft/cancel', '/microsoft/calendars',
-    '/microsoft/disconnect', '/lifx/discover', '/lifx/test', '/reset',
+    '/microsoft/disconnect', '/lifx/discover', '/lifx/test', '/reset', '/input/info', '/input/test',
   ]);
+});
+
+// SPEC 15 item 20: /input/info and /input/test, with os.networkInterfaces, dns.lookup and fetch replaced.
+
+const INPUT_KEY = 'uiServerTestKey-0123456789abcdefghijklmnop';
+const NETWORK: AddressDeps = {
+  hostname: () => 'homebridge',
+  interfaces: () => ({
+    eth0: [{ address: '192.168.4.10', family: 'IPv4', internal: false, netmask: '255.255.255.0', mac: '', cidr: null }],
+  }),
+  lookup: async () => [{ address: '192.168.4.10', family: 4 }],
+};
+
+function inputHandlers(extra: Partial<UiServerOptions> = {}): BusyLightUiHandlers {
+  return new BusyLightUiHandlers({ storagePath: storage, now: () => clock, version: '0.1.0-beta.3', addresses: NETWORK, ...extra });
+}
+
+test('/input/info: the host name when it resolves to the host, the IPv4 addresses, the saved port, and the id, created once', async () => {
+  const configPath = path.join(storage, 'config.json');
+  fs.writeFileSync(configPath, JSON.stringify({ platforms: [{ platform: 'BusyLight', statusInput: { enabled: true, port: 9000, key: INPUT_KEY } }] }));
+  const info = await call(inputHandlers({ configPath }), '/input/info') as { id: string };
+  assert.match(info.id, /^[A-Za-z0-9_-]{16}$/);
+  assert.deepEqual(info, { hostname: 'homebridge.local', addresses: ['192.168.4.10'], port: 9000, id: info.id });
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir(), 'instance.json'), 'utf8')).id, info.id, 'created in instance.json');
+  assert.equal((await call(inputHandlers(), '/input/info') as { id: string }).id, info.id, 'and kept');
+  const elsewhere = await call(inputHandlers({ addresses: { ...NETWORK, lookup: async () => [{ address: '192.168.4.99', family: 4 }] } }), '/input/info');
+  assert.equal(elsewhere.hostname, null, 'a name that resolves elsewhere');
+  assert.equal(elsewhere.port, 8582, 'the default port with nothing saved');
+  const slow = await call(inputHandlers({ addresses: { ...NETWORK, lookup: () => new Promise(() => undefined), timeoutMs: 20 } }), '/input/info');
+  assert.equal(slow.hostname, null, 'a name that times out');
+  assert.ok(!JSON.stringify(responses).includes(INPUT_KEY), 'no key is read into an answer');
+});
+
+test('/input/test: a signed In a call for 30 seconds from Busy Light test to 127.0.0.1, and each result', async () => {
+  fake.on('http://127.0.0.1:9000/v1/status', (c) => {
+    assert.deepEqual(JSON.parse(c.body!), { sender: 'Busy Light test', status: 'inCall', ttlSeconds: 30 });
+    assert.equal(c.headers.authorization, `BusyLight-HMAC-SHA256 ts=${clock}, sig=${signature(INPUT_KEY, 'POST', '/v1/status', String(clock), c.body!)}`);
+    return json({ accepted: true, expiresAt: new Date(clock + 30_000).toISOString(), status: 'inCall' });
+  });
+  const h = inputHandlers();
+  assert.deepEqual(await call(h, '/input/test', { port: 9000, key: INPUT_KEY }), { ok: true });
+  fake.on('http://127.0.0.1:9000/v1/status', () => json({ error: 'unauthorized', message: 'Missing or wrong key.' }, 401));
+  assert.deepEqual(await call(h, '/input/test', { port: 9000, key: INPUT_KEY }), { error: 'unauthorized', message: 'Missing or wrong key.' });
+  fake.on('http://127.0.0.1:9000/v1/status', () => networkError('ECONNREFUSED'));
+  assert.deepEqual(await call(h, '/input/test', { port: 9000, key: INPUT_KEY }), { error: 'notListening', message: 'Nothing is listening on port 9000.' });
+  fake.on('http://127.0.0.1:9000/v1/status', () => json({ error: 'rate_limited', message: 'Too many.' }, 429));
+  assert.deepEqual(await call(h, '/input/test', { port: 9000, key: INPUT_KEY }), { error: 'other', message: 'Too many.' });
+  for (const payload of [{ port: 80, key: INPUT_KEY }, { port: 9000, key: 'short' }, { port: '9000', key: INPUT_KEY }, {}]) {
+    assert.deepEqual(await call(h, '/input/test', payload), { error: 'other', message: 'The port or the key is not valid.' });
+  }
+  assert.ok(!JSON.stringify(responses).includes(INPUT_KEY), 'the key is never returned');
 });
 
 test('no response carries a password, token, device code, calendar address or event title', () => {

@@ -4,7 +4,7 @@
  * summary box shows it under.
  */
 
-import { CALENDARS, COLORS, ICLOUD, GOOGLE, LIGHTS, MICROSOFT, SETTINGS, URL_CARD, VALIDATION } from './copy.js';
+import { CALENDARS, COLORS, ICLOUD, GOOGLE, LIGHTS, MICROSOFT, SETTINGS, STATUS_INPUT, URL_CARD, VALIDATION } from './copy.js';
 import { LIMITS, STATUS_KEYS, type UiConfig, type UiSource } from './model.js';
 
 export interface UiIssue {
@@ -126,6 +126,9 @@ function sourceIssues(s: UiSource, all: UiSource[], ctx: ValidationContext, issu
     }
     break;
   }
+  if (s.calendarSeconds !== null && !wholeNumber(s.calendarSeconds, LIMITS.sourceCalendarSeconds)) {
+    add('calendarSeconds', VALIDATION.wholeNumber(LIMITS.sourceCalendarSeconds[0], LIMITS.sourceCalendarSeconds[1]));
+  }
   const listed = s.type === 'icloud' || (s.type === 'microsoft' && s.useCalendar);
   if (listed && ctx.listsShown?.has(s.id) && s.calendars.length === 0) {
     add('calendars', VALIDATION.chooseCalendar);
@@ -141,6 +144,13 @@ export function validate(config: UiConfig, ctx: ValidationContext = {}): UiIssue
     if (!isColor(config.colors[key])) {
       issues.push({ path: `colors.${key}`, label: COLORS.heading, message: VALIDATION.color });
     }
+  }
+  // SPEC 11.3 I: the port and the hours, while their checkbox is ticked.
+  if (config.statusInput.enabled) {
+    number(issues, 'statusInput.port', STATUS_INPUT.heading, STATUS_INPUT.port, config.statusInput.port, LIMITS.port);
+  }
+  if (config.callSwitch.enabled) {
+    number(issues, 'callSwitch.hours', STATUS_INPUT.heading, STATUS_INPUT.callSwitchHours, config.callSwitch.hours, LIMITS.hours);
   }
   if (config.lifx.enabled) {
     number(issues, 'lifx.brightness', LIGHTS.lifxTitle, LIGHTS.brightness, config.lifx.brightness, LIMITS.brightness);

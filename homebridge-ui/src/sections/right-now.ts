@@ -26,6 +26,9 @@ export function reasonLine(status: NonNullable<App['status']>): string {
   }
   const until = parseDate(status.reason?.until);
   const source = status.reason?.source;
+  if (source && status.reason?.app && !until) {
+    return RIGHT_NOW.fromApp(source, status.reason.app);
+  }
   if (source) {
     return until ? RIGHT_NOW.until(formatTime(until), source) : RIGHT_NOW.from(source);
   }
@@ -37,7 +40,8 @@ export function renderRightNow(app: App, container: HTMLElement): void {
   if (status === undefined) {
     return; // the first /status answer arrives in a moment
   }
-  if (app.saved.calendars.length === 0) {
+  // With no calendars the status can still come from other apps or the On a Call switch (SPEC 6.5 item 5).
+  if (app.saved.calendars.length === 0 && !app.saved.statusInput.enabled && !app.saved.callSwitch.enabled) {
     container.appendChild(paragraph(RIGHT_NOW.noCalendars, 'bl-empty bl-now-empty'));
     return;
   }

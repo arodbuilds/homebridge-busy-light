@@ -87,6 +87,23 @@ async function testLight(app: App): Promise<void> {
   app.rerender('lights');
 }
 
+/**
+ * Before any search in this visit (SPEC 11.3 E): the bulb the running plugin uses, from the state file's `light`, so
+ * the page does not read as if no bulb were set up. Nothing until the first /status answer.
+ */
+function inUse(app: App): HTMLElement | null {
+  if (app.status === undefined) {
+    return null;
+  }
+  const light = app.status?.light;
+  if (!light || !light.enabled || !light.host) {
+    return paragraph(LIGHTS.noBulbYet, 'bl-lifx-line bl-lifx-in-use');
+  }
+  const label = light.label || light.host;
+  return paragraph(light.answered === false ? LIGHTS.usingBulbSilent(label, light.host) : LIGHTS.usingBulb(label, light.host),
+    'bl-lifx-line bl-lifx-in-use');
+}
+
 /** The search results (SPEC 11.3 E): searching, one, several or none, and the saved bulb missing; hidden behind an IP address. */
 function results(app: App): Child[] {
   const config = app.config.lifx;
@@ -131,6 +148,11 @@ function results(app: App): Child[] {
         }),
       ));
     }
+  } else {
+    const line = inUse(app);
+    if (line) {
+      out.push(line);
+    }
   }
   if (!lifx.searching) {
     out.push(el('div', { class: 'bl-actions bl-lifx-actions' }, linkButton(LIGHTS.searchAgain, () => void search(app), 'bl-search-again')));
@@ -141,6 +163,27 @@ function results(app: App): Child[] {
 /** The results as nodes, for the in-place swap when the IP address is filled in or cleared. */
 function resultsNow(app: App): Node[] {
   return results(app).filter((c): c is Node => typeof c === 'object' && c !== null);
+}
+
+/** Redraws the results in place (an answer from /status, or the IP address filled in or cleared). */
+function refreshResults(app: App): void {
+  const holder = document.querySelector<HTMLElement>('#section-lights .bl-lifx-results');
+  if (!holder) {
+    return;
+  }
+  while (holder.firstChild) {
+    holder.removeChild(holder.firstChild);
+  }
+  for (const child of resultsNow(app)) {
+    holder.appendChild(child);
+  }
+}
+
+/** After each /status answer, the bulb in use, until a search in this visit replaces it. */
+export function lightsOnStatus(app: App): void {
+  if (app.config.lifx.enabled && app.ui.lifx.bulbs === null && !app.ui.lifx.searching) {
+    refreshResults(app);
+  }
 }
 
 function lifxCard(app: App): HTMLElement {
@@ -176,15 +219,7 @@ function lifxCard(app: App): HTMLElement {
           app.changed();
           if (before !== (v.trim() !== '')) {
             // The search results give way to the address line, and back.
-            const results = document.querySelector<HTMLElement>('#section-lights .bl-lifx-results');
-            if (results) {
-              while (results.firstChild) {
-                results.removeChild(results.firstChild);
-              }
-              for (const child of resultsNow(app)) {
-                results.appendChild(child);
-              }
-            }
+            refreshResults(app);
           }
         }, { path: 'lifx.host', placeholder: LIGHTS.ipPlaceholder, help: `${LIGHTS.ipLead} ${LIGHTS.ipHelp}`, inputmode: 'decimal' })),
         gridCell(6, numberField(LIGHTS.refresh, config.refreshSeconds, (v) => {

@@ -1,22 +1,23 @@
 import { callServer, setSaveEnabled, toastError } from './api.js';
 import type { App, Section, StatusData, UiState } from './app.js';
-import { BANNER, CALENDARS, COLORS, INTRO, LIGHTS, RIGHT_NOW, SETTINGS, SHELL } from './copy.js';
+import { BANNER, CALENDARS, COLORS, INTRO, LIGHTS, RIGHT_NOW, SETTINGS, SHELL, STATUS_INPUT } from './copy.js';
 import { button, clear, el, linkButton, outlineButton } from './dom.js';
 import { clearDraft, readDraft, saveDraft, stableStringify } from './draft.js';
 import { renderFooter, type FooterHandle } from './footer.js';
-import { exportConfig, PLATFORM, readConfig, restoreSecrets, withoutSecrets, type UiConfig } from './model.js';
+import { exportConfig, isInputKey, newInputKey, PLATFORM, readConfig, restoreSecrets, withoutSecrets, type UiConfig } from './model.js';
 import { calendarsOnStatus, renderCalendars } from './sections/calendars.js';
 import { renderColors } from './sections/colors.js';
-import { renderLights } from './sections/lights.js';
+import { lightsOnStatus, renderLights } from './sections/lights.js';
 import { renderRightNow } from './sections/right-now.js';
 import { renderSettings } from './sections/settings.js';
+import { renderStatusInput, statusInputOnStatus } from './sections/status-input.js';
 import { validate, type UiIssue, type ValidationContext } from './validate.js';
 
 /**
  * The settings page (SPEC section 11): reads the platform block with `getPluginConfig`, pushes every change with
  * `updatePluginConfig`, leaves saving to the Homebridge UI's Save button (disabled while validation finds issues), and
  * asks the plugin's UI server for /status every 15 seconds while the page is open. Opening the page calls only
- * /version and /status (SPEC 11.2 addition 5).
+ * /version and /status (SPEC 11.2 addition 5), and /input/info when the status input is on (it shows the addresses).
  */
 
 export const STATUS_POLL_MS = 15 * 1000;
@@ -35,8 +36,9 @@ interface SectionDef {
 const SECTIONS: SectionDef[] = [
   { key: 'rightNow', title: RIGHT_NOW.heading, help: '', render: renderRightNow, onStatus: (app) => app.rerender('rightNow') },
   { key: 'calendars', title: CALENDARS.heading, help: CALENDARS.help, render: renderCalendars, onStatus: calendarsOnStatus },
+  { key: 'statusInput', title: STATUS_INPUT.heading, help: '', render: renderStatusInput, onStatus: statusInputOnStatus },
   { key: 'colors', title: COLORS.heading, help: COLORS.help, render: renderColors },
-  { key: 'lights', title: LIGHTS.heading, help: '', render: renderLights },
+  { key: 'lights', title: LIGHTS.heading, help: '', render: renderLights, onStatus: lightsOnStatus },
   { key: 'settings', title: SETTINGS.heading, help: '', render: renderSettings },
 ];
 
@@ -55,7 +57,9 @@ export function isTouchDevice(): boolean {
 export function emptyUiState(): UiState {
   return {
     chooserOpen: false, expanded: new Set(), removeOpen: null, icloud: new Map(), tests: new Map(), microsoft: new Map(),
-    lifx: { searching: false, bulbs: null, testing: false, answered: null }, resetOpen: false, resetDone: false, issuesExpanded: false,
+    lifx: { searching: false, bulbs: null, testing: false, answered: null },
+    input: { info: null, loading: false, failed: false, testing: false, result: null, copied: null, replaceOpen: false },
+    resetOpen: false, resetDone: false, issuesExpanded: false,
   };
 }
 
@@ -280,6 +284,10 @@ export class Page implements App {
         close();
         const config = readConfig(draft.config);
         restoreSecrets(config, this.saved);
+        if (config.statusInput.enabled && !isInputKey(config.statusInput.key)) {
+          // The draft never holds the key; with none saved, the page makes one as it does when the box is ticked.
+          config.statusInput.key = newInputKey();
+        }
         this.draftAllowed = true;
         this.replaceConfig(config);
         this.allTouched = true;

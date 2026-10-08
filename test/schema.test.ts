@@ -65,7 +65,7 @@ test('headerDisplay is verbatim', () => {
 
 test('every title and description of SPEC 9.2, verbatim', () => {
   const rows = specRows();
-  assert.equal(rows.length, 27);
+  assert.equal(rows.length, 34);
   for (const [field, title, description] of rows) {
     const desc = description || undefined;
     switch (field) {
@@ -91,8 +91,9 @@ test('every title and description of SPEC 9.2, verbatim', () => {
       break;
     default: {
       const name = field.replace(/`/g, '');
+      const [group, member] = name.split('.');
       const prop = name.startsWith('calendars[].') ? item[name.slice(12)]
-        : name.startsWith('lifx.') ? props.lifx.properties![name.slice(5)]
+        : member && props[group]?.properties ? props[group].properties![member]
           : name in item && !(name in props) ? item[name] : props[name];
       assert.ok(prop, `${name} is in the schema`);
       assert.equal(prop.title, title, name);
@@ -114,8 +115,10 @@ test('every field of SPEC section 9 is present', () => {
     }
   }
   assert.ok('id' in item, 'calendars[].id (SPEC 9.1 item 2)');
-  for (const key of Object.keys(example.lifx)) {
-    assert.ok(key in props.lifx.properties!, `lifx.${key}`);
+  for (const group of ['lifx', 'statusInput', 'callSwitch']) {
+    for (const key of Object.keys(example[group] as Record<string, unknown>)) {
+      assert.ok(key in props[group].properties!, `${group}.${key}`);
+    }
   }
   assert.deepEqual(Object.keys(props.colors.properties!), [...STATUS_KEYS]);
   assert.deepEqual(props.sensors.items!.enum, [...SENSOR_KEYS]);
@@ -150,6 +153,11 @@ test('defaults agree with the plugin defaults', () => {
   for (const key of ['enabled', 'brightness', 'refreshSeconds'] as const) {
     assert.equal(props.lifx.properties![key].default, d.lifx[key]);
   }
+  assert.equal(props.statusInput.properties!.enabled.default, d.statusInput.enabled);
+  assert.equal(props.statusInput.properties!.port.default, d.statusInput.port);
+  assert.equal(props.statusInput.properties!.allowPlainKey.default, d.statusInput.allowPlainKey);
+  assert.equal(props.callSwitch.properties!.enabled.default, d.callSwitch.enabled);
+  assert.equal(props.callSwitch.properties!.hours.default, d.callSwitch.hours);
   assert.equal(item.useTeamsStatus.default, true);
   assert.equal(item.useCalendar.default, true);
 });
@@ -158,15 +166,16 @@ test('each source type shows only its own fields', () => {
   const shownFor = (type: string) => layoutEntries()
     .filter((l) => l.key?.startsWith('calendars[].') && !l.key.endsWith('[]') && (!l.condition || l.condition.functionBody.includes(`'${type}'`)))
     .map((l) => l.key!.slice(12));
-  assert.deepEqual(shownFor('icloud'), ['type', 'name', 'appleId', 'appPassword', 'calendars']);
-  assert.deepEqual(shownFor('google'), ['type', 'name', 'url', 'email', 'use']);
-  assert.deepEqual(shownFor('url'), ['type', 'name', 'url', 'use']);
-  assert.deepEqual(shownFor('microsoft'), ['type', 'name', 'tenantId', 'clientId', 'useTeamsStatus', 'useCalendar']);
+  assert.deepEqual(shownFor('icloud'), ['type', 'name', 'appleId', 'appPassword', 'calendars', 'calendarSeconds']);
+  assert.deepEqual(shownFor('google'), ['type', 'name', 'url', 'email', 'use', 'calendarSeconds']);
+  assert.deepEqual(shownFor('url'), ['type', 'name', 'url', 'use', 'calendarSeconds']);
+  assert.deepEqual(shownFor('microsoft'), ['type', 'name', 'tenantId', 'clientId', 'useTeamsStatus', 'useCalendar', 'calendarSeconds']);
   for (const entry of layoutEntries().filter((l) => l.condition)) {
     // The Homebridge UI runs conditions as new Function('model', 'arrayIndices', body).
     const run = new Function('model', 'arrayIndices', entry.condition!.functionBody);
     const model = { calendars: [{ type: 'url' }, { type: 'google' }], lifx: { enabled: true } };
     assert.equal(typeof run(model, [1]), 'boolean');
+    assert.equal(typeof run({ ...model, statusInput: { enabled: true }, callSwitch: { enabled: false } }, [0]), 'boolean');
   }
 });
 

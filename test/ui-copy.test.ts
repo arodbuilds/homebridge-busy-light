@@ -20,10 +20,12 @@ const copy113 = spec.slice(spec.indexOf('### 11.3 Copy (verbatim)'), spec.indexO
 const PLACEHOLDERS: Record<string, string[]> = {
   'RIGHT_NOW.until': ['{time}', '{source}'],
   'RIGHT_NOW.from': ['{source}'],
+  'RIGHT_NOW.fromApp': ['{sender}', '{app}'],
   'RIGHT_NOW.nothingUntil': ['{time}'],
   'RIGHT_NOW.stale': ['{relative time}'],
   'CALENDARS.lastChecked': ['{relative time}'],
   'CALENDARS.removeQuestion': ['{name}'],
+  'CALENDARS.checkEveryPlaceholder': ['{platform value}'],
   'CALENDARS.eventsToday': ['{n}'],
   'TEST.result': ['{n}'],
   'TEST.http': ['{host}', '{code}'],
@@ -34,6 +36,12 @@ const PLACEHOLDERS: Record<string, string[]> = {
   'LIGHTS.bulbChoice': ['{label}', '{ip}'],
   'LIGHTS.savedMissing': ['{label}'],
   'LIGHTS.usingIp': ['{ip}'],
+  'LIGHTS.usingBulb': ['{label}', '{host}'],
+  'LIGHTS.usingBulbSilent': ['{label}', '{host}'],
+  'STATUS_INPUT.portError': ['{port}'],
+  'STATUS_INPUT.portHelp': ['{port}'],
+  'STATUS_INPUT.fromApp': ['{app}'],
+  'STATUS_INPUT.lastHeard': ['{relative time}'],
   'LIGHTS.sensor': ['{name}', 'Available'],
   'LIGHTS.steps.0': [],
   'LIGHTS.steps.1': ['{name}'],
@@ -82,6 +90,10 @@ function strings(): Map<string, string> {
   for (const [key, ending] of Object.entries(copy.SENSOR_NAMES)) {
     out.set(`LIGHTS.sensor(${key})`, copy.LIGHTS.sensor('{name}', ending));
   }
+  // The number messages the SPEC quotes with their ranges filled in.
+  for (const [min, max] of [[60, 600], [1024, 65535], [1, 12]]) {
+    out.set(`VALIDATION.wholeNumber(${min}, ${max})`, copy.VALIDATION.wholeNumber(min, max));
+  }
   return out;
 }
 
@@ -112,7 +124,9 @@ test('every string SPEC 11.3 quotes is in the copy module', () => {
   const quoted = [...copy113.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
   // Code and data the SPEC names in passing, not words the page shows.
   // `1:00 PM` is the SPEC's example of a time, which the page formats in the browser's locale.
-  const notCopy = /^(\/|lifx\.|verificationUri$|use$|homebridge-|assets\/|busy-light|1:00 PM$)/;
+  // Addresses and the setup code are built from data; `notListening` and `unauthorized` are /input/test error keys;
+  // `Home app` is a sender name the plugin writes, which the page shows as data.
+  const notCopy = /^(\/|lifx\.|verificationUri$|use$|homebridge-|assets\/|busy-light|1:00 PM$|http:\/\/|busylight:\/\/|notListening$|unauthorized$|Home app$)/;
   const missing = quoted.filter((q) => !notCopy.test(q) && !values.has(q) && !all.includes(q));
   assert.deepEqual(missing, []);
 });

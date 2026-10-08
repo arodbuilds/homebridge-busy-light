@@ -3,7 +3,8 @@
  * built page rendered the way the Homebridge UI shows it (in an iframe sized to its content, with the host's body
  * classes, its stylesheet loaded after the page's and its `body { height: unset }` rule, and no `data-bs-theme`), in
  * the host's light and dark themes at 800 and 390 pixels, with every card, the chooser, the disclosures, the Reset
- * dialog and the summary box open. It checks that secondary text and locked fields keep 4.5:1 contrast, that nothing
+ * dialog and the summary box open, and the Status from other apps section on with its Replace key question, a test
+ * result and a sender of each kind listed (SPEC 15 item 19). It checks that secondary text and locked fields keep 4.5:1 contrast, that nothing
  * is wider than the frame, and that the frame itself never scrolls.
  *
  * It needs Playwright with Chromium and the Homebridge UI's own stylesheet, which are not dependencies of the plugin:
@@ -46,7 +47,7 @@ function hostCss() {
   throw new Error('Set HOMEBRIDGE_UI_CSS to the Homebridge UI stylesheet (homebridge-config-ui-x/public/styles-*.css).');
 }
 
-/** A synthetic configuration: one card of each type, the build 1 name-only iCloud list, LIFX on. */
+/** A synthetic configuration: one card of each type, the build 1 name-only iCloud list, LIFX on, the status input on. */
 const CONFIG = {
   platform: 'BusyLight',
   name: 'Busy Light',
@@ -56,15 +57,18 @@ const CONFIG = {
       use: 'all' },
     { type: 'microsoft', id: 'cal-work', name: 'Work', tenantId: '11111111-2222-3333-4444-555555555555',
       clientId: '66666666-7777-8888-9999-000000000000', useTeamsStatus: true, useCalendar: true },
-    { type: 'url', id: 'cal-rota', name: 'Team rota', url: 'https://rota.example.net/synthetic.ics', use: 'outOfOffice' },
+    { type: 'url', id: 'cal-rota', name: 'Team rota', url: 'https://rota.example.net/synthetic.ics', use: 'outOfOffice', calendarSeconds: 600 },
   ],
+  statusInput: { enabled: true, key: 'Synthetic-layout-key-0000000000000000000000', allowPlainKey: true },
+  callSwitch: { enabled: true, hours: 3 },
+  colors: { busy: '#1A2B3C' },
   lifx: { enabled: true },
   sensors: ['available', 'busyAny', 'outOfOffice'],
 };
 
 const NOW = Date.now();
 const ANSWERS = {
-  '/version': { version: '0.1.0-beta.2' },
+  '/version': { version: '0.1.0-beta.3' },
   '/status': {
     version: 1, updatedAt: new Date(NOW - 20_000).toISOString(), status: 'inMeeting',
     reason: { source: 'Work', until: new Date(NOW + 1_800_000).toISOString() }, override: false, signIn: null,
@@ -75,7 +79,18 @@ const ANSWERS = {
       { id: 'cal-work', name: 'Work', type: 'microsoft', state: 'signInNeeded', lastChecked: null, events: null, error: 'waiting for sign-in' },
     ],
     light: { enabled: true, label: 'Floor', host: '192.168.4.50', found: 'discovered', lastSent: '#FF0000', lastSentAt: null, answered: true },
+    statusInput: { enabled: true, port: 8582, listening: true, error: null, id: 'q3Lr8vT0cXw2mN5a' },
+    inputs: [
+      { sender: 'CallWatch on Alex’s iMac', status: 'inCall', app: 'Microsoft Teams', via: 'api', auth: 'signed',
+        lastHeard: new Date(NOW - 30_000).toISOString(), expiresAt: new Date(NOW + 150_000).toISOString(), active: true },
+      { sender: 'Test on my laptop with a rather long name for a sender', status: 'busy', app: null, via: 'api', auth: 'plain',
+        lastHeard: new Date(NOW - 300_000).toISOString(), expiresAt: new Date(NOW - 60_000).toISOString(), active: false },
+      { sender: 'Home app', status: 'inCall', app: null, via: 'switch', auth: null, lastHeard: new Date(NOW - 600_000).toISOString(),
+        expiresAt: null, active: true },
+    ],
   },
+  '/input/info': { hostname: null, addresses: ['192.168.4.10', 'fd00:1234:5678:9abc::10'], port: 8582, id: 'q3Lr8vT0cXw2mN5a' },
+  '/input/test': { error: 'notListening', message: 'Nothing is listening on port 8582.' },
   '/icloud/calendars': { calendars: [
     { id: '/123456789/calendars/home/', name: 'Alex', shared: false, subscribed: false, eventsToday: 3 },
     { id: '/123456789/calendars/family-1/', name: 'Family', shared: true, subscribed: false, eventsToday: 1 },
@@ -218,7 +233,7 @@ function measure() {
   };
   const secondary = '.form-text, summary, .ns-card-meta, .bl-cal-meta, .bl-empty, .ns-secondary, .ns-footer, .bl-affiliation, .bl-now-line, '
     + '.btn:disabled, .bl-badge-muted, .bl-badge-checking, .ns-type-badge, .bl-card-error, .alert, .bl-code-waiting, .ns-issue-link, .form-label, '
-    + '.form-check-label';
+    + '.form-check-label, .bl-preset-label, .bl-badge-warning, .bl-readonly-line';
   const seen = [];
   for (const n of document.querySelectorAll(secondary)) {
     if (visible(n) && (n.textContent || '').trim()) {
@@ -227,13 +242,13 @@ function measure() {
     }
   }
   const dark = document.body.classList.contains('dark-mode');
-  for (const n of document.querySelectorAll('input:disabled, select:disabled, textarea:disabled, input[readonly]')) {
+  for (const n of document.querySelectorAll('input:disabled, select:disabled, textarea:disabled, input[readonly], .bl-readonly')) {
     if (!visible(n) || n.type === 'checkbox' || n.type === 'radio' || n.type === 'color') {
       continue;
     }
     const bg = contrast(n, 'locked field');
     if (dark && lum(bg) > 0.2) {
-      problems.push(`locked field "${n.value}": light background in dark mode`);
+      problems.push(`locked field "${(n.value ?? n.textContent).trim().slice(0, 40)}": light background in dark mode`);
     }
   }
   const width = document.documentElement.clientWidth;
@@ -301,7 +316,16 @@ async function run() {
         await frame.waitForSelector('#section-lights input[type="radio"]');
         await click('#section-lights .bl-lifx-card details summary');
         await click('#section-lights details.bl-all-sensors summary');
-        await click('#section-colors [data-path="colors.inMeeting"] input[type="checkbox"]');
+        // The status input: the port under Advanced, Replace key's question, a test result; a calendar card's own interval.
+        await frame.waitForSelector('#section-statusInput .bl-input-addresses .bl-readonly-line');
+        await click('#section-statusInput .bl-input-advanced summary');
+        await click('#section-statusInput .bl-replace-key');
+        await click('#section-statusInput .bl-input-test');
+        await frame.waitForSelector('#section-statusInput .bl-input-result');
+        await click('[data-card-id="cal-google"] .bl-source-advanced summary');
+        // Colors: Off on one row and Custom on another, with Busy already a custom color.
+        await click('#section-colors [data-path="colors.inMeeting"] button.bl-preset-off');
+        await click('#section-colors [data-path="colors.outOfOffice"] button.bl-preset-custom');
         await click('#section-calendars .ns-section-add');
         await click('#section-settings details summary');
         const poll = frame.locator('[data-path="pollSeconds"] input');

@@ -27,6 +27,8 @@ export const RIGHT_NOW = {
   heading: 'Right now',
   until: (time: string, source: string): string => `Until ${time}, from ${source}.`,
   from: (source: string): string => `From ${source}.`,
+  /** A status input report with an app (SPEC 6.3 item 5). */
+  fromApp: (sender: string, app: string): string => `From ${sender} (${app}).`,
   /** The source name the plugin writes when Teams presence decided the status (SPEC 6.3). */
   teams: 'Teams',
   nothingUntil: (time: string): string => `Nothing on your calendars until ${time}.`,
@@ -66,6 +68,10 @@ export const CALENDARS = {
   nameHelp: 'A name for this calendar. It appears in the log.',
   remove: 'Remove',
   removeQuestion: (name: string): string => `Remove ${name}?`,
+  /** The card's own check interval (SPEC 9.1 item 19), under its Advanced disclosure. */
+  checkEvery: 'Check for changes every (seconds)',
+  checkEveryPlaceholder: (value: number | string): string => `e.g. ${value}`,
+  checkEveryHelp: 'Leave empty to use Reload calendars every, under Settings.',
   cancel: 'Cancel',
   countsFor: 'Counts for',
   countsAll: 'Busy and out of office',
@@ -178,6 +184,17 @@ export const COLORS = {
   heading: 'Colors',
   help: 'The color the light shows for each status. Choose Off to turn the light off instead.',
   off: 'Off',
+  custom: 'Custom',
+  /** The presets, in the SPEC's order; Off and Custom follow them. */
+  presets: [
+    { name: 'Red', hex: '#FF0000' },
+    { name: 'Orange', hex: '#FF6A00' },
+    { name: 'Yellow', hex: '#FFD000' },
+    { name: 'Green', hex: '#00FF00' },
+    { name: 'Blue', hex: '#0050FF' },
+    { name: 'Purple', hex: '#B400FF' },
+    { name: 'White', hex: '#FFFFFF' },
+  ],
   teamsOnly: 'Teams only',
   precedence: 'When more than one applies, the one highest in this list wins.',
   reset: 'Reset colors',
@@ -210,6 +227,10 @@ export const LIGHTS = {
   bulbChoice: (label: string, ip: string): string => `${label} (${ip})`,
   none: 'No LIFX bulb found. Check that it is on and on the same network as Homebridge.',
   savedMissing: (label: string): string => `${label} was not found just now. It may be switched off.`,
+  /** The bulb in use, from the state file, before any search in this visit. */
+  usingBulb: (label: string, host: string): string => `Busy Light is using ${label} (${host}).`,
+  usingBulbSilent: (label: string, host: string): string => `Busy Light is using ${label} (${host}), but it did not answer last time.`,
+  noBulbYet: 'Busy Light has not found a bulb yet. Search again to look for one.',
   searchAgain: 'Search again',
   brightness: 'Brightness (percent)',
   testLight: 'Test light',
@@ -235,6 +256,51 @@ export const LIGHTS = {
     (name: string): string => `Choose ${name} Busy, then Detects occupancy.`,
     (): string => 'Set your light to red.',
   ],
+};
+
+/** SPEC 11.3 I. */
+export const STATUS_INPUT = {
+  heading: 'Status from other apps',
+  help: 'Let other apps on your network tell Busy Light you are on a call or busy, for example a call helper on your Mac or a Stream Deck button.',
+  howAppsConnect: 'How apps connect',
+  docsUrl: 'https://github.com/arodbuilds/homebridge-busy-light/blob/latest/docs/status-input.md',
+  enable: 'Let other apps set your status',
+  address: 'Address',
+  reserveHelp: 'Your router may give Homebridge a new address later, and apps would stop reaching it. Reserve this address for Homebridge in your router.',
+  key: 'Key',
+  copyKey: 'Copy key',
+  copied: 'Copied',
+  setupCode: 'Setup code',
+  copySetupCode: 'Copy setup code',
+  setupCodeHelp: 'Paste this into the app that will report your status. It contains your key, so treat it like a password.',
+  replaceKey: 'Replace key',
+  replaceQuestion: 'Replace the key? Every app using the current key stops working until you give it the new one.',
+  replace: 'Replace',
+  cancel: 'Cancel',
+  test: 'Test',
+  testing: 'Testing…',
+  testHelp: 'Reports a call for 30 seconds, so the light should turn red.',
+  received: 'Busy Light received the test.',
+  notListening: 'Busy Light is not listening yet. Save, restart Homebridge, then test again.',
+  unauthorized: 'The running Busy Light has a different key. Save and restart Homebridge, then test again.',
+  portError: (port: number | string): string => `Busy Light could not open port ${port}. Another program may be using it. Choose another port under Advanced.`,
+  allowPlainKey: 'Allow the plain key',
+  allowPlainKeyHelp: 'Apps that sign their requests never send the key. Apple Shortcuts and curl send the key itself, so anyone watching your network '
+    + 'could copy it. Turn this off once every app below shows Signed. If the key may have been seen, replace it too.',
+  port: 'Port',
+  portHelp: (port: number | string): string => `Change it only if another program on this computer already uses ${port}.`,
+  reporting: 'Apps reporting now',
+  noneReporting: 'No app has reported in the last 12 hours.',
+  /** Follows the status display name in a sender row when the report named an app. */
+  fromApp: (app: string): string => ` from ${app}`,
+  lastHeard: (relative: string): string => `Last heard ${relative}`,
+  active: 'Active',
+  expired: 'Expired',
+  signed: 'Signed',
+  plainKey: 'Plain key',
+  callSwitch: 'Add an On a Call switch to the Home app',
+  callSwitchHelp: 'Turn it on from a shortcut, Siri or a Home tile while you are on a call. Useful for apps that should not make network requests themselves.',
+  callSwitchHours: 'Turn it off by itself after (hours)',
 };
 
 /** SPEC 11.3 F. */

@@ -123,3 +123,46 @@ export function icloudRejected(name: string): string {
 export function validation(path: string, message: string): string {
   return `${path}: ${message}`;
 }
+
+/** SPEC 12 "Sender changed": a sender's report, when it is new or its status or app changed. */
+export function senderReports(sender: string, displayName: string, app: string | null): string {
+  return app ? `${sender} reports ${displayName} from ${app}.` : `${sender} reports ${displayName}.`;
+}
+
+export function senderCleared(sender: string): string {
+  return `${sender} cleared its status.`;
+}
+
+export function senderExpired(sender: string): string {
+  return `${sender}'s status expired.`;
+}
+
+export function inputStarted(port: number): string {
+  return `Status input is listening on port ${port}.`;
+}
+
+/** SPEC 12 "Input failed": a port in use, or another short reason (null for a port in use). */
+export function inputFailed(port: number, reason: string | null): string {
+  return reason === null ? `Status input could not start: port ${port} is already in use.` : `Status input could not start: ${reason}.`;
+}
+
+export function inputWrongKey(ip: string): string {
+  return `Status input: refused a request with a wrong key from ${ip}.`;
+}
+
+export function inputClockOff(ip: string, seconds: number): string {
+  return `Status input: refused a request from ${ip} whose clock is ${seconds} seconds off.`;
+}
+
+export function inputPlainKeyOff(ip: string): string {
+  return `Status input: refused a request from ${ip} that sent the key itself. Turn on Allow the plain key, or have that app sign its requests.`;
+}
+
+export function inputNotLocal(ip: string): string {
+  return `Status input: refused a request from ${ip}, which is not on the local network.`;
+}
+
+/** SPEC 12 "Call switch timeout", with the singular noun for 1 (12 item 1). */
+export function callSwitchTimeout(name: string, hours: number): string {
+  return `${name} On a Call turned itself off after ${count(hours, 'hour')}.`;
+}

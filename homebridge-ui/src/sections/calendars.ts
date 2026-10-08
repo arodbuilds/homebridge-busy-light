@@ -8,13 +8,13 @@
 import { callServer } from '../api.js';
 import type { App, ListState, StatusSource, TestResult } from '../app.js';
 import { badge, card, cardName, type BadgeKind } from '../card.js';
-import { CALENDARS, GOOGLE, ICLOUD, PILLS, SOURCE_TYPES, TEST, URL_CARD } from '../copy.js';
+import { CALENDARS, GOOGLE, ICLOUD, PILLS, SHELL, SOURCE_TYPES, TEST, URL_CARD } from '../copy.js';
 import {
-  clear, dangerLinkButton, el, footerAction, grid, gridCell, inlineConfirm, outLink, outlineButton, paragraph, passwordField, primaryButton,
-  selectField, statusBox, textField, type Child,
+  clear, dangerLinkButton, disclosure, el, footerAction, grid, gridCell, inlineConfirm, numberField, outLink, outlineButton, paragraph, passwordField,
+  primaryButton, selectField, statusBox, textField, type Child,
 } from '../dom.js';
 import { parseDate, relativeTime } from '../format.js';
-import { emptySource, newId, SOURCE_TYPES as TYPES, type SourceType, type UiSource } from '../model.js';
+import { DEFAULTS, emptySource, LIMITS, newId, SOURCE_TYPES as TYPES, type SourceType, type UiSource } from '../model.js';
 import { cardLabel, sourcePath } from '../validate.js';
 import { adoptIds, calendarList, rowBadges, type Row } from './calendar-list.js';
 import { microsoftBody, microsoftFooter, microsoftOnStatus, microsoftResults, stopMicrosoft } from './microsoft.js';
@@ -294,6 +294,21 @@ function removeSource(app: App, s: UiSource): void {
   }
 }
 
+/**
+ * The card's own check interval (SPEC 11.3 C, 9.1 item 19), under an Advanced disclosure at the bottom of the body:
+ * empty uses Reload calendars every, under Settings, whose value the placeholder shows.
+ */
+function intervalField(app: App, s: UiSource): HTMLElement {
+  return disclosure(SHELL.advanced, [grid(gridCell(6, numberField(CALENDARS.checkEvery, s.calendarSeconds ?? Number.NaN, (v) => {
+    s.calendarSeconds = Number.isNaN(v) ? null : v;
+    app.changed();
+  }, {
+    path: sourcePath(s, 'calendarSeconds'), min: LIMITS.sourceCalendarSeconds[0], max: LIMITS.sourceCalendarSeconds[1],
+    placeholder: CALENDARS.checkEveryPlaceholder(Number.isFinite(app.config.calendarSeconds) ? app.config.calendarSeconds : DEFAULTS.calendarSeconds),
+    help: CALENDARS.checkEveryHelp,
+  })))], { cls: 'bl-source-advanced', open: s.calendarSeconds !== null });
+}
+
 function sourceCard(app: App, s: UiSource): HTMLElement {
   const title = cardName(cardLabel(s));
   const parts = statusParts(app, s);
@@ -335,6 +350,10 @@ function sourceCard(app: App, s: UiSource): HTMLElement {
       const footer = microsoftFooter(app, s);
       footerLeft.push(...footer.left);
       footerRight = footer.right;
+    }
+    // Every card type, except while the Microsoft code view stands in the body's place.
+    if (!(s.type === 'microsoft' && app.ui.microsoft.get(s.id)?.flow)) {
+      body = [...body, intervalField(app, s)];
     }
   }
   return card({

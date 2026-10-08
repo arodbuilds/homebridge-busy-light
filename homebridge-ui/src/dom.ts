@@ -109,6 +109,7 @@ export function numberField(label: string, value: number, onChange: (value: numb
   const input = el('input', {
     id, class: 'form-control', type: 'number', value: Number.isFinite(value) ? String(value) : '', inputmode: 'numeric', step: '1',
     min: opts.min !== undefined ? String(opts.min) : undefined, max: opts.max !== undefined ? String(opts.max) : undefined,
+    placeholder: opts.placeholder,
   });
   input.addEventListener('input', () => onChange(input.value.trim() === '' ? Number.NaN : Number(input.value)));
   return wrapField(id, label, input, opts);
