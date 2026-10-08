@@ -166,7 +166,8 @@ export class BusyLightEngine {
     try {
       const now = this.clock.now();
       this.lastTickAt = now;
-      await Promise.all(this.sources.map((s) => s.runDue(now, this.config.calendarSeconds * 1000)));
+      // SPEC 8.1 item 2: each source on its own interval, or the platform's when it has none.
+      await Promise.all(this.sources.map((s) => s.runDue(now, (s.config.calendarSeconds ?? this.config.calendarSeconds) * 1000)));
       const bulbChosen = await this.light.maintain();
       await this.applyStatus(undefined, bulbChosen);
     } catch (err) {

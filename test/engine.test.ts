@@ -467,3 +467,17 @@ test('a long report survives a restart; with calendars and no fresh data and no 
   await clock.advance(2 * 3_600_000);
   assert.equal(engine!.status, 'unknown', 'calendars configured, none fresh, no report');
 });
+
+test('two calendars with different intervals reload on their own schedules (SPEC 8.1 item 2, 9.1 item 19)', async () => {
+  make({
+    pollSeconds: 30,
+    calendarSeconds: 180,
+    calendars: [{ type: 'url', name: 'Often', url: OTHER, calendarSeconds: 60 }, { type: 'url', name: 'Platform', url: FEED }],
+  });
+  fake.on('https://', () => text(icsOf([])));
+  engine!.start();
+  await settle();
+  await clock.advance(6 * MIN);
+  assert.equal(fake.callsTo(OTHER).length, 7, 'every 60 seconds: at 0 and each of the 6 minutes');
+  assert.equal(fake.callsTo(FEED.split('?')[0]).length, 3, 'every 180 seconds, the platform interval: at 0, 3 and 6 minutes');
+});
