@@ -333,3 +333,49 @@
 .bl-precedence {
   margin: 0.75rem 0 0.5rem;
 }
+
+/* Lights (SPEC 11.3 E): the bulb search lines and choice, Test light's help in the footer, the sensors and the steps. */
+.bl-lifx-results {
+  margin: 0 0 0.75rem;
+}
+
+.bl-lifx-line {
+  margin: 0 0 0.5rem;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.busy-light-ui .bl-lifx-choice {
+  margin: 0 0 0.5rem;
+  padding: 0;
+  border: 0;
+}
+
+.busy-light-ui .bl-lifx-actions {
+  margin-bottom: 0;
+}
+
+.busy-light-ui .bl-test-help {
+  margin-top: 0;
+}
+
+.busy-light-ui .bl-lifx-card {
+  margin-bottom: 1rem;
+}
+
+.bl-other-heading {
+  font-size: 1rem;
+  margin: 1rem 0 0.25rem;
+}
+
+.bl-sensors-heading {
+  margin-bottom: 0.5rem;
+}
+
+.busy-light-ui .bl-sensors .form-check {
+  margin-bottom: 0.5rem;
+}
+
+.busy-light-ui .bl-all-sensors {
+  margin: 0 0 1rem;
+}
