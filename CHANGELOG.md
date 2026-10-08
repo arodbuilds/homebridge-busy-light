@@ -2,15 +2,30 @@
 
 All notable changes to Busy Light are recorded here. Versions follow [semantic versioning](https://semver.org).
 
-## Unreleased
+## 0.1.0-beta.2 (2026-10-08)
+
+The settings page. Busy Light now has its own page in the Homebridge UI in place of the standard form, and calendars are picked from a list instead of typed by name. A configuration written by the first beta keeps working unchanged.
+
+### Added
+
+- The settings page, in five parts: Right now (the status, color and reason the running plugin shows, refreshed every 15 seconds), Calendars, Colors, Lights and Settings. Each field is checked when you leave it, the problems are listed above Save, and changes you leave unsaved are offered back the next time the page opens, never with a password or calendar address.
+- Calendars picked from a list. Connect on an iCloud card lists your iCloud calendars with how many events each has today, marking calendars shared with you and calendars you have not chosen before. Choices are saved by the calendar's identifier and name, so renaming a calendar no longer matters.
+- "Counts for": each calendar counts for busy and out of office, or for out of office only (`use`: `all` or `outOfOffice`), for example a family calendar whose holidays count but whose appointments do not.
+- Microsoft 365 sign-in from the page: Connect shows the code and a link to Microsoft's sign-in page, notices when you have finished, and then lists your Outlook calendars to tick. More than one Outlook calendar can count. Disconnect signs out.
+- Test on Google Calendar and Calendar URL cards: says how many events the calendar has today, or what went wrong.
+- A bulb finder: ticking "Use a LIFX bulb" searches the network, uses the bulb when there is one and lets you choose when there are several. Test light shows red, then green, on the bulb.
+- Reset plugin to fresh install, which signs out of Microsoft 365, removes every Busy Light accessory from the Home app at the next restart and clears the settings.
+- Log lines naming iCloud calendars that are not in use yet, and a ticked calendar that is no longer there.
 
 ### Changed
 
-- Settings form: the App-specific password help now links to account.apple.com and to Apple's instructions for creating one.
+- `calendars[].calendars` entries can be `{ "id", "name", "use" }` objects. A plain name, as the first beta wrote it, still works for iCloud.
+- The standard settings form (still used where the settings page is not available): the App-specific password help links to account.apple.com and to Apple's instructions for creating one, and it shows "Counts for".
+- A new runtime dependency, `@homebridge/plugin-ui-utils`, for the settings page.
 
 ### Fixed
 
-- Settings form: choosing a calendar type no longer leaves the whole calendar entry stuck to the mouse pointer. No list in the form can be dragged to reorder.
+- Standard settings form: choosing a calendar type no longer leaves the whole calendar entry stuck to the mouse pointer. No list in the form can be dragged to reorder.
 
 ## 0.1.0-beta.1 (2026-10-08)
 
