@@ -357,7 +357,7 @@ Titles and descriptions, verbatim:
 | `calendars[].type` | Type | (enum titles: iCloud, Google Calendar, Microsoft 365, Calendar URL) |
 | `calendars[].name` | Name | A name for this calendar. It appears in the log. |
 | `appleId` | Apple ID email | |
-| `appPassword` | App-specific password | Create one at account.apple.com under Sign-In and Security. This is not your Apple ID password. |
+| `appPassword` | App-specific password | Create one at <a href="https://account.apple.com" target="_blank" rel="noopener noreferrer">account.apple.com</a> under Sign-In and Security, then App-Specific Passwords (<a href="https://support.apple.com/en-us/102654" target="_blank" rel="noopener noreferrer">how to</a>). This is not your Apple ID password. |
 | `calendars[].calendars` | Calendars to include | Leave empty to use every calendar. The log lists the calendar names found. |
 | `url` (Google) | Secret address in iCal format | In Google Calendar settings, pick the calendar, then Integrate calendar. Treat it like a password. |
 | `email` | Your Google email | Optional. Lets Busy Light ignore invitations you declined. |
@@ -603,3 +603,4 @@ Test helpers (`test/helpers.ts`) provide a fake `fetch` that throws on any addre
 - Open: the settings page prototype from Design (section 11).
 - Open: confirm that LIFX bulbs acknowledge with the request's sequence and reply to the sender's port, as the LAN protocol documents, on the user's bulb.
 - 2026-10-08: The settings form's lists are not reorderable (`orderable: false`), after the calendar entry stuck to the pointer in Homebridge UI 5.29.0 on the Pi. Order has no meaning for any of them.
+- 2026-10-08: The App-specific password help links to account.apple.com and to Apple's instructions (support.apple.com/en-us/102654), both opening in a new tab. The Homebridge UI renders field descriptions as HTML. The custom settings page (build 2) keeps both links under "Where do I find this?".

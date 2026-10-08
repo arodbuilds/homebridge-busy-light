@@ -70,7 +70,7 @@
             },
             "appPassword": {
               "title": "App-specific password",
-              "description": "Create one at account.apple.com under Sign-In and Security. This is not your Apple ID password.",
+              "description": "Create one at <a href=\"https://account.apple.com\" target=\"_blank\" rel=\"noopener noreferrer\">account.apple.com</a> under Sign-In and Security, then App-Specific Passwords (<a href=\"https://support.apple.com/en-us/102654\" target=\"_blank\" rel=\"noopener noreferrer\">how to</a>). This is not your Apple ID password.",
               "type": "string"
             },
             "calendars": {
