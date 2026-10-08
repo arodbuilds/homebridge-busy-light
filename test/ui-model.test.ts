@@ -8,12 +8,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
-import { defaultConfig, parseConfig } from '../src/config.js';
+import {
+  defaultConfig, MAX_CALENDAR_SECONDS, MAX_CALL_HOURS, MAX_INPUT_PORT, MAX_POLL_SECONDS, MAX_REFRESH_SECONDS, MIN_CALENDAR_SECONDS, MIN_CALL_HOURS,
+  MIN_INPUT_PORT, MIN_POLL_SECONDS, parseConfig,
+} from '../src/config.js';
 import { relativeTime } from '../homebridge-ui/src/format.js';
 import { MARK_ROOT, MARK_SHAPES } from '../homebridge-ui/src/mark.js';
 import { DEFAULTS, LIMITS, emptyConfig, exportConfig, newId, readConfig, restoreSecrets, splitWords, withoutSecrets } from '../homebridge-ui/src/model.js';
 import { isCalendarAddress, isHost, validate } from '../homebridge-ui/src/validate.js';
-import { MAX_CALENDAR_SECONDS, MAX_POLL_SECONDS, MAX_REFRESH_SECONDS, MIN_CALENDAR_SECONDS, MIN_POLL_SECONDS } from '../src/config.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const spec = fs.readFileSync(path.join(root, 'SPEC.md'), 'utf8');
@@ -35,11 +37,13 @@ describe('settings page model (SPEC section 9)', () => {
       platform: 'BusyLight', name: plugin.name, calendars: [], colors: plugin.colors, lifx: plugin.lifx, sensors: plugin.sensors,
       overrideSwitch: plugin.overrideSwitch, pollSeconds: plugin.pollSeconds, calendarSeconds: plugin.calendarSeconds,
       ignoreAllDayBusy: plugin.ignoreAllDayBusy, outOfOfficeWords: plugin.outOfOfficeWords, debug: plugin.debug,
+      statusInput: plugin.statusInput, callSwitch: plugin.callSwitch,
     });
     assert.deepEqual(readConfig(undefined), emptyConfig());
     assert.deepEqual(LIMITS, {
       pollSeconds: [MIN_POLL_SECONDS, MAX_POLL_SECONDS], calendarSeconds: [MIN_CALENDAR_SECONDS, MAX_CALENDAR_SECONDS], brightness: [1, 100],
-      refreshSeconds: [0, MAX_REFRESH_SECONDS],
+      refreshSeconds: [0, MAX_REFRESH_SECONDS], port: [MIN_INPUT_PORT, MAX_INPUT_PORT], hours: [MIN_CALL_HOURS, MAX_CALL_HOURS],
+      sourceCalendarSeconds: [MIN_CALENDAR_SECONDS, MAX_CALENDAR_SECONDS],
     });
     assert.deepEqual(DEFAULTS.colors, plugin.colors);
   });

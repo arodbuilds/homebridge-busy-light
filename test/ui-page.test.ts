@@ -77,20 +77,21 @@ afterEach(() => {
 });
 
 describe('settings page: anatomy (SPEC 11.1)', () => {
-  it('draws the banner, the intro, the affiliation line, the five sections, the closing line and the footer, in order', () => {
+  it('draws the banner, the intro, the affiliation line, the six sections, the closing line and the footer, in order', () => {
     const { root } = mount();
     const kids = root.children.map((c) => `${c.tagName.toLowerCase()}${c.id ? `#${c.id}` : ''}.${c.className.split(' ').join('.')}`);
     assert.deepEqual(kids, [
       'img.ns-banner', 'div.ns-draft-holder', 'p.lead-copy', 'p.lead-copy', 'p.form-text.bl-affiliation',
-      'section#section-rightNow.ns-section', 'section#section-calendars.ns-section', 'section#section-colors.ns-section',
+      'section#section-rightNow.ns-section', 'section#section-calendars.ns-section', 'section#section-statusInput.ns-section',
+      'section#section-colors.ns-section',
       'section#section-lights.ns-section', 'section#section-settings.ns-section', 'div.alert.alert-warning.ns-issues', 'p.lead-copy.mt-3',
       'footer.ns-footer.form-text',
     ]);
     assert.equal(root.children[0].getAttribute('alt'), copy.BANNER.alt);
     assert.equal(root.children[0].getAttribute('src'), 'busy-light-banner.png');
     assert.equal(text(root.children[4]), INTRO.affiliation);
-    assert.equal(text(root.children[11]), INTRO.closing);
-    assert.deepEqual(root.querySelectorAll('h2').map((h) => text(h)), ['Right now', 'Calendars', 'Colors', 'Lights', 'Settings']);
+    assert.equal(text(root.children[12]), INTRO.closing);
+    assert.deepEqual(root.querySelectorAll('h2').map((h) => text(h)), ['Right now', 'Calendars', 'Status from other apps', 'Colors', 'Lights', 'Settings']);
     const footer = root.querySelector('footer')!;
     assert.equal(text(footer), 'Busy Light · Made by Alex Rodriguez · alex-rodriguez.com · Report an issue');
     assert.deepEqual(footer.querySelectorAll('a').map((a) => [a.getAttribute('href'), a.getAttribute('target'), a.getAttribute('rel')]), [
