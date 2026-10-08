@@ -139,6 +139,10 @@ export interface LifxState {
 /** What the page draws beyond the configuration and /status. A redraw keeps all of it. */
 export interface UiState {
   chooserOpen: boolean;
+  /** The chooser shows the two Outlook or Microsoft 365 options (SPEC 11.3 C, from build 3.1). */
+  chooserOutlook: boolean;
+  /** Calendar URL cards added as a published Outlook link on this page: their steps show open (11.3 C). */
+  outlookCards: Set<string>;
   /** Calendar cards drawn open. A new card opens expanded; saved cards start closed. */
   expanded: Set<string>;
   /** The card whose Remove question is open. */

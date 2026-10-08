@@ -265,7 +265,7 @@ describe('settings page: the chooser and a new card (SPEC 11.1 item 4, 11.3 C)',
     assert.deepEqual(tiles.map((t) => [text(t.querySelector('.ns-tile-title')), text(t.querySelector('.ns-tile-help'))]), [
       ['iCloud', 'Calendars in your Apple account.'],
       ['Google Calendar', 'One Google calendar, by its secret address.'],
-      ['Microsoft 365', 'Outlook calendars and Teams status. Needs an app registration from your administrator.'],
+      ['Outlook or Microsoft 365', 'Outlook calendars, by a published link or by signing in.'],
       ['Calendar URL', 'Any calendar link that starts with https:// or webcal://.'],
     ]);
     assert.equal(buttons(section).includes(copy.CALENDARS.add), false);
@@ -1618,5 +1618,107 @@ describe('settings page: the per-status sensors and the statuses the setup can p
     tick(offline.querySelector('input')!, true);
     await settle();
     assert.ok((lastBlock().sensors as string[]).includes('offline'));
+  });
+});
+
+// SPEC 11.3 C (build 3.1), 15 item 24: the Outlook published calendar link as the recommended Microsoft 365 setup.
+
+describe('settings page: Outlook or Microsoft 365 (SPEC 11.3 C)', () => {
+  const OFFICE = 'https://outlook.office365.com/owa/calendar/synthetic/reachcalendar.ics';
+  const chooserOf = (root: FakeElement): FakeElement => {
+    const section = root.querySelector('#section-calendars')!;
+    buttonNamed(section, copy.CALENDARS.add).click();
+    return section;
+  };
+  const outlookTile = (section: FakeElement): FakeElement => section.querySelector('.ns-chooser-tile[data-type="microsoft"]')!;
+
+  it('the tile shows two options inline, in order: the published link, recommended, then sign-in', () => {
+    const { root } = mount();
+    const section = chooserOf(root);
+    assert.equal(section.querySelector('.bl-outlook-options'), null, 'not before the tile is chosen');
+    assert.equal(outlookTile(section).getAttribute('aria-expanded'), 'false');
+    outlookTile(section).click();
+    assert.equal(outlookTile(section).getAttribute('aria-expanded'), 'true');
+    const options = section.querySelectorAll('.bl-outlook-option');
+    const title = (o: FakeElement): string => text(o.querySelector('.ns-tile-title')).replace(copy.CHOOSER.recommended, '').trim();
+    assert.deepEqual(options.map((o) => [title(o), text(o.querySelector('.ns-tile-help'))]), [
+      [copy.CHOOSER.published, copy.CHOOSER.publishedText],
+      [copy.CHOOSER.signIn, copy.CHOOSER.signInText],
+    ]);
+    const recommended = options[0].querySelector('.badge')!;
+    assert.equal(text(recommended), copy.CHOOSER.recommended);
+    assert.ok(recommended.className.includes('bl-badge-connected'), 'the success tone');
+    assert.equal(options[1].querySelector('.badge'), null);
+    assert.equal(dom.document.activeElement, options[0], 'the first option takes focus');
+    buttonNamed(section, copy.CALENDARS.cancel).click();
+    buttonNamed(section, copy.CALENDARS.add).click();
+    assert.equal(section.querySelector('.bl-outlook-options'), null, 'Cancel closes the options with the chooser');
+  });
+
+  it('Published calendar link adds a Calendar URL card named Outlook, the steps, help and link above the Address, which takes focus', async () => {
+    const { root, page } = mount();
+    const section = chooserOf(root);
+    outlookTile(section).click();
+    section.querySelector('.bl-outlook-published')!.click();
+    await settle();
+    const s = page.config.calendars[0];
+    assert.equal(s.type, 'url');
+    assert.equal(s.name, copy.OUTLOOK.name);
+    const node = cardOf(root, s.id);
+    assert.deepEqual(node.querySelectorAll('.badge').map((b) => text(b)), ['Calendar URL', 'Not saved yet']);
+    assert.equal(node.querySelector('.bl-outlook-howto'), null, 'open, not under a disclosure');
+    const steps = node.querySelector('.bl-outlook-steps')!;
+    assert.deepEqual(steps.querySelectorAll('.ns-step-text').map((t) => text(t)), copy.OUTLOOK.steps);
+    assert.equal(text(steps.querySelectorAll('.ns-step-text')[1]),
+      'Under Publish a calendar, choose your calendar and Can view when I\'m busy, then select Publish.');
+    const link = steps.querySelector('.bl-outlook-missing a')!;
+    assert.equal(text(steps.querySelector('.bl-outlook-missing')), `${copy.OUTLOOK.missing} ${copy.OUTLOOK.open}`);
+    assert.deepEqual([text(link), link.getAttribute('href'), link.getAttribute('target'), link.getAttribute('rel')],
+      [copy.OUTLOOK.open, 'https://outlook.office.com/calendar/', '_blank', 'noopener noreferrer']);
+    const order = node.querySelectorAll('.bl-outlook-steps, [data-path]')
+      .map((n) => (n.className.includes('bl-outlook-steps') ? 'steps' : n.getAttribute('data-path')));
+    assert.deepEqual(order.slice(0, 3), [`calendars.${s.id}.name`, 'steps', `calendars.${s.id}.url`], 'the steps between Name and Address');
+    assert.equal(dom.document.activeElement, field(root, `calendars.${s.id}.url`), 'the Address takes focus');
+    assert.ok(node.querySelector(`[data-path="calendars.${s.id}.use"]`), 'Counts for applies');
+    assert.ok(node.querySelector(`[data-path="calendars.${s.id}.calendarSeconds"]`), 'and the interval');
+    fill(root, `calendars.${s.id}.url`, OFFICE);
+    await settle();
+    assert.deepEqual((lastBlock().calendars as unknown[])[0], { type: 'url', id: s.id, name: 'Outlook', url: OFFICE, use: 'all' });
+    answers.set('/url/test', { eventsToday: 2 });
+    buttonNamed(node, copy.TEST.test).click();
+    await settle();
+    assert.deepEqual(requests.filter((r) => r.path === '/url/test').map((r) => r.payload), [{ url: OFFICE }], 'Test works as for any address');
+  });
+
+  it('Sign in with Microsoft 365 adds the Microsoft 365 card, unchanged', async () => {
+    const { root, page } = mount();
+    const section = chooserOf(root);
+    outlookTile(section).click();
+    section.querySelector('.bl-outlook-signin')!.click();
+    await settle();
+    const s = page.config.calendars[0];
+    assert.equal(s.type, 'microsoft');
+    const node = cardOf(root, s.id);
+    assert.deepEqual(node.querySelectorAll('.badge').map((b) => text(b)), ['Microsoft 365', 'Not saved yet']);
+    assert.ok(node.querySelector(`[data-path="calendars.${s.id}.tenantId"]`));
+    assert.equal(dom.document.activeElement, field(root, `calendars.${s.id}.name`));
+  });
+
+  it('a saved Calendar URL on an Outlook host shows the steps collapsed under How to get this link; other cards do not', () => {
+    const { root } = mount({ platform: 'BusyLight', calendars: [
+      { type: 'url', id: 'office', name: 'Office', url: OFFICE },
+      { type: 'url', id: 'live', name: 'Home', url: 'webcal://outlook.live.com/owa/calendar/synthetic/calendar.ics' },
+      { type: 'url', id: 'rota', name: 'Team rota', url: 'https://rota.example.net/a.ics' },
+      { type: 'google', id: 'g', name: 'G', url: 'https://calendar.example.com/x.ics' },
+    ] });
+    for (const id of ['office', 'live']) {
+      const howTo = openCard(root, id).querySelector('details.bl-outlook-howto')!;
+      assert.ok(howTo, id);
+      assert.equal(text(howTo.querySelector('summary')), copy.OUTLOOK.howTo);
+      assert.equal(howTo.open, false, 'collapsed');
+      assert.deepEqual(howTo.querySelectorAll('.ns-step-text').map((t) => text(t)), copy.OUTLOOK.steps);
+    }
+    assert.equal(openCard(root, 'rota').querySelector('.bl-outlook-steps'), null);
+    assert.equal(openCard(root, 'g').querySelector('.bl-outlook-steps'), null);
   });
 });
