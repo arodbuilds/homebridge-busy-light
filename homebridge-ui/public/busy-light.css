@@ -379,3 +379,9 @@
 .busy-light-ui .bl-all-sensors {
   margin: 0 0 1rem;
 }
+
+/* Settings (SPEC 11.3 F): the Reset link and, in its place after Confirm, the done state. */
+.bl-reset {
+  margin-top: 0.25rem;
+  margin-bottom: 1rem;
+}

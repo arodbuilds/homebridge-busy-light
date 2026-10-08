@@ -133,8 +133,8 @@ export interface App {
   issues(): UiIssue[];
   /** Ask the server for /status now. */
   refreshStatus(): Promise<void>;
-  /** Replace the configuration (Reset, Restore) and redraw everything. */
-  replaceConfig(config: UiConfig): void;
+  /** Replace the configuration (Reset, Restore) and redraw everything; `draft: false` deletes the draft and writes none. */
+  replaceConfig(config: UiConfig, opts?: { draft?: boolean }): void;
   /** Ask a field to take focus once the section is drawn (a new card's Name). */
   focusLater(path: string): void;
 }
