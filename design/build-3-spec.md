@@ -9,6 +9,7 @@ Build 3 has three parts:
 - **A. Status input**: any app on the local network can report a status (a new SPEC section 18, plus changes to sections 2, 6, 7, 9, 10, 11, 12, 15, 16, 17).
 - **B. Per-calendar check interval**.
 - **C. Color presets** in place of hex codes on the settings page.
+- **D. The bulb in use, shown when the page opens** (found on the Pi on October 8, 2026).
 
 Version: `0.1.0-beta.3`.
 
@@ -22,7 +23,7 @@ Version: `0.1.0-beta.3`.
 
 Calendars say when a meeting is scheduled. Other apps can know more: that a call is live in Teams, Zoom or FaceTime, that the user is presenting, or has stepped away. The status input lets any app tell Busy Light, through either of two channels, without depending on any particular app:
 
-1. **The status API**: HTTP on the local network (18.2 to 18.8).
+1. **The status API**: HTTP on the local network (18.2 to 18.8 and 18.11).
 2. **The On a Call switch**: a HomeKit switch (18.9), for senders that should make no network requests, such as Apple Shortcuts.
 
 Busy Light treats every report as a presence signal alongside Teams presence (6.3).
@@ -36,21 +37,24 @@ Busy Light treats every report as a presence signal alongside Teams presence (6.
 1. Off unless `statusInput.enabled` is on (9.1 item 17). When on, the platform starts a Node `http` server at `didFinishLaunching` on `statusInput.port` (default 8582), on all IPv4 and IPv6 addresses, and closes it on Homebridge `shutdown`.
 2. A port that cannot be opened is logged once ("Status input could not start") and leaves the input off until the next restart; the state file records the error (10.1).
 3. Node built-ins only. No new dependency.
+4. Instance id: 12 random bytes written base64url without padding (16 characters), created the first time the status input starts and kept in `busy-light/instance.json`. It is not a secret. It lets a sender confirm it reached this Busy Light and not another device at the same address (18.11). It changes only if that file is deleted.
 
 #### 18.4 Requests
 
 | Method and path | Key | Body | Response |
 | --- | --- | --- | --- |
-| `GET /v1/ping` | no | none | `200 { "service": "busy-light", "apiVersion": 1, "version" }` |
+| `GET /v1/ping` | no | none | `200 { "service": "busy-light", "apiVersion": 1, "version", "id" }` (`id` as 18.3 item 4) |
 | `POST /v1/status` | yes | `{ "sender", "status", "app"?, "ttlSeconds"? }` | `200 { "accepted": true, "expiresAt", "status" }` (`status` is the resulting overall status) |
 | `GET /v1/status` | yes | none | `200 { "status", "reason", "senders": [{ "sender", "status", "app", "expiresAt" }] }` |
 
-1. The key is `Authorization: Bearer <statusInput.key>`, compared in constant time.
-2. Bodies are `application/json` (parameters allowed after a semicolon), at most 2048 bytes, an object with only the four fields above.
-3. `sender`: 1 to 64 printable characters (the display name rule of 9.1 item 2). `app`: the same rule, optional. `ttlSeconds`: an integer from 30 to 43200, default 180.
-4. Errors are `{ "error", "message" }` with the codes and keys of `docs/status-input.md` section 2.5: `invalid_json`, `unknown_field`, `invalid_sender`, `invalid_status`, `invalid_app`, `invalid_ttl` (400), `unauthorized` (401), `not_local` (403), `not_found` (404), `method_not_allowed` (405, with `Allow`), `too_many_senders` (409), `too_large` (413), `unsupported_media_type` (415), `rate_limited` (429, with `Retry-After` in seconds).
-5. No CORS headers on any response, and `OPTIONS` answers 405.
-6. Checks run in this order: local address (403), rate limit (429), path and method (404, 405), key (401, except `/v1/ping`), size (413), media type (415), JSON (400), fields (400), sender count (409).
+1. Authentication is by either form of 18.8: a signature (items 4 to 8) or the plain key (item 9).
+2. Bodies are `application/json` (parameters allowed after a semicolon), at most 2048 bytes of UTF-8, an object with only the four fields above.
+3. Text rule, for `sender` (required) and `app` (optional): a JSON string, normalized to Unicode NFC, of 1 to 64 Unicode code points (not bytes, and not UTF-16 units; an emoji such as U+1F4DE counts as one), with no leading or trailing white space, and with none of: control characters (Unicode category Cc), U+2028, U+2029, or the bidirectional formatting characters U+202A to U+202E and U+2066 to U+2069. Everything else is allowed, including curly apostrophes ("Alex’s iMac", the macOS default computer name), accented letters and emoji. The stored and displayed form is the NFC form. A value that breaks the rule gets `invalid_sender` or `invalid_app`; nothing is trimmed or rewritten silently.
+4. `ttlSeconds`: an integer from 30 to 43200, default 180.
+5. `clear`: removes that sender's report and answers `200 { "accepted": true, "expiresAt": null, "status" }`, also when the sender has no active report (clearing is idempotent). `app` and `ttlSeconds` are allowed with `clear`, checked against their rules, and otherwise ignored, so a sender can send the same shape every time. `clear` is never refused with 409.
+6. Errors are `{ "error", "message" }` with the codes and keys of `docs/status-input.md` section 2.6: `invalid_json`, `unknown_field`, `invalid_sender`, `invalid_status`, `invalid_app`, `invalid_ttl` (400), `unauthorized`, `clock_skew`, `replayed` (401), `not_local` (403), `not_found` (404), `method_not_allowed` (405, with `Allow`), `too_many_senders` (409), `too_large` (413), `unsupported_media_type` (415), `rate_limited` (429, with `Retry-After` in seconds).
+7. No CORS headers on any response, and `OPTIONS` answers 405.
+8. Checks run in this order: local address (403), rate limit (429), path and method (404, 405), size (413), media type (415), authentication (401, except `/v1/ping`; a signature is checked over the raw body bytes, before JSON parsing), JSON (400), fields (400), the replay rule (401 `replayed`, 18.8 item 7), sender count (409).
 
 #### 18.5 Local network only
 
@@ -62,17 +66,23 @@ A request whose remote address (after unwrapping an IPv4-mapped IPv6 address) is
 
 #### 18.7 Senders and expiry
 
-1. The latest report from a sender (matched by `sender`, case-sensitive) replaces its earlier one. `clear` removes it.
+1. The latest report from a sender (matched by the NFC form of `sender`, case-sensitive) replaces its earlier one. `clear` removes it.
 2. A report expires `ttlSeconds` after it arrives. At most 20 unexpired senders; a report from a 21st gets 409.
 3. Expiry is checked on every tick and by a timer set to the next expiry (as the event boundary timer of 8.1 item 3), so a status changes the moment its report expires.
 4. Unexpired reports are kept in `busy-light/inputs.json` (mode 600, written atomically on every change) and reloaded at startup, so a long report (for example two hours of Do not disturb) survives a Homebridge restart. Expired entries are dropped on load.
-5. The last 20 senders seen in the past 12 hours, expired or not, are kept for display (10.1, 11.3 I) with their last status, app and time.
+5. The last 20 senders seen in the past 12 hours, expired or not, are kept for display (10.1, 11.3 I) with their last status, app and time, and with the `ts` of their last signed request (18.8 item 7). `inputs.json` keeps this list too, so the replay rule survives a restart.
 
-#### 18.8 Key
+#### 18.8 Key and authentication
 
 1. `statusInput.key`: 32 to 128 characters from `A-Z a-z 0-9 - _`. The settings page generates 32 random bytes with `crypto.getRandomValues` and writes them base64url without padding (43 characters).
 2. The key is never logged, never written to the state file, and never returned by the API.
-3. A wrong or missing key is logged once per remote address per hour (12).
+3. A failed authentication of any kind is logged once per remote address per hour (12).
+4. **Signed requests** (for apps). The key never crosses the network. Header: `Authorization: BusyLight-HMAC-SHA256 ts=<ts>, sig=<sig>`, the two parameters in either order, separated by a comma and optional spaces, each exactly once.
+5. `ts` is the sender's clock in whole milliseconds since 1970 UTC, as decimal digits. `sig` is the lowercase hex HMAC-SHA256, keyed with the UTF-8 bytes of the key, of the string `v1` LF method LF path LF ts LF body hash, where LF is one U+000A, method is upper case (`POST`, `GET`), path is the request path without the query string (`/v1/status`), and body hash is the lowercase hex SHA-256 of the raw body bytes (of the empty string for a request without a body). The test vector in `docs/status-input.md` section 2.4 is normative; a test checks it.
+6. A signature is compared in constant time. A `ts` more than 300 seconds from Busy Light's clock gets 401 `clock_skew`, whose message gives the difference in seconds.
+7. Replay rule, `POST /v1/status` only: a signed report whose `ts` is not greater than the `ts` of the last signed request accepted from the same `sender` gets 401 `replayed`. With the 300-second window this means a captured request can never be replayed. A `GET` is read-only and has no replay rule.
+8. A malformed signed header (missing or repeated parameter, `ts` not digits, `sig` not 64 lowercase hex characters) gets 401 `unauthorized`.
+9. **Plain key** (for Apple Shortcuts, curl and testing): `Authorization: Bearer <key>`, compared in constant time. It is accepted on the home network like a signature, has no replay rule, and is not refused when the sender is away. `docs/status-input.md` tells app builders to sign and to keep the plain form for the user's own tools.
 
 #### 18.9 The On a Call switch
 
@@ -86,6 +96,14 @@ A request whose remote address (after unwrapping an IPv4-mapped IPv6 address) is
 1. A report enters the precedence of 6.3 like Teams presence; it cannot lower a higher status (a sender's `available` does not hide a calendar meeting).
 2. The override switch (rule 1) still wins over everything.
 3. A sender learns the overall status (`GET /v1/status`) and the names, statuses and apps of the active senders, nothing about calendars or events.
+
+#### 18.11 Finding Busy Light by name
+
+1. The UI server's `/input/info` resolves `{os.hostname()}.local` with `dns.lookup` (all addresses, 2-second timeout). When it resolves to at least one of the host's own non-internal addresses, that name is Busy Light's **host name** (for example `homebridge.local`; Raspberry Pi OS and the Homebridge image advertise it through Avahi). Otherwise there is no host name.
+2. The settings page, the setup code and the CLI use the host name when there is one, and the first IPv4 address otherwise. The IPv4 addresses are always listed too, as a fallback.
+3. The setup code is `busylight://{host}:{port}/?key={key}&id={id}`. An IPv6 address is written in brackets.
+4. Without a host name, the page shows the help of 11.3 I asking the user to reserve the address in the router.
+5. Busy Light does not advertise its own Bonjour service in this build (17).
 
 ### A.2 Changes to existing sections
 
@@ -123,26 +141,26 @@ The reason's `source` is the sender's name, and with an `app`, the line in Right
 **10.1 State file**: add
 
 ```json
-"statusInput": { "enabled": true, "port": 8582, "listening": true, "error": null },
-"inputs": [ { "sender": "CallWatch on Alex's iMac", "status": "inCall", "app": "Microsoft Teams", "via": "api", "lastHeard": "...", "expiresAt": "...", "active": true } ]
+"statusInput": { "enabled": true, "port": 8582, "listening": true, "error": null, "id": "q3Lr8vT0cXw2mN5a" },
+"inputs": [ { "sender": "CallWatch on Alex’s iMac", "status": "inCall", "app": "Microsoft Teams", "via": "api", "lastHeard": "...", "expiresAt": "...", "active": true } ]
 ```
 
-`via` is `api` or `switch`. `inputs` holds the senders of 18.7 item 5. The key is never in the state file.
+`via` is `api` or `switch`. `inputs` holds the senders of 18.7 item 5 (without the replay `ts`, which stays in `inputs.json`). The key is never in the state file.
 
 **10.2 CLI**: add `input`:
 
 | Command | Does |
 | --- | --- |
-| `input` | Prints whether the status input and the On a Call switch are on, the port, the addresses of the Homebridge host (`http://{ip}:{port}`, one per non-internal IPv4 address), and the senders from the state file. |
+| `input` | Prints whether the status input and the On a Call switch are on, the port, the instance id, the address by host name when there is one (18.11), the addresses of the Homebridge host (`http://{ip}:{port}`, one per non-internal IPv4 address), and the senders from the state file. |
 | `input --setup-code` | Also prints the setup code, after the line `The setup code contains your key. Treat it like a password.` |
-| `input test` | Sends `inCall` for 30 seconds from the sender `Busy Light test` to the running plugin on `127.0.0.1`, using the configured key, and prints the response or the error. |
+| `input test` | Sends a signed `inCall` for 30 seconds from the sender `Busy Light test` to the running plugin on `127.0.0.1`, using the configured key, and prints the response or the error. |
 
 **10.3 UI server**: add
 
 | Endpoint | Request | Response |
 | --- | --- | --- |
-| `/input/info` | none | `{ "addresses": ["192.168.4.10"], "port" }` (non-internal IPv4 addresses of the host; the page builds the address and setup code) |
-| `/input/test` | `{ "port", "key" }` | `{ "ok": true }` or `{ "error": "notListening" \| "unauthorized" \| "other", "message" }`: sends `inCall` for 30 seconds from `Busy Light test` to `127.0.0.1:{port}` |
+| `/input/info` | none | `{ "hostname": "homebridge.local", "addresses": ["192.168.4.10"], "port", "id" }` (`hostname` as 18.11, or null; non-internal IPv4 addresses of the host; `id` from `instance.json`, created there if missing; the page builds the address and setup code) |
+| `/input/test` | `{ "port", "key" }` | `{ "ok": true }` or `{ "error": "notListening" \| "unauthorized" \| "other", "message" }`: sends a signed `inCall` for 30 seconds from `Busy Light test` to `127.0.0.1:{port}` |
 
 **11.1 Anatomy**: a new section between Calendars and Colors: **Status from other apps** (11.3 I).
 
@@ -156,7 +174,8 @@ The reason's `source` is the sender's name, and with an `app`, the line in Right
 | Sender changed | info | `{sender} reports {Display name}.` or `{sender} reports {Display name} from {app}.` |
 | Sender cleared | info | `{sender} cleared its status.` |
 | Sender expired | info | `{sender}'s status expired.` |
-| Wrong key | warn | `Status input: refused a request with a wrong key from {ip}.` (once per address per hour) |
+| Wrong key | warn | `Status input: refused a request with a wrong key from {ip}.` (any failed authentication except `clock_skew`; once per address per hour) |
+| Clock off | warn | `Status input: refused a request from {ip} whose clock is {n} seconds off.` (once per address per hour) |
 | Not local | warn | `Status input: refused a request from {ip}, which is not on the local network.` (once per address per hour) |
 | Call switch timeout | info | `{name} On a Call turned itself off after {n} hours.` |
 
@@ -164,15 +183,15 @@ Sender and app names are labels chosen by the sender and may be logged; nothing 
 
 **15 Testing**: add
 
-16. Status API, by calling the request handler directly with synthetic request and response objects (no socket is opened, per `CLAUDE.md`), plus the server's start and port-in-use paths with `http.createServer` mocked: every row of 18.4, every error key, the check order of 18.4 item 6, constant-time key comparison used, 403 for a non-local address (by injecting the remote address into the handler), rate limit and `Retry-After`, the 20-sender limit, `clear`, expiry with a fake clock and the expiry timer, `inputs.json` reload with expired entries dropped, no CORS headers, `OPTIONS` 405, and that no log line or response contains the key.
+16. Status API, by calling the request handler directly with synthetic request and response objects (no socket is opened, per `CLAUDE.md`), plus the server's start and port-in-use paths with `http.createServer` mocked: every row of 18.4, every error key, the check order of 18.4 item 8, constant-time comparison used for both forms, the signature against the test vector of `docs/status-input.md` 2.4, a signature over a body that differs by one byte, `clock_skew` at 301 seconds both ways and acceptance at 300, `replayed` for an equal and a smaller `ts` and its survival across a reload of `inputs.json`, the plain key form, the text rule of 18.4 item 3 ("Alex’s iMac" accepted, NFC and NFD forms of one name matching one sender, 64 code points of emoji accepted and 65 refused, each refused character class), `clear` with and without an active report and with `ttlSeconds`, the `id` in `/v1/ping`, 403 for a non-local address (by injecting the remote address into the handler), rate limit and `Retry-After`, the 20-sender limit, `clear`, expiry with a fake clock and the expiry timer, `inputs.json` reload with expired entries dropped, no CORS headers, `OPTIONS` 405, and that no log line or response contains the key.
 17. Precedence with inputs: each status at its rule, combined with Teams presence and calendar events, rule 10 with and without an `offline` report, the reason naming the sender and app.
 18. On a Call switch: on, off, the safety timeout, restore after restart with the time remaining and after the time has passed.
 19. Settings page: the Status from other apps section (11.3 I), key generation format, Replace key, the setup code built from `/input/info`, Test, the sender list; the per-calendar interval (part B); the color presets (part C).
-20. CLI `input`, `input --setup-code` and `input test` (with `fetch` mocked), and the UI server's `/input/info` and `/input/test` (with `os.networkInterfaces` and `fetch` mocked).
+20. CLI `input`, `input --setup-code` and `input test` (with `fetch` mocked), and the UI server's `/input/info` and `/input/test` (with `os.networkInterfaces`, `dns.lookup` and `fetch` mocked: a host name that resolves to the host, one that resolves elsewhere, one that times out).
 
 **16 Release plan**: build 3 is this file; build 4 is the README screenshots and the first npm release (the former build 3).
 
-**17 Decisions**: add, dated 2026-10-08: the status input is generic and independent of any sender app; two channels (HTTP API on the local network, HomeKit On a Call switch); statuses enter the existing precedence as presence signals; reports expire (default 180 s, at most 12 h); local addresses and a key only, no TLS; `docs/status-input.md` is the public description for app builders.
+**17 Decisions**: add, dated 2026-10-08: the status input is generic and independent of any sender app; two channels (HTTP API on the local network, HomeKit On a Call switch); statuses enter the existing precedence as presence signals; reports expire (default 180 s, at most 12 h); local addresses and a key only, no TLS; `docs/status-input.md` is the public description for app builders. Added the same day after review: apps sign requests with HMAC-SHA256 so the key never crosses the network (a laptop on another network could otherwise hand the key to whatever device has the home address there), with a per-sender replay rule; the plain key stays for Shortcuts and curl. Names are Unicode (the macOS default computer name has a curly apostrophe), counted in code points after NFC. `clear` is idempotent and returns `expiresAt: null`. Busy Light is found by its `.local` host name when the host advertises one, so a DHCP change does not break senders; an own Bonjour service was considered and left for later, because Node has no built-in mDNS and the host already runs Homebridge's advertiser and usually Avahi on port 5353.
 
 ### A.3 Settings page copy, 11.3 I "Status from other apps" (verbatim)
 
@@ -180,9 +199,10 @@ Sender and app names are labels chosen by the sender and may be logged; nothing 
 - Help: `Let other apps on your network tell Busy Light you are on a call or busy, for example a call helper on your Mac or a Stream Deck button.` and the link `How apps connect` (`https://github.com/arodbuilds/homebridge-busy-light/blob/latest/docs/status-input.md`, new tab)
 - Checkbox: `Let other apps set your status`
 - When ticked:
-  - `Address`: read-only, monospace, `http://{ip}:{port}`, one line per address from `/input/info`
+  - `Address`: read-only, monospace, `http://{host name}:{port}` first when there is a host name, then `http://{ip}:{port}`, one line per address from `/input/info`
+  - With no host name, the help `Your router may give Homebridge a new address later, and apps would stop reaching it. Reserve this address for Homebridge in your router.`
   - `Key`: read-only password field with `Show` and `Hide`, and the button `Copy key` (then `Copied`)
-  - `Setup code`: read-only, monospace, `busylight://{ip}:{port}/?key={key}` (first address), the button `Copy setup code` (then `Copied`), and the help `Paste this into the app that will report your status. It contains your key, so treat it like a password.`
+  - `Setup code`: read-only, monospace, `busylight://{host}:{port}/?key={key}&id={id}` (the host name, or the first address, as 18.11), the button `Copy setup code` (then `Copied`), and the help `Paste this into the app that will report your status. It contains your key, so treat it like a password.`
   - Text button `Replace key`, inline question `Replace the key? Every app using the current key stops working until you give it the new one.` with `Replace` (danger) and `Cancel`
   - Button `Test` (busy `Testing…`), help `Reports a call for 30 seconds, so the light should turn red.`; results `Busy Light received the test.`, and for `notListening` `Busy Light is not listening yet. Save, restart Homebridge, then test again.`, for `unauthorized` `The running Busy Light has a different key. Save and restart Homebridge, then test again.`
   - State-file error: `Busy Light could not open port {port}. Another program may be using it. Choose another port under Advanced.`
@@ -218,3 +238,18 @@ Replaces the row described in **11.3 D** (the configuration format does not chan
 5. The defaults of 6.2 are presets: Out of office Purple, Do not disturb, In a call and In a meeting Red, Busy Orange, Tentative and Away Yellow, Available Green, Offline Off. `Reset colors` restores them.
 6. The `Teams only` badges and the line `When more than one applies, the one highest in this list wins.` stay.
 7. **17**, open item: check each preset on a real LIFX bulb and adjust the hex values where the bulb renders them poorly (orange and yellow especially). The configuration keeps whatever hex the user saved.
+
+---
+
+## D. The bulb in use, shown when the page opens
+
+Found in the pass on the Pi, October 8, 2026: with LIFX already on, the page opens with only `Search again` under "Use a LIFX bulb", because no search runs on open (11.2 item 5). It reads as if no bulb is set up, which is the confusion build 2 set out to remove. The state file already knows the bulb, so no network call is needed.
+
+1. **11.3 E**: with "Use a LIFX bulb" on, no IP address under Advanced, and no search yet in this visit, the results line comes from the state file's `light` (10.1), read through `/status`:
+   - With a `label` and `host` and `answered` true: `Busy Light is using {label} ({host}).`
+   - With a `label` and `host` and `answered` false: `Busy Light is using {label} ({host}), but it did not answer last time.`
+   - With no light in the state file (the plugin has not found one, or has not run since LIFX was turned on): `Busy Light has not found a bulb yet. Search again to look for one.`
+2. `Search again` stays below the line, and a search replaces the line with its results as now.
+3. **11.2 item 5** is unchanged: opening the page still calls only `/version` and `/status`.
+4. **15**: page tests for the three lines, and that opening the page with LIFX on makes no `/lifx/discover` call.
+

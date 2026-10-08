@@ -9,7 +9,7 @@ There are two ways in:
 
 Both lead to the same place: Busy Light combines what senders report with your calendars and Microsoft Teams status, and the light and the Home app sensors follow.
 
-Status of this document: the specification for API version 1, written October 8, 2026, ahead of the build that implements it. Section and rule numbers refer to Busy Light's `SPEC.md`.
+Status of this document: the specification for API version 1, written October 8, 2026 and revised the same day (signed requests, names in Unicode, `clear`, finding Busy Light by name, and sending from a laptop that leaves home), ahead of the build that implements it. Section and rule numbers refer to Busy Light's `SPEC.md`, section 18.
 
 ## 1. What a sender can report
 
@@ -40,41 +40,37 @@ Busy Light only ever learns the status, an optional app name and the sender's na
 
 The status API is off until the user turns it on in Busy Light's settings, under **Status from other apps**. The page then shows:
 
-1. The address, for example `http://192.168.4.10:8582`. The port is 8582 unless the user changed it.
+1. The address. When the Homebridge computer has a name on the network, the address uses it, for example `http://homebridge.local:8582`, so it keeps working when the router hands out a new IP address. The IP address, for example `http://192.168.4.10:8582`, is listed as well. The port is 8582 unless the user changed it.
 2. A key: 43 random characters. Treat it like a password.
-3. A setup code combining both, to copy into your app in one step:
+3. A setup code combining the address, the key and Busy Light's id, to copy into your app in one step:
 
 ```
-busylight://192.168.4.10:8582/?key=Rk7fJ3...
+busylight://homebridge.local:8582/?key=Rk7fJ3...&id=q3Lr8vT0cXw2mN5a
 ```
 
-Parse it as a URL: the host and port are the address, `key` is the key, and the scheme tells you it is a Busy Light setup code. Accept it pasted with surrounding spaces.
+Parse it as a URL: the host (a name, an IPv4 address, or an IPv6 address in brackets) and port are the address, `key` is the key, `id` is this Busy Light's id (section 2.7), and the scheme tells you it is a Busy Light setup code. Accept it pasted with surrounding spaces. Keep the host as given; do not resolve a name once and store the IP address, or a router change breaks your app again.
 
-The user can replace the key at any time, which disconnects every sender until it gets the new one. Show a clear message when you receive `401`.
+The user can replace the key at any time, which disconnects every sender until it gets the new one. Show a clear message when you receive `401 unauthorized`.
 
 ### 2.2 Security model
 
 1. **Local network only.** Busy Light refuses requests from addresses that are not private (10/8, 172.16/12, 192.168/16, 127/8, 169.254/16, fc00::/7, fe80::/10, ::1) with `403`. Do not expose the port to the internet.
-2. **Plain HTTP with a key.** There is no TLS, as with most devices on a home network, so the key crosses your network unencrypted. It only lets someone on your network change the light.
-3. **Rate limit.** 60 requests a minute from one address; beyond that `429` with `Retry-After`.
-4. **No browser access.** The API sends no CORS headers, and the key travels in an `Authorization` header, so a web page cannot call it.
+2. **Signed requests.** Apps sign each request with the key (section 2.4), so the key itself never crosses the network. Busy Light refuses a signature from a clock more than 5 minutes off, and refuses a report it has already seen, so a captured request cannot be replayed.
+3. **Plain key, for the user's own tools.** Busy Light also accepts the key itself in the request (`Authorization: Bearer <key>`), because Apple Shortcuts and a quick curl test cannot sign. This form sends the key unencrypted. **Apps must sign.**
+4. **Plain HTTP.** There is no TLS, as with most devices on a home network. With signed requests, someone watching the network can see the statuses and sender names, but cannot learn the key, change the light, or replay what they saw.
+5. **Rate limit.** 60 requests a minute from one address; beyond that `429` with `Retry-After`.
+6. **No browser access.** The API sends no CORS headers, and authentication travels in an `Authorization` header, so a web page cannot call it.
 
 ### 2.3 Requests
 
-Every request except `/v1/ping` carries:
-
-```
-Authorization: Bearer <key>
-```
-
-Bodies are JSON (`Content-Type: application/json`), at most 2 KB.
+Every request except `/v1/ping` carries an `Authorization` header (section 2.4). Bodies are JSON (`Content-Type: application/json`), at most 2048 bytes of UTF-8.
 
 #### `GET /v1/ping`
 
-No key needed. Use it to check an address before saving it.
+No key needed. Use it to check an address and confirm it is the right Busy Light before you send anything (section 2.7).
 
 ```json
-{ "service": "busy-light", "apiVersion": 1, "version": "0.1.0-beta.3" }
+{ "service": "busy-light", "apiVersion": 1, "version": "0.1.0-beta.3", "id": "q3Lr8vT0cXw2mN5a" }
 ```
 
 #### `POST /v1/status`
@@ -83,7 +79,7 @@ Report this sender's status. The latest report from a sender replaces its earlie
 
 ```json
 {
-  "sender": "CallWatch on Alex's iMac",
+  "sender": "CallWatch on Alex’s iMac",
   "status": "inCall",
   "app": "Microsoft Teams",
   "ttlSeconds": 180
@@ -92,20 +88,33 @@ Report this sender's status. The latest report from a sender replaces its earlie
 
 | Field | Required | Rules |
 | --- | --- | --- |
-| `sender` | yes | 1 to 64 printable characters. Name your app and the device, so the user can tell senders apart: "CallWatch on Alex's iMac". Keep it stable; it identifies the sender. |
+| `sender` | yes | Text (see below). Name your app and the device, so the user can tell senders apart: "CallWatch on Alex’s iMac". Keep it stable; it identifies the sender. |
 | `status` | yes | One of the statuses in section 1. |
-| `app` | no | 1 to 64 printable characters: the name of the app the status comes from, such as "Zoom". Shown to the user. Nothing else about the app. |
+| `app` | no | Text (see below): the name of the app the status comes from, such as "Zoom". Shown to the user. Nothing else about the app. |
 | `ttlSeconds` | no | How long the report stays valid without being repeated: 30 to 43200 (12 hours). Default 180. |
 
-Any other field is rejected with `400 unknown_field`.
+Text rule for `sender` and `app`:
+
+1. Any Unicode text, from 1 to 64 characters, where a character is a Unicode code point: not a byte, and not a UTF-16 unit. Curly apostrophes, accented letters and emoji are fine. The macOS default computer name ("Alex’s iMac", with a curly apostrophe) is fine as it is.
+2. Busy Light normalizes the text to Unicode NFC before checking, storing and comparing it, so the same name typed two ways is one sender.
+3. Not allowed: leading or trailing spaces, control characters (newlines and tabs included), U+2028, U+2029, and the bidirectional formatting characters U+202A to U+202E and U+2066 to U+2069. Busy Light never trims or rewrites a name; it refuses it with `invalid_sender` or `invalid_app`.
+
+Any field other than the four above is rejected with `400 unknown_field`.
 
 Response `200`:
 
 ```json
-{ "accepted": true, "expiresAt": "2026-10-09T14:03:00.000Z", "status": "inCall" }
+{ "accepted": true, "expiresAt": "2026-10-09T12:06:00.000Z", "status": "inCall" }
 ```
 
 `status` in the response is Busy Light's resulting overall status, which may differ from what you sent if something higher applies.
+
+`clear` removes this sender's report:
+
+1. The response is `200 { "accepted": true, "expiresAt": null, "status": "..." }`, with the overall status after clearing.
+2. It succeeds whether or not the sender had an active report, so sending it twice, or after the report expired, is fine.
+3. `app` and `ttlSeconds` may be sent with it and are ignored (they must still follow their rules), so you can send the same shape every time.
+4. `clear` is never refused for too many senders.
 
 #### `GET /v1/status`
 
@@ -114,16 +123,46 @@ Busy Light's current overall status, for apps that want to show it.
 ```json
 {
   "status": "inCall",
-  "reason": { "source": "CallWatch on Alex's iMac", "until": null },
+  "reason": { "source": "CallWatch on Alex’s iMac", "until": null },
   "senders": [
-    { "sender": "CallWatch on Alex's iMac", "status": "inCall", "app": "Microsoft Teams", "expiresAt": "2026-10-09T14:03:00.000Z" }
+    { "sender": "CallWatch on Alex’s iMac", "status": "inCall", "app": "Microsoft Teams", "expiresAt": "2026-10-09T12:06:00.000Z" }
   ]
 }
 ```
 
 `status` is one of the statuses in section 1 (never `clear`) or `unknown` when Busy Light has no fresh information.
 
-### 2.4 Keeping a status alive
+### 2.4 Signing a request
+
+```
+Authorization: BusyLight-HMAC-SHA256 ts=<ts>, sig=<sig>
+```
+
+1. `ts`: your clock, in whole milliseconds since January 1, 1970 UTC, as digits.
+2. Build the string to sign from five lines joined by a single line feed (`\n`), with no line feed at the end:
+   1. `v1`
+   2. the method in capitals: `POST` or `GET`
+   3. the path without any query string: `/v1/status`
+   4. `ts`, exactly as in the header
+   5. the lowercase hex SHA-256 of the exact body bytes you send (for a `GET`, of nothing: `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`)
+3. `sig`: the lowercase hex HMAC-SHA256 of that string, keyed with the key's characters as UTF-8 bytes (the key as given, not decoded from base64).
+4. Sign the bytes you send. If your JSON encoder runs again after signing, the hash no longer matches.
+5. Each report from a sender must carry a `ts` greater than that sender's previous one, or it is refused with `401 replayed`. Take the current time in milliseconds, and if it is not greater than the last `ts` you sent, use the last one plus 1.
+6. Keep the computer's clock set automatically. A `ts` more than 300 seconds from Busy Light's clock is refused with `401 clock_skew`, and the message says by how much.
+
+Test vector. With the key `Synthetic-test-key-0000-do-not-use-anywhere`, `ts` `1791547380000` and this exact body (81 bytes, with a curly apostrophe):
+
+```
+{"sender":"CallWatch on Alex’s iMac","status":"inCall","app":"Microsoft Teams"}
+```
+
+1. Body hash: `d87cbcae7bc01e3f04b5b78ad997ab04615f82b49f198efbdb4ebb68399c78c2`
+2. String to sign: `v1\nPOST\n/v1/status\n1791547380000\nd87cbcae7bc01e3f04b5b78ad997ab04615f82b49f198efbdb4ebb68399c78c2`
+3. `sig`: `27e0b09262e123c86c9d6ac1b749c7e11e89ac581d18f693c35eb17f6f468291`
+
+If your code produces that `sig`, it signs correctly.
+
+### 2.5 Keeping a status alive
 
 Reports expire so that a sender that crashes, sleeps or loses its network never leaves the light red. The pattern:
 
@@ -134,7 +173,7 @@ Reports expire so that a sender that crashes, sleeps or loses its network never 
 
 For a status the user sets deliberately and that should last, such as "do not disturb for the next two hours", send it once with a longer `ttlSeconds` instead of repeating it.
 
-### 2.5 Errors
+### 2.6 Errors
 
 Every error is JSON: `{ "error": "<key>", "message": "<plain sentence>" }`.
 
@@ -143,42 +182,83 @@ Every error is JSON: `{ "error": "<key>", "message": "<plain sentence>" }`.
 | 400 | `invalid_json` | The body is not JSON |
 | 400 | `unknown_field` | A field not listed in 2.3 |
 | 400 | `invalid_sender`, `invalid_status`, `invalid_app`, `invalid_ttl` | That field breaks its rule |
-| 401 | `unauthorized` | Missing or wrong key |
+| 401 | `unauthorized` | Missing or wrong key, a wrong signature, or a malformed `Authorization` header |
+| 401 | `clock_skew` | The signed `ts` is more than 300 seconds from Busy Light's clock |
+| 401 | `replayed` | The signed `ts` is not greater than this sender's previous one |
 | 403 | `not_local` | The request came from outside the local network |
 | 404 | `not_found` | Unknown path |
 | 405 | `method_not_allowed` | Wrong method for the path |
 | 409 | `too_many_senders` | 20 senders are already active; wait for one to expire or `clear` |
-| 413 | `too_large` | Body over 2 KB |
+| 413 | `too_large` | Body over 2048 bytes |
 | 415 | `unsupported_media_type` | Not `application/json` |
 | 429 | `rate_limited` | Over 60 requests a minute; see `Retry-After` |
 
-If the port does not answer at all, the status API is turned off, or Homebridge is not running.
+If the port does not answer at all, the status API is turned off, Homebridge is not running, or you are not on the home network.
 
-### 2.6 Examples
+### 2.7 Laptops and other senders that leave home
 
-curl:
+A laptop that goes to an office, a hotel or a coffee shop keeps its setup code, and the same private address, `192.168.4.10` say, may belong to a stranger's device on that network. A sender must not report to whatever answers there.
+
+1. **Sign every request** (section 2.4). Then nothing sent to the wrong device gives away the key or can be used against the user's Busy Light. This is the main protection; the steps below keep a sender quiet and correct.
+2. **Confirm it is the user's Busy Light before reporting.** When the network changes, when the Mac wakes, and before the first report after a failure, call `GET /v1/ping` at the setup code's host and send reports only if `service` is `busy-light` and `id` equals the setup code's `id`. Otherwise treat Busy Light as not reachable. (`/v1/ping` needs no key, so the check costs nothing and sends nothing secret.)
+3. **When Busy Light is not reachable, stay quiet.** Do not retry more than once a minute, and do not queue reports to send later: a status is about now, and an old one replayed on return would be wrong.
+4. **Never fall back to the plain key** after a signed request fails.
+5. **On returning home**, after the check in step 2 succeeds, send the current status fresh. Whatever the sender reported before it left has expired by then.
+6. **Tell the user** in plain words when the app cannot reach Busy Light ("Busy Light is not reachable on this network"), without alarming them: away from home this is expected.
+
+### 2.8 Examples
+
+curl, with the plain key, for a quick test from a computer at home:
 
 ```sh
-curl -sS -X POST http://192.168.4.10:8582/v1/status \
+curl -sS -X POST http://homebridge.local:8582/v1/status \
   -H "Authorization: Bearer $BUSY_LIGHT_KEY" \
   -H "Content-Type: application/json" \
   -d '{"sender":"Test on my laptop","status":"inCall","app":"Zoom"}'
 ```
 
-Swift (macOS):
+curl, signed (macOS `shasum` and `openssl`):
+
+```sh
+BODY='{"sender":"Test on my laptop","status":"inCall","app":"Zoom"}'
+TS=$(( $(date +%s) * 1000 ))
+HASH=$(printf %s "$BODY" | shasum -a 256 | cut -d' ' -f1)
+SIG=$(printf 'v1\nPOST\n/v1/status\n%s\n%s' "$TS" "$HASH" | openssl dgst -sha256 -hmac "$BUSY_LIGHT_KEY" | sed 's/^.* //')
+curl -sS -X POST http://homebridge.local:8582/v1/status \
+  -H "Authorization: BusyLight-HMAC-SHA256 ts=$TS, sig=$SIG" \
+  -H "Content-Type: application/json" \
+  -d "$BODY"
+```
+
+Swift (macOS), signed, with CryptoKit:
 
 ```swift
-var request = URLRequest(url: URL(string: "http://192.168.4.10:8582/v1/status")!)
+import CryptoKit
+import Foundation
+
+func hex<S: Sequence>(_ bytes: S) -> String where S.Element == UInt8 {
+    bytes.map { String(format: "%02x", $0) }.joined()
+}
+
+let body = try JSONEncoder().encode(["sender": "MyApp on Alex’s iMac", "status": "inCall", "app": "Microsoft Teams"])
+let ts = String(Int64(Date().timeIntervalSince1970 * 1000)) // keep it above the last ts you sent
+let message = ["v1", "POST", "/v1/status", ts, hex(SHA256.hash(data: body))].joined(separator: "\n")
+let sig = hex(HMAC<SHA256>.authenticationCode(for: Data(message.utf8), using: SymmetricKey(data: Data(key.utf8))))
+
+var request = URLRequest(url: URL(string: "http://homebridge.local:8582/v1/status")!)
 request.httpMethod = "POST"
-request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+request.setValue("BusyLight-HMAC-SHA256 ts=\(ts), sig=\(sig)", forHTTPHeaderField: "Authorization")
 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-request.httpBody = try JSONEncoder().encode(["sender": "MyApp on iMac", "status": "inCall", "app": "Microsoft Teams"])
+request.httpBody = body
 let (_, response) = try await URLSession.shared.data(for: request)
 ```
 
-A Mac app that talks to a device on the local network triggers macOS's Local Network permission prompt the first time; plan for it in your onboarding.
+Notes for a Mac app:
 
-Apple Shortcuts: a **Get Contents of URL** action with method POST, a header `Authorization` set to `Bearer ` followed by the key, and a JSON request body with `sender` and `status`.
+1. **Local Network permission.** The first request to a device on the local network triggers macOS's Local Network prompt; plan for it in your onboarding.
+2. **App Transport Security.** `URLSession` refuses plain HTTP to most hosts. `NSAllowsLocalNetworking` in the app's `NSAppTransportSecurity` dictionary allows `.local` names and unqualified names, which covers the usual setup code. For an IP address host, Apple's guidance has changed over the years: older releases exempted IP addresses from ATS entirely, and Apple's networking engineer has since said IP addresses need `NSExceptionDomains` entries, which accept CIDR ranges (`192.168.0.0/16` with `NSExceptionAllowsInsecureHTTPLoads`), with a fix for a CIDR bug in later iOS 17 releases. Not yet verified on macOS 27: test both a `.local` host and an IP address host on the macOS versions you support before relying on either. Network framework connections are not subject to ATS.
+
+Apple Shortcuts: a **Get Contents of URL** action with method POST, a header `Authorization` set to `Bearer ` followed by the key, and a JSON request body with `sender` and `status`. Shortcuts cannot sign, so it sends the key itself: use it only from a device that stays at home, and prefer the On a Call switch (section 3) from a laptop.
 
 ## 3. The On a Call switch
 
@@ -188,15 +268,17 @@ For senders that should not make network requests themselves, Busy Light can add
 2. It turns itself off after a safety period, 3 hours by default (1 to 12, set by the user), in case nothing turns it off.
 3. Anything that can control a HomeKit switch can use it: a shortcut's **Home** action ("Set Busy Light On a Call to On"), Siri ("Turn on Busy Light On a Call"), a Home tile, a Home automation, or a Stream Deck with a HomeKit plugin.
 
-An app that wants to stay off the network can therefore run two of the user's shortcuts, one when a call starts and one when it ends, and let the shortcuts set the switch. HomeKit carries the change to Busy Light with its own security.
+An app that wants to stay off the network can therefore run two of the user's shortcuts, one when a call starts and one when it ends, and let the shortcuts set the switch. HomeKit carries the change to Busy Light with its own security, at home and away.
 
 The switch reports only `inCall`. For other statuses, use the status API.
 
 ## 4. Checklist for app builders
 
-1. Let the user paste the setup code; check it with `GET /v1/ping`.
-2. Pick a stable `sender` name that includes the device.
-3. Send on change, repeat every 60 seconds while not `clear`, send `clear` when done.
-4. Send only `sender`, `status`, `app` and `ttlSeconds`. Never content.
-5. Handle `401` (key replaced), `403` (wrong network), `429` (back off) and no answer (Busy Light off) with a plain message to the user.
-6. Expect the overall status to differ from what you sent; Busy Light decides.
+1. Let the user paste the setup code. Keep its host as a name when it is one, and check it with `GET /v1/ping`, comparing `id`.
+2. Pick a stable `sender` name that includes the device. The computer's own name, curly apostrophe and all, is fine.
+3. Sign every request (section 2.4), and check your code against the test vector. Never send the plain key from an app.
+4. Send on change, repeat every 60 seconds while not `clear`, send `clear` when done.
+5. Send only `sender`, `status`, `app` and `ttlSeconds`. Never content.
+6. Follow section 2.7 when the network changes: confirm the `id` before reporting, stay quiet when Busy Light is not reachable, never queue old reports, and send the current status fresh on return.
+7. Handle `401` (`unauthorized`: key replaced; `clock_skew`: the clock is off; `replayed`: your `ts` went backwards), `403` (wrong network), `429` (back off) and no answer (Busy Light off or not on this network) with a plain message to the user.
+8. Expect the overall status to differ from what you sent; Busy Light decides.
