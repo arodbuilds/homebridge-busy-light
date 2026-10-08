@@ -44,6 +44,7 @@ dom.window.homebridge = {
 const { Page } = await import('../homebridge-ui/src/main.js');
 const { readConfig, exportConfig } = await import('../homebridge-ui/src/model.js');
 const copy = await import('../homebridge-ui/src/copy.js');
+const { RETIRING } = await import('../homebridge-ui/src/retiring.js');
 const { INTRO, SHELL, VALIDATION } = copy;
 
 type PageT = InstanceType<typeof Page>;
@@ -975,7 +976,7 @@ describe('settings page: Settings (SPEC 11.3 F)', () => {
     assert.equal(details.open, false);
     assert.equal(text(details.querySelector('summary')), copy.SHELL.advanced);
     const labels = details.querySelectorAll('label').map((l) => text(l).replace(/\*$/, ''));
-    assert.deepEqual(labels, [copy.SETTINGS.name, copy.SETTINGS.pollSeconds, copy.SETTINGS.calendarSeconds, copy.SETTINGS.ignoreAllDayBusy,
+    assert.deepEqual(labels, [copy.SETTINGS.name, RETIRING.pollSeconds, RETIRING.calendarSeconds, copy.SETTINGS.ignoreAllDayBusy,
       copy.SETTINGS.outOfOfficeWords, copy.SETTINGS.overrideSwitch, copy.SETTINGS.debug]);
     assert.equal(field(root, 'name').value, 'Busy Light');
     assert.equal(field(root, 'outOfOfficeWords').value, 'Out of office, OOO, Vacation, PTO');
@@ -1342,9 +1343,9 @@ describe('settings page: a calendar card\'s own check interval (SPEC 11.3 C, 9.1
       const advanced = card.querySelector('.bl-source-advanced')!;
       assert.equal(text(advanced.querySelector('summary')), copy.SHELL.advanced, id);
       const input = field(root, `calendars.${id}.calendarSeconds`);
-      assert.equal(text(card.querySelector(`[data-path="calendars.${id}.calendarSeconds"] label`)), copy.CALENDARS.checkEvery);
+      assert.equal(text(card.querySelector(`[data-path="calendars.${id}.calendarSeconds"] label`)), RETIRING.checkEvery);
       assert.equal(input.getAttribute('placeholder'), 'e.g. 240', 'the platform value');
-      assert.equal(text(card.querySelector(`[data-path="calendars.${id}.calendarSeconds"] .ns-help`)), copy.CALENDARS.checkEveryHelp);
+      assert.equal(text(card.querySelector(`[data-path="calendars.${id}.calendarSeconds"] .ns-help`)), RETIRING.checkEveryHelp);
       assert.equal(input.value, id === 'u' ? '600' : '');
       assert.equal(advanced.open, id === 'u', 'open when it holds a value');
     }

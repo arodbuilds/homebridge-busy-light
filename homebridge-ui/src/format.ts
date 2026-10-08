@@ -1,9 +1,9 @@
 /**
- * Times as the page shows them (SPEC 11.3 G): 12-hour times in the host's locale, and the relative times of the
- * Right now row and the calendar cards.
+ * Times as the page shows them (SPEC 11.3 G): 12-hour times in the host's locale, the relative times of the Right now
+ * row and the calendar cards, and the durations of the interval selects.
  */
 
-import { RELATIVE } from './copy.js';
+import { DURATIONS, RELATIVE } from './copy.js';
 
 export function parseDate(value: string | null | undefined): Date | null {
   if (!value) {
@@ -33,4 +33,17 @@ export function relativeTime(d: Date, now: Date = new Date(Date.now())): string 
     return RELATIVE.hours(hours);
   }
   return RELATIVE.days(Math.round(hours / 24));
+}
+
+/** A duration in seconds as SPEC 11.3 G writes it: `1 minute`, `{n} minutes`, `{n} seconds`, `{m} minutes {s} seconds`. */
+export function formatDuration(seconds: number): string {
+  if (seconds < 60) {
+    return DURATIONS.seconds(seconds);
+  }
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds - minutes * 60;
+  if (rest === 0) {
+    return minutes === 1 ? DURATIONS.minute : DURATIONS.minutes(minutes);
+  }
+  return minutes === 1 ? DURATIONS.minuteAndSeconds(rest) : DURATIONS.minutesAndSeconds(minutes, rest);
 }

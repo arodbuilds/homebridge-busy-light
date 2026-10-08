@@ -6,6 +6,7 @@
 
 import { CALENDARS, COLORS, ICLOUD, GOOGLE, LIGHTS, MICROSOFT, SETTINGS, STATUS_INPUT, URL_CARD, VALIDATION } from './copy.js';
 import { LIMITS, STATUS_KEYS, type UiConfig, type UiSource } from './model.js';
+import { RETIRING } from './retiring.js';
 
 export interface UiIssue {
   path: string;
@@ -162,7 +163,7 @@ export function validate(config: UiConfig, ctx: ValidationContext = {}): UiIssue
   if (!config.name.trim()) {
     issues.push({ path: 'name', label: SETTINGS.heading, message: VALIDATION.required(SETTINGS.name) });
   }
-  number(issues, 'pollSeconds', SETTINGS.heading, SETTINGS.pollSeconds, config.pollSeconds, LIMITS.pollSeconds);
-  number(issues, 'calendarSeconds', SETTINGS.heading, SETTINGS.calendarSeconds, config.calendarSeconds, LIMITS.calendarSeconds);
+  number(issues, 'pollSeconds', SETTINGS.heading, RETIRING.pollSeconds, config.pollSeconds, LIMITS.pollSeconds);
+  number(issues, 'calendarSeconds', SETTINGS.heading, RETIRING.calendarSeconds, config.calendarSeconds, LIMITS.calendarSeconds);
   return issues;
 }

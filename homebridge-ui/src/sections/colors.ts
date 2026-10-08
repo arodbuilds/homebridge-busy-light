@@ -14,6 +14,7 @@ import { badge } from '../card.js';
 import { COLORS, STATUS_NAMES, type StatusKey } from '../copy.js';
 import { el, linkButton, paragraph, uniqueId } from '../dom.js';
 import { DEFAULTS, STATUS_KEYS } from '../model.js';
+import { RETIRING } from '../retiring.js';
 
 /** The statuses that come from Teams presence alone (SPEC 6.3 rules 3, 4, 6, 8 and 11) when no status input is on. */
 export const TEAMS_ONLY: readonly StatusKey[] = ['doNotDisturb', 'inCall', 'busy', 'away', 'offline'];
@@ -163,7 +164,7 @@ function colorRow(app: App, key: StatusKey): HTMLElement {
   });
   draw();
   return el('div', { class: 'bl-color-row', 'data-path': `colors.${key}` },
-    el('div', { class: 'bl-color-name', id: nameId }, STATUS_NAMES[key], teamsOnly(app, key) ? badge(COLORS.teamsOnly, 'muted') : null),
+    el('div', { class: 'bl-color-name', id: nameId }, STATUS_NAMES[key], teamsOnly(app, key) ? badge(RETIRING.teamsOnly, 'muted') : null),
     group,
     custom,
     el('div', { class: 'invalid-feedback' }),

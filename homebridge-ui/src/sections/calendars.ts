@@ -14,6 +14,7 @@ import {
   primaryButton, selectField, statusBox, textField, type Child,
 } from '../dom.js';
 import { parseDate, relativeTime } from '../format.js';
+import { RETIRING } from '../retiring.js';
 import { DEFAULTS, emptySource, LIMITS, newId, SOURCE_TYPES as TYPES, type SourceType, type UiSource } from '../model.js';
 import { cardLabel, sourcePath } from '../validate.js';
 import { adoptIds, calendarList, rowBadges, type Row } from './calendar-list.js';
@@ -299,13 +300,13 @@ function removeSource(app: App, s: UiSource): void {
  * empty uses Reload calendars every, under Settings, whose value the placeholder shows.
  */
 function intervalField(app: App, s: UiSource): HTMLElement {
-  return disclosure(SHELL.advanced, [grid(gridCell(6, numberField(CALENDARS.checkEvery, s.calendarSeconds ?? Number.NaN, (v) => {
+  return disclosure(SHELL.advanced, [grid(gridCell(6, numberField(RETIRING.checkEvery, s.calendarSeconds ?? Number.NaN, (v) => {
     s.calendarSeconds = Number.isNaN(v) ? null : v;
     app.changed();
   }, {
     path: sourcePath(s, 'calendarSeconds'), min: LIMITS.sourceCalendarSeconds[0], max: LIMITS.sourceCalendarSeconds[1],
-    placeholder: CALENDARS.checkEveryPlaceholder(Number.isFinite(app.config.calendarSeconds) ? app.config.calendarSeconds : DEFAULTS.calendarSeconds),
-    help: CALENDARS.checkEveryHelp,
+    placeholder: RETIRING.checkEveryPlaceholder(Number.isFinite(app.config.calendarSeconds) ? app.config.calendarSeconds : DEFAULTS.calendarSeconds),
+    help: RETIRING.checkEveryHelp,
   })))], { cls: 'bl-source-advanced', open: s.calendarSeconds !== null });
 }
 
@@ -400,8 +401,8 @@ function addSource(app: App, type: SourceType): void {
 function chooser(app: App): HTMLElement {
   const tiles = TYPES.map((type) => {
     const tile = el('button', { type: 'button', class: 'ns-chooser-tile', 'data-type': type },
-      el('span', { class: 'ns-tile-title' }, SOURCE_TYPES[type].title),
-      el('span', { class: 'form-text ns-tile-help' }, SOURCE_TYPES[type].help),
+      el('span', { class: 'ns-tile-title' }, type === 'microsoft' ? RETIRING.microsoftTileTitle : SOURCE_TYPES[type].title),
+      el('span', { class: 'form-text ns-tile-help' }, type === 'microsoft' ? RETIRING.microsoftTileHelp : SOURCE_TYPES[type].help),
     );
     tile.addEventListener('click', () => addSource(app, type));
     return tile;

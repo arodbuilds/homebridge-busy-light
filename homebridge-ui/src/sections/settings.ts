@@ -8,6 +8,7 @@ import type { App } from '../app.js';
 import { SETTINGS, SHELL } from '../copy.js';
 import { button, checkboxField, dangerLinkButton, disclosure, el, grid, gridCell, inlineDialog, linkButton, numberField, reveal, textField } from '../dom.js';
 import { emptyConfig, LIMITS } from '../model.js';
+import { RETIRING } from '../retiring.js';
 import { stopMicrosoft } from './microsoft.js';
 
 /**
@@ -104,11 +105,11 @@ export function renderSettings(app: App, container: HTMLElement): void {
       app.rerender('lights');
     }, { path: 'name', required: true, help: SETTINGS.nameHelp, maxlength: 64 })),
     gridCell(6),
-    gridCell(6, numberField(SETTINGS.pollSeconds, c.pollSeconds, (v) => {
+    gridCell(6, numberField(RETIRING.pollSeconds, c.pollSeconds, (v) => {
       c.pollSeconds = v;
       app.changed();
     }, { path: 'pollSeconds', min: LIMITS.pollSeconds[0], max: LIMITS.pollSeconds[1] })),
-    gridCell(6, numberField(SETTINGS.calendarSeconds, c.calendarSeconds, (v) => {
+    gridCell(6, numberField(RETIRING.calendarSeconds, c.calendarSeconds, (v) => {
       c.calendarSeconds = v;
       app.changed();
     }, { path: 'calendarSeconds', min: LIMITS.calendarSeconds[0], max: LIMITS.calendarSeconds[1] })),

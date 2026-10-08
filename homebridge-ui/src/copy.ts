@@ -68,10 +68,11 @@ export const CALENDARS = {
   nameHelp: 'A name for this calendar. It appears in the log.',
   remove: 'Remove',
   removeQuestion: (name: string): string => `Remove ${name}?`,
-  /** The card's own check interval (SPEC 9.1 item 19), under its Advanced disclosure. */
-  checkEvery: 'Check for changes every (seconds)',
-  checkEveryPlaceholder: (value: number | string): string => `e.g. ${value}`,
-  checkEveryHelp: 'Leave empty to use Reload calendars every, under Settings.',
+  /** The card's own check interval (SPEC 9.1 item 19), a select under its Advanced disclosure. */
+  checkEvery: 'Check for changes every',
+  /** The default option: the platform interval as a duration (11.3 G). */
+  sameAsSettings: (duration: string): string => `Same as Settings (${duration})`,
+  checkEveryHelp: 'How often Busy Light looks for new or changed events on this calendar.',
   cancel: 'Cancel',
   countsFor: 'Counts for',
   countsAll: 'Busy and out of office',
@@ -85,13 +86,38 @@ export const CALENDARS = {
   connectToSee: 'Connect to see all your calendars.',
 };
 
-/** The chooser tiles and the card's type badge, by source type. */
+/** The card's type badge, and the chooser tiles of iCloud, Google Calendar and Calendar URL, by source type. */
 export const SOURCE_TYPES = {
   icloud: { title: 'iCloud', help: 'Calendars in your Apple account.' },
   google: { title: 'Google Calendar', help: 'One Google calendar, by its secret address.' },
-  microsoft: { title: 'Microsoft 365', help: 'Outlook calendars and Teams status. Needs an app registration from your administrator.' },
+  microsoft: { title: 'Microsoft 365' },
   url: { title: 'Calendar URL', help: 'Any calendar link that starts with https:// or webcal://.' },
 } as const;
+
+/** SPEC 11.3 C: the chooser's Outlook or Microsoft 365 tile and its two options. */
+export const CHOOSER = {
+  outlookTitle: 'Outlook or Microsoft 365',
+  outlookHelp: 'Outlook calendars, by a published link or by signing in.',
+  published: 'Published calendar link',
+  recommended: 'Recommended',
+  publishedText: 'Works with any Outlook or Microsoft 365 calendar, with no IT approval. Shows busy, tentative and out of office.',
+  signIn: 'Sign in with Microsoft 365',
+  signInText: 'Also shows your Teams status, such as in a call. Your IT department must approve Busy Light first.',
+};
+
+/** SPEC 11.3 C: the Outlook card's steps, help and link, also shown collapsed on another Outlook address. */
+export const OUTLOOK = {
+  name: 'Outlook',
+  steps: [
+    'Open Outlook on the web and go to Settings, Calendar, Shared calendars.',
+    'Under Publish a calendar, choose your calendar and Can view when I\'m busy, then select Publish.',
+    'Copy the ICS link and paste it below.',
+  ],
+  missing: 'If Publish a calendar is missing, your organization has turned it off. Ask IT, or use Sign in with Microsoft 365.',
+  open: 'Open Outlook on the web',
+  url: 'https://outlook.office.com/calendar/',
+  howTo: 'How to get this link',
+};
 
 /** The state pill of a calendar card. */
 export const PILLS = {
@@ -195,7 +221,10 @@ export const COLORS = {
     { name: 'Purple', hex: '#B400FF' },
     { name: 'White', hex: '#FFFFFF' },
   ],
-  teamsOnly: 'Teams only',
+  /** The line below the rows while statuses the setup cannot produce are hidden (SPEC 11.3 D). */
+  moreStatuses: (n: number | string): string => `${n} more statuses come from Teams or from other apps.`,
+  showAll: 'Show all statuses',
+  showFewer: 'Show fewer',
   precedence: 'When more than one applies, the one highest in this list wins.',
   reset: 'Reset colors',
 };
@@ -251,6 +280,8 @@ export const LIGHTS = {
   /** A sensor's checkbox: the accessory name of SPEC section 7. */
   sensor: (name: string, ending: string): string => `${name} ${ending}`,
   showAll: 'Show all statuses',
+  /** The help of a sensor whose status the setup cannot produce (SPEC 11.3 E). */
+  nothingReports: 'Nothing in your setup reports this yet.',
   steps: [
     (): string => 'In the Home app, add an automation: A sensor detects something.',
     (name: string): string => `Choose ${name} Busy, then Detects occupancy.`,
@@ -267,6 +298,9 @@ export const STATUS_INPUT = {
   enable: 'Let other apps set your status',
   address: 'Address',
   reserveHelp: 'Your router may give Homebridge a new address later, and apps would stop reaching it. Reserve this address for Homebridge in your router.',
+  /** Above the Address line while the address changed and the page has not been saved since (SPEC 18.11 item 6). */
+  addressChanged: (from: string, to: string): string =>
+    `Homebridge's address changed from ${from} to ${to}. Apps that use the old address need the new setup code.`,
   key: 'Key',
   copyKey: 'Copy key',
   copied: 'Copied',
@@ -308,8 +342,8 @@ export const SETTINGS = {
   heading: 'Settings',
   name: 'Name',
   nameHelp: 'Starts the name of every sensor, for example "Busy Light Available".',
-  pollSeconds: 'Check status every (seconds)',
-  calendarSeconds: 'Reload calendars every (seconds)',
+  pollSeconds: 'Check status every',
+  calendarSeconds: 'Reload calendars every',
   ignoreAllDayBusy: 'Ignore all-day events marked busy',
   ignoreAllDayBusyHelp: 'All-day out of office events always count.',
   outOfOfficeWords: 'Out of office words',
@@ -359,6 +393,16 @@ export const FOOTER = {
   siteUrl: 'https://alex-rodriguez.com/?ref=busy-light#building',
   issues: 'Report an issue',
   issuesUrl: 'https://github.com/arodbuilds/homebridge-busy-light/issues',
+};
+
+/** SPEC 11.3 G: durations, for the interval selects (11.3 C and F). */
+export const DURATIONS = {
+  minute: '1 minute',
+  minutes: (n: number | string): string => `${n} minutes`,
+  seconds: (n: number | string): string => `${n} seconds`,
+  minuteAndSeconds: (s: number | string): string => `1 minute ${s} seconds`,
+  minutesAndSeconds: (m: number | string, s: number | string): string => `${m} minutes ${s} seconds`,
+  withDefault: (duration: string): string => `${duration} (default)`,
 };
 
 export const RELATIVE = {
