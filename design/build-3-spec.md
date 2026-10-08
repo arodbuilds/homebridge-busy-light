@@ -164,11 +164,11 @@ Sender and app names are labels chosen by the sender and may be logged; nothing 
 
 **15 Testing**: add
 
-16. Status API with a real `http` server on an ephemeral port bound to 127.0.0.1 inside the test (the one exception to "never open a socket" in this file: loopback only, closed after each test): every row of 18.4, every error key, the check order of 18.4 item 6, constant-time key comparison used, 403 for a non-local address (by injecting the remote address into the handler), rate limit and `Retry-After`, the 20-sender limit, `clear`, expiry with a fake clock and the expiry timer, `inputs.json` reload with expired entries dropped, no CORS headers, `OPTIONS` 405, and that no log line or response contains the key.
+16. Status API, by calling the request handler directly with synthetic request and response objects (no socket is opened, per `CLAUDE.md`), plus the server's start and port-in-use paths with `http.createServer` mocked: every row of 18.4, every error key, the check order of 18.4 item 6, constant-time key comparison used, 403 for a non-local address (by injecting the remote address into the handler), rate limit and `Retry-After`, the 20-sender limit, `clear`, expiry with a fake clock and the expiry timer, `inputs.json` reload with expired entries dropped, no CORS headers, `OPTIONS` 405, and that no log line or response contains the key.
 17. Precedence with inputs: each status at its rule, combined with Teams presence and calendar events, rule 10 with and without an `offline` report, the reason naming the sender and app.
 18. On a Call switch: on, off, the safety timeout, restore after restart with the time remaining and after the time has passed.
 19. Settings page: the Status from other apps section (11.3 I), key generation format, Replace key, the setup code built from `/input/info`, Test, the sender list; the per-calendar interval (part B); the color presets (part C).
-20. CLI `input`, `input --setup-code` and `input test`.
+20. CLI `input`, `input --setup-code` and `input test` (with `fetch` mocked), and the UI server's `/input/info` and `/input/test` (with `os.networkInterfaces` and `fetch` mocked).
 
 **16 Release plan**: build 3 is this file; build 4 is the README screenshots and the first npm release (the former build 3).
 
