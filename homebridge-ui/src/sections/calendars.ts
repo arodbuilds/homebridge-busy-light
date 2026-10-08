@@ -19,6 +19,7 @@ import { RETIRING } from '../retiring.js';
 import { emptySource, INTERVALS, newId, SOURCE_TYPES as TYPES, type SourceType, type UiSource } from '../model.js';
 import { cardLabel, sourcePath } from '../validate.js';
 import { adoptIds, calendarList, rowBadges, type Row } from './calendar-list.js';
+import { statusesChanged } from './colors.js';
 import { microsoftBody, microsoftFooter, microsoftOnStatus, microsoftResults, stopMicrosoft } from './microsoft.js';
 
 const PILL_KIND: Record<StatusSource['state'], BadgeKind> = {
@@ -292,7 +293,7 @@ function removeSource(app: App, s: UiSource): void {
   app.changed();
   app.rerender('calendars');
   if (s.type === 'microsoft') {
-    app.rerender('colors');
+    statusesChanged(app);
   }
 }
 
@@ -408,7 +409,7 @@ function addSource(app: App, type: SourceType): void {
   app.changed();
   app.rerender('calendars');
   if (type === 'microsoft') {
-    app.rerender('colors');
+    statusesChanged(app);
   }
   app.focusLater(sourcePath(s, 'name'));
 }

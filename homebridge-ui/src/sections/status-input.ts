@@ -15,6 +15,7 @@ import {
 } from '../dom.js';
 import { parseDate, relativeTime } from '../format.js';
 import { DEFAULTS, LIMITS, isInputKey, newInputKey } from '../model.js';
+import { statusesChanged } from './colors.js';
 
 type InputInfoAnswer = { hostname: string | null; addresses: string[]; port: number; id: string } | { error: string; message: string };
 type InputTestAnswer = { ok: true } | { error: 'notListening' | 'unauthorized' | 'other'; message: string };
@@ -247,7 +248,7 @@ export function renderStatusInput(app: App, container: HTMLElement): void {
     }
     app.changed();
     app.rerender('statusInput');
-    app.rerender('colors');
+    statusesChanged(app);
     app.focusLater('statusInput.enabled');
     if (v && !app.ui.input.info) {
       void loadInfo(app);
@@ -265,7 +266,7 @@ export function renderStatusInput(app: App, container: HTMLElement): void {
     call.enabled = v;
     app.changed();
     app.rerender('statusInput');
-    app.rerender('colors');
+    statusesChanged(app);
     app.focusLater('callSwitch.enabled');
   }, { path: 'callSwitch.enabled', help: STATUS_INPUT.callSwitchHelp }));
   if (call.enabled) {

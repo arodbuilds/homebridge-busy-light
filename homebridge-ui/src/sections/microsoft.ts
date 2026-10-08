@@ -14,6 +14,7 @@ import {
 import type { UiSource } from '../model.js';
 import { sourcePath } from '../validate.js';
 import { adoptIds, calendarList, rowBadges, type Row } from './calendar-list.js';
+import { statusesChanged } from './colors.js';
 
 /** How often the open code view asks whether the code was used. */
 export const POLL_MS = 3000;
@@ -248,8 +249,8 @@ export function microsoftBody(app: App, s: UiSource, title: HTMLElement, nameFie
     checkboxField(MICROSOFT.useTeamsStatus, s.useTeamsStatus, (v) => {
       s.useTeamsStatus = v;
       app.changed();
-      // The Teams only badges follow every Microsoft 365 card, saved or not (SPEC 11.3 D).
-      app.rerender('colors');
+      // The statuses Colors and the sensors show follow Teams status on the page (SPEC 11.3 D and E).
+      statusesChanged(app);
     }, { path: sourcePath(s, 'useTeamsStatus') }),
     checkboxField(MICROSOFT.useCalendars, s.useCalendar, (v) => {
       s.useCalendar = v;

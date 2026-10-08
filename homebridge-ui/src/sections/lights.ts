@@ -7,12 +7,13 @@
 import { callServer } from '../api.js';
 import type { App, LifxBulb } from '../app.js';
 import { card, cardName } from '../card.js';
-import { LIGHTS, SENSOR_NAMES, SHELL } from '../copy.js';
+import { LIGHTS, SENSOR_NAMES, SHELL, STATUS_NAMES, type StatusKey } from '../copy.js';
 import {
   checkboxField, disclosure, el, footerAction, grid, gridCell, linkButton, numberField, paragraph, statusBox, textField, uniqueId, type Child,
 } from '../dom.js';
 import { DEFAULTS, LIMITS, SENSOR_KEYS } from '../model.js';
 import { isHost } from '../validate.js';
+import { canHappen } from './colors.js';
 
 /** The three roll-ups (SPEC section 7), shown first; the other seven sit under Show all statuses. */
 const ROLL_UPS = SENSOR_KEYS.slice(0, 3);
@@ -235,12 +236,17 @@ function lifxCard(app: App): HTMLElement {
   });
 }
 
+/** Whether a per-status sensor's status can happen with the configuration on the page (SPEC 11.3 D); the roll-ups always can. */
+function sensorCanHappen(app: App, key: (typeof SENSOR_KEYS)[number]): boolean {
+  return key in STATUS_NAMES ? canHappen(app, key as StatusKey) : true;
+}
+
 function sensorBox(app: App, key: (typeof SENSOR_KEYS)[number]): HTMLElement {
   const name = app.config.name.trim() || DEFAULTS.name;
   return checkboxField(LIGHTS.sensor(name, SENSOR_NAMES[key]), app.config.sensors.includes(key), (v) => {
     app.config.sensors = SENSOR_KEYS.filter((k) => (k === key ? v : app.config.sensors.includes(k)));
     app.changed();
-  }, { path: `sensors.${key}` });
+  }, { path: `sensors.${key}`, help: sensorCanHappen(app, key) ? undefined : LIGHTS.nothingReports });
 }
 
 export function renderLights(app: App, container: HTMLElement): void {
@@ -251,7 +257,9 @@ export function renderLights(app: App, container: HTMLElement): void {
     paragraph(LIGHTS.otherText, 'section-copy'),
     el('div', { class: 'bl-subheading bl-sensors-heading' }, LIGHTS.sensors),
     el('div', { class: 'bl-sensors' }, ...ROLL_UPS.map((k) => sensorBox(app, k))),
-    disclosure(LIGHTS.showAll, [el('div', { class: 'bl-sensors' }, ...OTHERS.map((k) => sensorBox(app, k)))], {
+    // The statuses the setup cannot produce come after the others, and can still be ticked (SPEC 11.3 E).
+    disclosure(LIGHTS.showAll, [el('div', { class: 'bl-sensors' },
+      ...[...OTHERS.filter((k) => sensorCanHappen(app, k)), ...OTHERS.filter((k) => !sensorCanHappen(app, k))].map((k) => sensorBox(app, k)))], {
       cls: 'bl-all-sensors', open: OTHERS.some((k) => app.config.sensors.includes(k)),
     }),
     el('ol', { class: 'ns-steps' }, ...LIGHTS.steps.map((step, i) => el('li', { class: 'ns-step' },

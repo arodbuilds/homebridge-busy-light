@@ -42,7 +42,7 @@ dom.window.homebridge = {
 
 // The page modules read window and document at call time; they are imported once the fake DOM is in place.
 const { Page } = await import('../homebridge-ui/src/main.js');
-const { readConfig, exportConfig } = await import('../homebridge-ui/src/model.js');
+const { readConfig, exportConfig, DEFAULTS } = await import('../homebridge-ui/src/model.js');
 const copy = await import('../homebridge-ui/src/copy.js');
 const { INTRO, SHELL, VALIDATION } = copy;
 
@@ -730,11 +730,14 @@ describe('settings page: Colors (SPEC 11.3 D)', () => {
   const tabStop = (row: FakeElement): string[] => row.querySelectorAll('[role="radio"]').filter((b) => b.getAttribute('tabindex') === '0')
     .map((b) => b.getAttribute('aria-label')!);
   const swatchNamed = (row: FakeElement, name: string): FakeElement => row.querySelector(`[role="radio"][aria-label="${name}"]`)!;
+  /** Shows the rows of the statuses the setup cannot produce (SPEC 11.3 D, from build 3.1). */
+  const showAll = (root: FakeElement): void => root.querySelector('#section-colors .bl-show-statuses')!.click();
 
   it('one row per status in precedence order, each a radio group of the presets, Off and Custom, the saved color chosen', () => {
     const { root } = mount({ platform: 'BusyLight', colors: { inMeeting: '#aa00ff', busy: '#ff6a00', available: '#00ff00' } });
+    showAll(root);
     const rows = root.querySelectorAll('#section-colors .bl-color-row');
-    assert.deepEqual(rows.map((r) => text(r.querySelector('.bl-color-name')).replace(/ ?Teams only$/, '')),
+    assert.deepEqual(rows.map((r) => text(r.querySelector('.bl-color-name'))),
       ['Out of office', 'Do not disturb', 'In a call', 'In a meeting', 'Busy', 'Tentative', 'Away', 'Available', 'Offline']);
     for (const row of rows) {
       const group = row.querySelector('[role="radiogroup"]')!;
@@ -759,6 +762,7 @@ describe('settings page: Colors (SPEC 11.3 D)', () => {
 
   it('a preset, Off and Custom write the color; arrow keys move and choose; a bad hex shows the 11.3 H message; Reset colors', async () => {
     const { root, page } = mount();
+    showAll(root);
     const row = rowOf(root, 'busy');
     swatchNamed(row, 'Blue').click();
     await settle();
@@ -809,24 +813,63 @@ describe('settings page: Colors (SPEC 11.3 D)', () => {
     assert.equal(chosen(rowOf(root, 'busy')), 'Orange');
   });
 
-  it('Teams only, muted, while nothing else can give the status: no Teams status, no status input, and for In a call no switch', () => {
-    const teamsOnly = (root: FakeElement) => root.querySelectorAll('#section-colors .bl-color-row')
-      .filter((r) => r.querySelector('.badge')).map((r) => r.dataset.path);
-    const { root, page } = mount();
-    assert.deepEqual(teamsOnly(root), ['colors.doNotDisturb', 'colors.inCall', 'colors.busy', 'colors.away', 'colors.offline']);
-    assert.ok(root.querySelector('#section-colors .bl-badge-muted'));
-    buttonNamed(root, copy.CALENDARS.add).click();
-    root.querySelectorAll('.ns-chooser-tile')[2].click();
-    assert.deepEqual(teamsOnly(root), [], 'an unsaved Microsoft 365 card with Use Teams status on');
-    const id = page.config.calendars[0].id;
-    tick(field(root, `calendars.${id}.useTeamsStatus`), false);
-    assert.equal(teamsOnly(root).length, 5);
-    const saved = mount({ platform: 'BusyLight', calendars: [{ type: 'microsoft', id: 'w', name: 'W', tenantId: 'x', clientId: 'y' }] });
-    assert.deepEqual(teamsOnly(saved.root), []);
-    const call = mount({ platform: 'BusyLight', callSwitch: { enabled: true } });
-    assert.deepEqual(teamsOnly(call.root), ['colors.doNotDisturb', 'colors.busy', 'colors.away', 'colors.offline'], 'the switch gives In a call');
-    const input = mount({ platform: 'BusyLight', statusInput: { enabled: true, key: 'k'.repeat(43) } });
-    assert.deepEqual(teamsOnly(input.root), [], 'other apps can report each of them');
+  it('calendars only: the four statuses calendars give, and 5 more statuses behind Show all statuses (SPEC 11.3 D)', () => {
+    const { root } = mount({ platform: 'BusyLight', calendars: [ICLOUD_SOURCE, { type: 'url', id: 'office', name: 'Office',
+      url: 'https://outlook.office365.com/owa/calendar/synthetic/calendar.ics' }] });
+    const names = (): string[] => root.querySelectorAll('#section-colors .bl-color-row').map((r) => text(r.querySelector('.bl-color-name')));
+    assert.deepEqual(names(), ['Out of office', 'In a meeting', 'Tentative', 'Available']);
+    const more = root.querySelector('#section-colors .bl-more-statuses')!;
+    assert.equal(text(more.querySelector('span')), copy.COLORS.moreStatuses(5));
+    assert.equal(text(more.querySelector('span')), '5 more statuses come from Teams or from other apps.');
+    assert.equal(text(more.querySelector('button')), copy.COLORS.showAll);
+    more.querySelector('button')!.click();
+    assert.deepEqual(names(), ['Out of office', 'Do not disturb', 'In a call', 'In a meeting', 'Busy', 'Tentative', 'Away', 'Available', 'Offline'],
+      'all nine in the precedence order');
+    assert.equal(text(root.querySelector('#section-colors .bl-show-statuses')), copy.COLORS.showFewer);
+    root.querySelector('#section-colors .bl-show-statuses')!.click();
+    assert.deepEqual(names(), ['Out of office', 'In a meeting', 'Tentative', 'Available']);
+    assert.equal(text(root.querySelector('#section-colors .bl-precedence')), copy.COLORS.precedence, 'the precedence line stays');
+    assert.ok(!text(root).includes('Teams only'), 'no Teams only text anywhere');
+  });
+
+  it('the rows follow the On a Call switch, the status input and Teams status on the page, live', () => {
+    const { root } = mount({ platform: 'BusyLight', calendars: [ICLOUD_SOURCE] });
+    const names = (): string[] => root.querySelectorAll('#section-colors .bl-color-row').map((r) => text(r.querySelector('.bl-color-name')));
+    const ALL = ['Out of office', 'Do not disturb', 'In a call', 'In a meeting', 'Busy', 'Tentative', 'Away', 'Available', 'Offline'];
+    tick(field(root, 'callSwitch.enabled'), true);
+    assert.deepEqual(names(), ['Out of office', 'In a call', 'In a meeting', 'Tentative', 'Available'], 'the switch adds In a call');
+    assert.equal(text(root.querySelector('#section-colors .bl-more-statuses span')), copy.COLORS.moreStatuses(4));
+    tick(field(root, 'statusInput.enabled'), true);
+    assert.deepEqual(names(), ALL, 'the status input: all nine');
+    assert.equal(root.querySelector('#section-colors .bl-more-statuses'), null, 'nothing hidden, no line');
+    tick(field(root, 'statusInput.enabled'), false);
+    tick(field(root, 'callSwitch.enabled'), false);
+    assert.deepEqual(names(), ['Out of office', 'In a meeting', 'Tentative', 'Available'], 'turned off, the rows hide again');
+    buttonNamed(root.querySelector('#section-calendars')!, copy.CALENDARS.add).click();
+    root.querySelector('#section-calendars .ns-chooser-tile[data-type="microsoft"]')!.click();
+    const optionSignIn = root.querySelector('#section-calendars .bl-outlook-signin');
+    if (optionSignIn) {
+      optionSignIn.click();
+    }
+    const card = root.querySelectorAll('#section-calendars .bl-source-microsoft').at(-1)!;
+    const teams = field(root, `calendars.${card.getAttribute('data-card-id')}.useTeamsStatus`);
+    assert.equal(teams.checked, true, 'a new Microsoft 365 card reads Teams status');
+    assert.deepEqual(names(), ALL, 'a Microsoft 365 source with Teams status: all nine');
+    tick(teams, false);
+    assert.deepEqual(names(), ['Out of office', 'In a meeting', 'Tentative', 'Available'], 'Teams status off: hidden again');
+  });
+
+  it('hidden rows keep their saved colors on Save, and Reset colors resets all nine', async () => {
+    const colors = { doNotDisturb: '#123456', busy: 'off', offline: '#ABCDEF', tentative: '#FFD000' };
+    const { root } = mount({ platform: 'BusyLight', calendars: [ICLOUD_SOURCE], colors });
+    assert.equal(root.querySelector('[data-path="colors.busy"]'), null, 'hidden');
+    fill(root, 'name', 'Door');
+    await settle();
+    const saved = lastBlock().colors as Record<string, string>;
+    assert.deepEqual([saved.doNotDisturb, saved.busy, saved.offline], ['#123456', 'off', '#ABCDEF'], 'saved unchanged');
+    buttonNamed(root.querySelector('#section-colors')!, copy.COLORS.reset).click();
+    await settle();
+    assert.deepEqual(lastBlock().colors, { ...DEFAULTS.colors }, 'all nine reset');
   });
 });
 
@@ -946,8 +989,11 @@ describe('settings page: Lights (SPEC 11.3 E)', () => {
     const all = section.querySelector('details.bl-all-sensors')!;
     assert.equal(text(all.querySelector('summary')), copy.LIGHTS.showAll);
     assert.equal(all.open, false);
-    assert.deepEqual(labels(all), ['Door In a Meeting', 'Door In a Call', 'Door Do Not Disturb', 'Door Busy in Teams', 'Door Tentative', 'Door Away',
+    // From build 3.1, the statuses a calendar-only setup cannot produce come last, with their help (SPEC 11.3 E).
+    assert.deepEqual(labels(all), ['Door In a Meeting', 'Door Tentative', 'Door In a Call', 'Door Do Not Disturb', 'Door Busy in Teams', 'Door Away',
       'Door Offline']);
+    assert.deepEqual(all.querySelectorAll('.form-check').map((c) => text(c.querySelector('.form-text'))),
+      ['', '', ...Array(5).fill(copy.LIGHTS.nothingReports)]);
     assert.deepEqual(section.querySelectorAll('.bl-sensors input').slice(0, 3).map((i) => i.checked), [true, true, true]);
     tick(all.querySelectorAll('input')[0], true);
     tick(section.querySelectorAll('.bl-sensors input')[0], false);
@@ -1546,5 +1592,31 @@ describe('settings page: the masked setup code (SPEC 11.3 I)', () => {
     assert.equal(text(section(root).querySelector('.bl-input-result')), copy.STATUS_INPUT.received, 'redrawn with the result');
     assert.equal(keyInput(root).getAttribute('type'), 'text');
     assert.equal(codeLine(root), CODE);
+  });
+});
+
+// SPEC 11.3 E (build 3.1), 15 item 24: the sensors the setup cannot produce come last, can still be ticked, and follow live.
+
+describe('settings page: the per-status sensors and the statuses the setup can produce (SPEC 11.3 E)', () => {
+  const sensors = (root: FakeElement): Array<[string, string]> => root.querySelectorAll('#section-lights details.bl-all-sensors .form-check')
+    .map((c) => [text(c.querySelector('.form-check-label')), text(c.querySelector('.form-text'))]);
+
+  it('with the status input on, every status can happen: section 7 order, no help', () => {
+    const { root } = mount({ platform: 'BusyLight', statusInput: { enabled: true, key: 'c'.repeat(43) } });
+    assert.deepEqual(sensors(root), [['Busy Light In a Meeting', ''], ['Busy Light In a Call', ''], ['Busy Light Do Not Disturb', ''],
+      ['Busy Light Busy in Teams', ''], ['Busy Light Tentative', ''], ['Busy Light Away', ''], ['Busy Light Offline', '']]);
+  });
+
+  it('the On a Call switch moves In a Call up, live; a status that cannot happen can still be ticked', async () => {
+    const { root } = mount();
+    tick(field(root, 'callSwitch.enabled'), true);
+    assert.deepEqual(sensors(root).slice(0, 3).map(([name, help]) => [name, help]),
+      [['Busy Light In a Meeting', ''], ['Busy Light In a Call', ''], ['Busy Light Tentative', '']]);
+    assert.equal(sensors(root)[3][1], copy.LIGHTS.nothingReports);
+    const offline = root.querySelectorAll('#section-lights details.bl-all-sensors .form-check')
+      .find((c) => text(c.querySelector('.form-check-label')) === 'Busy Light Offline')!;
+    tick(offline.querySelector('input')!, true);
+    await settle();
+    assert.ok((lastBlock().sensors as string[]).includes('offline'));
   });
 });

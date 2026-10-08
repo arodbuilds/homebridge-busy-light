@@ -152,6 +152,8 @@ export interface UiState {
   /** Reset was confirmed: the done state stands where the dialog was until a reload. */
   resetDone: boolean;
   issuesExpanded: boolean;
+  /** Colors shows every status, not only those the setup can produce (SPEC 11.3 D). */
+  colorsExpanded: boolean;
 }
 
 /** What a section needs from the page. */

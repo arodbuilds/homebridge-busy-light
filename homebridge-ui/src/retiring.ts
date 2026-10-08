@@ -6,5 +6,4 @@
 export const RETIRING = {
   microsoftTileTitle: 'Microsoft 365',
   microsoftTileHelp: 'Outlook calendars and Teams status. Needs an app registration from your administrator.',
-  teamsOnly: 'Teams only',
 };

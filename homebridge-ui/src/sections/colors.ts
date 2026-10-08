@@ -4,20 +4,39 @@
  * to a preset selects it; any other `#RRGGBB` selects Custom, which shows the browser's color picker and the hex field.
  * Arrow keys move between the swatches. The configuration format does not change: `#RRGGBB` or `off`.
  *
- * The statuses only Teams presence can give carry a muted Teams only badge while nothing else can give them: no
- * Microsoft 365 source, saved or not, uses Teams status, the status input is off, and for In a call the On a Call
- * switch is off too.
+ * From build 3.1 only the statuses the configuration on the page can produce have rows; the others wait behind a line
+ * and Show all statuses. Statuses stay in the engine and in `config.json` as they are; only the page chooses what to show.
  */
 
 import type { App } from '../app.js';
-import { badge } from '../card.js';
 import { COLORS, STATUS_NAMES, type StatusKey } from '../copy.js';
 import { el, linkButton, paragraph, uniqueId } from '../dom.js';
 import { DEFAULTS, STATUS_KEYS } from '../model.js';
-import { RETIRING } from '../retiring.js';
 
-/** The statuses that come from Teams presence alone (SPEC 6.3 rules 3, 4, 6, 8 and 11) when no status input is on. */
-export const TEAMS_ONLY: readonly StatusKey[] = ['doNotDisturb', 'inCall', 'busy', 'away', 'offline'];
+/** The statuses only a live source can give: Teams presence, another app, or (In a call) the On a Call switch. */
+const LIVE: readonly StatusKey[] = ['doNotDisturb', 'inCall', 'busy', 'away', 'offline'];
+
+/**
+ * Whether a status can happen with the configuration on the page, as edited (SPEC 11.3 D): Out of office, In a meeting,
+ * Tentative and Available always; In a call with the On a Call switch, the status input or Teams status; Do not
+ * disturb, Busy, Away and Offline with the status input or Teams status.
+ */
+export function canHappen(app: App, key: StatusKey): boolean {
+  if (!LIVE.includes(key)) {
+    return true;
+  }
+  const c = app.config;
+  if (c.statusInput.enabled || c.calendars.some((s) => s.type === 'microsoft' && s.useTeamsStatus)) {
+    return true;
+  }
+  return key === 'inCall' && c.callSwitch.enabled;
+}
+
+/** The status input, the On a Call switch or a source's Teams status changed: Colors and the sensors follow. */
+export function statusesChanged(app: App): void {
+  app.rerender('colors');
+  app.rerender('lights');
+}
 
 const HEX = /^#[0-9a-f]{6}$/i;
 
@@ -30,21 +49,6 @@ const CHOICES: Choice[] = [...COLORS.presets.map((p) => ({ kind: 'preset' as con
 const customChosen = new Set<StatusKey>();
 /** The last custom color of each row, so choosing Custom again after a preset or Off brings it back. */
 const lastCustom = new Map<StatusKey, string>();
-
-/** True when any Microsoft 365 source on the page or in the saved configuration has Use Teams status on. */
-export function usesTeams(app: App): boolean {
-  return [...app.config.calendars, ...app.saved.calendars].some((s) => s.type === 'microsoft' && s.useTeamsStatus);
-}
-
-/** Whether only Teams presence could give this status with the configuration on the page or saved. */
-export function teamsOnly(app: App, key: StatusKey): boolean {
-  if (!TEAMS_ONLY.includes(key) || usesTeams(app)) {
-    return false;
-  }
-  const input = app.config.statusInput.enabled || app.saved.statusInput.enabled;
-  const call = key === 'inCall' && (app.config.callSwitch.enabled || app.saved.callSwitch.enabled);
-  return !input && !call;
-}
 
 /** The preset a color selects (SPEC 11.3 D), without regard to case, or null. */
 export function presetOf(value: string): string | null {
@@ -164,7 +168,7 @@ function colorRow(app: App, key: StatusKey): HTMLElement {
   });
   draw();
   return el('div', { class: 'bl-color-row', 'data-path': `colors.${key}` },
-    el('div', { class: 'bl-color-name', id: nameId }, STATUS_NAMES[key], teamsOnly(app, key) ? badge(RETIRING.teamsOnly, 'muted') : null),
+    el('div', { class: 'bl-color-name', id: nameId }, STATUS_NAMES[key]),
     group,
     custom,
     el('div', { class: 'invalid-feedback' }),
@@ -172,10 +176,21 @@ function colorRow(app: App, key: StatusKey): HTMLElement {
 }
 
 export function renderColors(app: App, container: HTMLElement): void {
-  const rows = STATUS_KEYS.map((key) => colorRow(app, key));
+  const hidden = STATUS_KEYS.filter((key) => !canHappen(app, key));
+  const shown = app.ui.colorsExpanded ? STATUS_KEYS : STATUS_KEYS.filter((key) => canHappen(app, key));
+  const rows = shown.map((key) => colorRow(app, key));
+  // The statuses the setup cannot produce wait behind one line; their saved colors are kept as they are.
+  const more = hidden.length === 0 ? null : el('div', { class: 'bl-more-statuses form-text' },
+    el('span', {}, COLORS.moreStatuses(hidden.length)), ' ',
+    linkButton(app.ui.colorsExpanded ? COLORS.showFewer : COLORS.showAll, () => {
+      app.ui.colorsExpanded = !app.ui.colorsExpanded;
+      app.rerender('colors');
+      document.querySelector<HTMLElement>('#section-colors .bl-more-statuses button')?.focus();
+    }, 'bl-show-statuses'));
   container.appendChild(el('div', { class: 'card ns-card bl-colors-card' },
     el('div', { class: 'card-body' },
       el('div', { class: 'bl-color-rows' }, ...rows),
+      more,
       paragraph(COLORS.precedence, 'form-text bl-precedence'),
       el('div', { class: 'bl-actions' }, linkButton(COLORS.reset, () => {
         app.config.colors = { ...DEFAULTS.colors };
