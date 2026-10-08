@@ -10,12 +10,13 @@ import type { App, ListState, StatusSource, TestResult } from '../app.js';
 import { badge, card, cardName, type BadgeKind } from '../card.js';
 import { CALENDARS, GOOGLE, ICLOUD, PILLS, SHELL, SOURCE_TYPES, TEST, URL_CARD } from '../copy.js';
 import {
-  clear, dangerLinkButton, disclosure, el, footerAction, grid, gridCell, inlineConfirm, numberField, outLink, outlineButton, paragraph, passwordField,
+  clear, dangerLinkButton, disclosure, el, footerAction, grid, gridCell, inlineConfirm, outLink, outlineButton, paragraph, passwordField,
   primaryButton, selectField, statusBox, textField, type Child,
 } from '../dom.js';
-import { parseDate, relativeTime } from '../format.js';
+import { formatDuration, parseDate, relativeTime } from '../format.js';
+import { intervalOptions, SAME_AS_SETTINGS } from '../intervals.js';
 import { RETIRING } from '../retiring.js';
-import { DEFAULTS, emptySource, LIMITS, newId, SOURCE_TYPES as TYPES, type SourceType, type UiSource } from '../model.js';
+import { emptySource, INTERVALS, newId, SOURCE_TYPES as TYPES, type SourceType, type UiSource } from '../model.js';
 import { cardLabel, sourcePath } from '../validate.js';
 import { adoptIds, calendarList, rowBadges, type Row } from './calendar-list.js';
 import { microsoftBody, microsoftFooter, microsoftOnStatus, microsoftResults, stopMicrosoft } from './microsoft.js';
@@ -295,19 +296,34 @@ function removeSource(app: App, s: UiSource): void {
   }
 }
 
+/** The card select's `Same as Settings ({duration})` option, with the platform interval as edited (SPEC 11.3 C). */
+function sameAsSettings(app: App): string {
+  return CALENDARS.sameAsSettings(formatDuration(app.config.calendarSeconds));
+}
+
+/** After Reload calendars every changes under Settings, every card's `Same as Settings` option follows it, in place. */
+export function followPlatformInterval(app: App): void {
+  for (const option of document.querySelectorAll<HTMLElement>('#section-calendars option.bl-same-as-settings')) {
+    option.textContent = sameAsSettings(app);
+  }
+}
+
 /**
- * The card's own check interval (SPEC 11.3 C, 9.1 item 19), under an Advanced disclosure at the bottom of the body:
- * empty uses Reload calendars every, under Settings, whose value the placeholder shows.
+ * The card's own check interval (SPEC 11.3 C, 9.1 item 19), a select under an Advanced disclosure at the bottom of the
+ * body: `Same as Settings` saves no `calendarSeconds`; the others save their seconds.
  */
 function intervalField(app: App, s: UiSource): HTMLElement {
-  return disclosure(SHELL.advanced, [grid(gridCell(6, numberField(RETIRING.checkEvery, s.calendarSeconds ?? Number.NaN, (v) => {
-    s.calendarSeconds = Number.isNaN(v) ? null : v;
+  const saved = savedSource(app, s)?.calendarSeconds ?? null;
+  const options = [
+    { value: SAME_AS_SETTINGS, label: sameAsSettings(app), cls: 'bl-same-as-settings' },
+    ...intervalOptions(INTERVALS.sourceCalendarSeconds, s.calendarSeconds, saved),
+  ];
+  const value = s.calendarSeconds === null ? SAME_AS_SETTINGS : String(s.calendarSeconds);
+  const select = selectField(CALENDARS.checkEvery, value, options, (v) => {
+    s.calendarSeconds = v === SAME_AS_SETTINGS ? null : Number(v);
     app.changed();
-  }, {
-    path: sourcePath(s, 'calendarSeconds'), min: LIMITS.sourceCalendarSeconds[0], max: LIMITS.sourceCalendarSeconds[1],
-    placeholder: RETIRING.checkEveryPlaceholder(Number.isFinite(app.config.calendarSeconds) ? app.config.calendarSeconds : DEFAULTS.calendarSeconds),
-    help: RETIRING.checkEveryHelp,
-  })))], { cls: 'bl-source-advanced', open: s.calendarSeconds !== null });
+  }, { path: sourcePath(s, 'calendarSeconds'), help: CALENDARS.checkEveryHelp });
+  return disclosure(SHELL.advanced, [grid(gridCell(6, select))], { cls: 'bl-source-advanced', open: s.calendarSeconds !== null });
 }
 
 function sourceCard(app: App, s: UiSource): HTMLElement {

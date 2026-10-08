@@ -14,7 +14,9 @@ import {
 } from '../src/config.js';
 import { relativeTime } from '../homebridge-ui/src/format.js';
 import { MARK_ROOT, MARK_SHAPES } from '../homebridge-ui/src/mark.js';
-import { DEFAULTS, LIMITS, emptyConfig, exportConfig, newId, readConfig, restoreSecrets, splitWords, withoutSecrets } from '../homebridge-ui/src/model.js';
+import {
+  DEFAULTS, INTERVALS, LIMITS, emptyConfig, exportConfig, newId, readConfig, restoreSecrets, splitWords, withoutSecrets,
+} from '../homebridge-ui/src/model.js';
 import { isCalendarAddress, isHost, validate } from '../homebridge-ui/src/validate.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -41,10 +43,13 @@ describe('settings page model (SPEC section 9)', () => {
     });
     assert.deepEqual(readConfig(undefined), emptyConfig());
     assert.deepEqual(LIMITS, {
-      pollSeconds: [MIN_POLL_SECONDS, MAX_POLL_SECONDS], calendarSeconds: [MIN_CALENDAR_SECONDS, MAX_CALENDAR_SECONDS], brightness: [1, 100],
-      refreshSeconds: [0, MAX_REFRESH_SECONDS], port: [MIN_INPUT_PORT, MAX_INPUT_PORT], hours: [MIN_CALL_HOURS, MAX_CALL_HOURS],
-      sourceCalendarSeconds: [MIN_CALENDAR_SECONDS, MAX_CALENDAR_SECONDS],
+      brightness: [1, 100], refreshSeconds: [0, MAX_REFRESH_SECONDS], port: [MIN_INPUT_PORT, MAX_INPUT_PORT], hours: [MIN_CALL_HOURS, MAX_CALL_HOURS],
     });
+    // Every duration the interval selects offer is one the plugin accepts (SPEC 11.3 C and F, 9.1 items 12 and 19).
+    assert.ok(INTERVALS.pollSeconds.every((v) => v >= MIN_POLL_SECONDS && v <= MAX_POLL_SECONDS));
+    assert.ok([...INTERVALS.calendarSeconds, ...INTERVALS.sourceCalendarSeconds].every((v) => v >= MIN_CALENDAR_SECONDS && v <= MAX_CALENDAR_SECONDS));
+    assert.ok((INTERVALS.pollSeconds as readonly number[]).includes(plugin.pollSeconds), 'the default is in the list');
+    assert.ok((INTERVALS.calendarSeconds as readonly number[]).includes(plugin.calendarSeconds));
     assert.deepEqual(DEFAULTS.colors, plugin.colors);
   });
 
@@ -73,10 +78,9 @@ describe('settings page model (SPEC section 9)', () => {
     assert.deepEqual(c.otherCalendars, [{ type: 'exchange', name: 'Old' }]);
     assert.equal(c.pollSeconds, 5);
     assert.equal(c.colors.busy, 'orange');
-    assert.deepEqual(validate(c).map((i) => [i.path, i.message]), [
-      ['colors.busy', 'Enter a color as #RRGGBB, for example #FF0000.'],
-      ['pollSeconds', 'Enter a whole number from 15 to 240.'],
-    ]);
+    // From build 3.1 the intervals are selects with no range message; a stored value outside the list is shown and kept.
+    assert.deepEqual(validate(c).map((i) => [i.path, i.message]), [['colors.busy', 'Enter a color as #RRGGBB, for example #FF0000.']]);
+    assert.equal(exportConfig(c).pollSeconds, 5);
     assert.deepEqual((exportConfig(c).calendars as unknown[]).at(-1), { type: 'exchange', name: 'Old' });
   });
 

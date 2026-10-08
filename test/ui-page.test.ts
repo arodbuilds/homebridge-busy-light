@@ -44,7 +44,6 @@ dom.window.homebridge = {
 const { Page } = await import('../homebridge-ui/src/main.js');
 const { readConfig, exportConfig } = await import('../homebridge-ui/src/model.js');
 const copy = await import('../homebridge-ui/src/copy.js');
-const { RETIRING } = await import('../homebridge-ui/src/retiring.js');
 const { INTRO, SHELL, VALIDATION } = copy;
 
 type PageT = InstanceType<typeof Page>;
@@ -976,7 +975,7 @@ describe('settings page: Settings (SPEC 11.3 F)', () => {
     assert.equal(details.open, false);
     assert.equal(text(details.querySelector('summary')), copy.SHELL.advanced);
     const labels = details.querySelectorAll('label').map((l) => text(l).replace(/\*$/, ''));
-    assert.deepEqual(labels, [copy.SETTINGS.name, RETIRING.pollSeconds, RETIRING.calendarSeconds, copy.SETTINGS.ignoreAllDayBusy,
+    assert.deepEqual(labels, [copy.SETTINGS.name, copy.SETTINGS.pollSeconds, copy.SETTINGS.calendarSeconds, copy.SETTINGS.ignoreAllDayBusy,
       copy.SETTINGS.outOfOfficeWords, copy.SETTINGS.overrideSwitch, copy.SETTINGS.debug]);
     assert.equal(field(root, 'name').value, 'Busy Light');
     assert.equal(field(root, 'outOfOfficeWords').value, 'Out of office, OOO, Vacation, PTO');
@@ -986,19 +985,13 @@ describe('settings page: Settings (SPEC 11.3 F)', () => {
 
   it('validates on blur, opens Advanced for an issue, and writes the words as a list', async () => {
     const { root, page } = mount();
-    fill(root, 'pollSeconds', '5');
-    assert.equal(feedback(root, 'pollSeconds'), 'Enter a whole number from 15 to 240.');
-    fill(root, 'calendarSeconds', '601');
-    assert.equal(feedback(root, 'calendarSeconds'), 'Enter a whole number from 60 to 600.');
     fill(root, 'name', ' ');
     assert.equal(feedback(root, 'name'), 'Name is required.');
-    assert.deepEqual(root.querySelectorAll('.ns-issue-link').map((b) => text(b)), [
-      'Settings: Name is required.', 'Settings: Enter a whole number from 15 to 240.', 'Settings: Enter a whole number from 60 to 600.',
-    ]);
+    assert.deepEqual(root.querySelectorAll('.ns-issue-link').map((b) => text(b)), ['Settings: Name is required.']);
     assert.equal(save.enabled, false);
     fill(root, 'name', 'Door');
-    fill(root, 'pollSeconds', '60');
-    fill(root, 'calendarSeconds', '300');
+    choose(field(root, 'pollSeconds'), '60');
+    choose(field(root, 'calendarSeconds'), '300');
     fill(root, 'outOfOfficeWords', 'Holiday, , Leave ');
     await settle();
     assert.equal(save.enabled, true);
@@ -1006,12 +999,14 @@ describe('settings page: Settings (SPEC 11.3 F)', () => {
     const block = lastBlock();
     assert.deepEqual([block.name, block.pollSeconds, block.calendarSeconds, block.outOfOfficeWords], ['Door', 60, 300, ['Holiday', 'Leave']]);
     assert.ok(text(root.querySelector('#section-lights .bl-sensors')).includes('Door Available'), 'the sensors follow the name');
-    const reopened = mount({ platform: 'BusyLight', pollSeconds: 5 });
+    const reopened = mount();
+    fill(reopened.root, 'name', ' ');
+    reopened.root.querySelector('#section-settings details')!.open = false;
     assert.equal(reopened.page.issues().length, 1);
     reopened.root.querySelector('.ns-issue-link')!.click();
     assert.equal(reopened.root.querySelector('#section-settings details')!.open, true, 'the summary entry opens Advanced');
-    assert.equal(dom.document.activeElement, field(reopened.root, 'pollSeconds'), 'and moves focus to the field');
-    assert.equal(feedback(reopened.root, 'pollSeconds'), 'Enter a whole number from 15 to 240.');
+    assert.equal(dom.document.activeElement, field(reopened.root, 'name'), 'and moves focus to the field');
+    assert.equal(feedback(reopened.root, 'name'), 'Name is required.');
     void page;
   });
 
@@ -1332,33 +1327,98 @@ describe('settings page: Status from other apps (SPEC 11.3 I)', () => {
   });
 });
 
-describe('settings page: a calendar card\'s own check interval (SPEC 11.3 C, 9.1 item 19)', () => {
-  it('every card type has it under Advanced: empty by default with the platform value as placeholder, validated, written as calendarSeconds', async () => {
-    const { root, page } = mount({ platform: 'BusyLight', calendarSeconds: 240, calendars: [
-      ICLOUD_SOURCE,
-      { type: 'google', id: 'g', name: 'G', url: 'https://calendar.example.com/x.ics' },
-      { type: 'url', id: 'u', name: 'U', url: 'https://rota.example.net/a.ics', calendarSeconds: 600 },
-      { type: 'microsoft', id: 'm', name: 'M', tenantId: '11111111-2222-3333-4444-555555555555', clientId: '66666666-7777-8888-9999-000000000000' },
-    ] });
+describe('settings page: the intervals as durations (SPEC 11.3 C, F and G; 15 item 24)', () => {
+  const options = (select: FakeElement): string[] => select.querySelectorAll('option').map((o) => text(o));
+  const SOURCES = [
+    ICLOUD_SOURCE,
+    { type: 'google', id: 'g', name: 'G', url: 'https://calendar.example.com/x.ics' },
+    { type: 'url', id: 'u', name: 'U', url: 'https://rota.example.net/a.ics', calendarSeconds: 600 },
+    { type: 'microsoft', id: 'm', name: 'M', tenantId: '11111111-2222-3333-4444-555555555555', clientId: '66666666-7777-8888-9999-000000000000' },
+  ];
+
+  it('every card type has Check for changes every under Advanced: Same as Settings first, then the five durations', () => {
+    const { root, page } = mount({ platform: 'BusyLight', calendars: SOURCES });
     for (const id of ['icloud', 'g', 'u', 'm']) {
       const card = openCard(root, id);
       const advanced = card.querySelector('.bl-source-advanced')!;
       assert.equal(text(advanced.querySelector('summary')), copy.SHELL.advanced, id);
-      const input = field(root, `calendars.${id}.calendarSeconds`);
-      assert.equal(text(card.querySelector(`[data-path="calendars.${id}.calendarSeconds"] label`)), RETIRING.checkEvery);
-      assert.equal(input.getAttribute('placeholder'), 'e.g. 240', 'the platform value');
-      assert.equal(text(card.querySelector(`[data-path="calendars.${id}.calendarSeconds"] .ns-help`)), RETIRING.checkEveryHelp);
-      assert.equal(input.value, id === 'u' ? '600' : '');
+      const select = field(root, `calendars.${id}.calendarSeconds`);
+      assert.equal(select.tagName, 'SELECT');
+      assert.ok(select.className.includes('form-select'), 'styled as Counts for');
+      assert.equal(text(card.querySelector(`[data-path="calendars.${id}.calendarSeconds"] label`)), copy.CALENDARS.checkEvery);
+      assert.equal(text(card.querySelector(`[data-path="calendars.${id}.calendarSeconds"] .ns-help`)), copy.CALENDARS.checkEveryHelp);
+      assert.equal(card.querySelector(`[data-path="calendars.${id}.calendarSeconds"] input`), null, 'no number field');
+      assert.deepEqual(options(select), ['Same as Settings (3 minutes)', '1 minute', '2 minutes', '3 minutes', '5 minutes', '10 minutes']);
+      assert.equal(select.value, id === 'u' ? '600' : '');
       assert.equal(advanced.open, id === 'u', 'open when it holds a value');
     }
-    fill(root, 'calendars.g.calendarSeconds', '30');
-    assert.equal(feedback(root, 'calendars.g.calendarSeconds'), 'Enter a whole number from 60 to 600.');
-    fill(root, 'calendars.g.calendarSeconds', '90');
-    fill(root, 'calendars.u.calendarSeconds', '');
-    await settle();
-    const blocks = lastBlock().calendars as Array<Record<string, unknown>>;
-    assert.deepEqual(blocks.map((c) => c.calendarSeconds), [undefined, 90, undefined, undefined], 'emptied means the platform interval');
     assert.deepEqual(page.issues(), []);
+  });
+
+  it('each option saves its seconds, and Same as Settings saves none', async () => {
+    const { root } = mount({ platform: 'BusyLight', calendars: SOURCES });
+    openCard(root, 'g');
+    for (const [value, seconds] of [['60', 60], ['120', 120], ['180', 180], ['300', 300], ['600', 600], ['', undefined]] as const) {
+      choose(field(root, 'calendars.g.calendarSeconds'), value);
+      await settle();
+      assert.equal((lastBlock().calendars as Array<Record<string, unknown>>)[1].calendarSeconds, seconds, value || 'Same as Settings');
+      assert.ok(!('calendarSeconds' in (lastBlock().calendars as Array<Record<string, unknown>>)[1]) || seconds !== undefined);
+    }
+  });
+
+  it('Same as Settings follows Reload calendars every as it is edited, in place', () => {
+    const { root } = mount({ platform: 'BusyLight', calendars: SOURCES });
+    openCard(root, 'g');
+    const card = (): FakeElement => field(root, 'calendars.g.calendarSeconds');
+    choose(field(root, 'calendarSeconds'), '600');
+    assert.equal(options(card())[0], 'Same as Settings (10 minutes)');
+    choose(field(root, 'calendarSeconds'), '60');
+    assert.equal(options(card())[0], 'Same as Settings (1 minute)');
+    assert.equal(card().value, '', 'the card keeps its choice');
+  });
+
+  it('Settings: Check status every and Reload calendars every, with the SPEC 8 defaults marked, each option saving its seconds', async () => {
+    const { root } = mount();
+    const poll = field(root, 'pollSeconds');
+    const reload = field(root, 'calendarSeconds');
+    assert.equal(poll.tagName, 'SELECT');
+    assert.deepEqual(options(poll), ['15 seconds', '30 seconds (default)', '1 minute', '2 minutes', '4 minutes']);
+    assert.deepEqual(options(reload), ['1 minute', '2 minutes', '3 minutes (default)', '5 minutes', '10 minutes']);
+    assert.deepEqual([poll.value, reload.value], ['30', '180']);
+    for (const [value, seconds] of [['15', 15], ['30', 30], ['60', 60], ['120', 120], ['240', 240]] as const) {
+      choose(field(root, 'pollSeconds'), value);
+      await settle();
+      assert.equal(lastBlock().pollSeconds, seconds);
+    }
+    for (const [value, seconds] of [['60', 60], ['120', 120], ['180', 180], ['300', 300], ['600', 600]] as const) {
+      choose(field(root, 'calendarSeconds'), value);
+      await settle();
+      assert.equal(lastBlock().calendarSeconds, seconds);
+    }
+  });
+
+  it('a saved 90 shows as 1 minute 30 seconds, selected, is kept on Save, and stays listed until another value is saved', async () => {
+    const { root, page } = mount({ platform: 'BusyLight', pollSeconds: 90, calendarSeconds: 90, calendars: [
+      { type: 'url', id: 'u', name: 'U', url: 'https://rota.example.net/a.ics', calendarSeconds: 90 },
+    ] });
+    openCard(root, 'u');
+    const card = field(root, 'calendars.u.calendarSeconds');
+    assert.deepEqual(options(card), [
+      'Same as Settings (1 minute 30 seconds)', '1 minute', '1 minute 30 seconds', '2 minutes', '3 minutes', '5 minutes', '10 minutes',
+    ]);
+    assert.equal(card.value, '90');
+    assert.deepEqual(options(field(root, 'pollSeconds')), ['15 seconds', '30 seconds (default)', '1 minute', '1 minute 30 seconds', '2 minutes', '4 minutes']);
+    assert.equal(field(root, 'pollSeconds').value, '90');
+    assert.equal(field(root, 'calendarSeconds').value, '90');
+    fill(root, 'name', 'Busy Light');
+    await settle();
+    const block = lastBlock();
+    assert.deepEqual([block.pollSeconds, block.calendarSeconds, (block.calendars as Array<Record<string, unknown>>)[0].calendarSeconds], [90, 90, 90], 'kept');
+    choose(field(root, 'pollSeconds'), '60');
+    page.rerender('settings');
+    assert.ok(options(field(root, 'pollSeconds')).includes('1 minute 30 seconds'), 'still listed until saved');
+    const saved = mount({ platform: 'BusyLight', pollSeconds: 60 });
+    assert.ok(!options(field(saved.root, 'pollSeconds')).includes('1 minute 30 seconds'), 'gone once another value is saved');
   });
 });
 

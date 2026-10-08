@@ -6,10 +6,5 @@
 export const RETIRING = {
   microsoftTileTitle: 'Microsoft 365',
   microsoftTileHelp: 'Outlook calendars and Teams status. Needs an app registration from your administrator.',
-  checkEvery: 'Check for changes every (seconds)',
-  checkEveryPlaceholder: (value: number | string): string => `e.g. ${value}`,
-  checkEveryHelp: 'Leave empty to use Reload calendars every, under Settings.',
   teamsOnly: 'Teams only',
-  pollSeconds: 'Check status every (seconds)',
-  calendarSeconds: 'Reload calendars every (seconds)',
 };
