@@ -9,6 +9,7 @@ Build 3 has three parts:
 - **A. Status input**: any app on the local network can report a status (a new SPEC section 18, plus changes to sections 2, 6, 7, 9, 10, 11, 12, 15, 16, 17).
 - **B. Per-calendar check interval**.
 - **C. Color presets** in place of hex codes on the settings page.
+- **D. The bulb in use, shown when the page opens** (found on the Pi on October 8, 2026).
 
 Version: `0.1.0-beta.3`.
 
@@ -237,3 +238,18 @@ Replaces the row described in **11.3 D** (the configuration format does not chan
 5. The defaults of 6.2 are presets: Out of office Purple, Do not disturb, In a call and In a meeting Red, Busy Orange, Tentative and Away Yellow, Available Green, Offline Off. `Reset colors` restores them.
 6. The `Teams only` badges and the line `When more than one applies, the one highest in this list wins.` stay.
 7. **17**, open item: check each preset on a real LIFX bulb and adjust the hex values where the bulb renders them poorly (orange and yellow especially). The configuration keeps whatever hex the user saved.
+
+---
+
+## D. The bulb in use, shown when the page opens
+
+Found in the pass on the Pi, October 8, 2026: with LIFX already on, the page opens with only `Search again` under "Use a LIFX bulb", because no search runs on open (11.2 item 5). It reads as if no bulb is set up, which is the confusion build 2 set out to remove. The state file already knows the bulb, so no network call is needed.
+
+1. **11.3 E**: with "Use a LIFX bulb" on, no IP address under Advanced, and no search yet in this visit, the results line comes from the state file's `light` (10.1), read through `/status`:
+   - With a `label` and `host` and `answered` true: `Busy Light is using {label} ({host}).`
+   - With a `label` and `host` and `answered` false: `Busy Light is using {label} ({host}), but it did not answer last time.`
+   - With no light in the state file (the plugin has not found one, or has not run since LIFX was turned on): `Busy Light has not found a bulb yet. Search again to look for one.`
+2. `Search again` stays below the line, and a search replaces the line with its results as now.
+3. **11.2 item 5** is unchanged: opening the page still calls only `/version` and `/status`.
+4. **15**: page tests for the three lines, and that opening the page with LIFX on makes no `/lifx/discover` call.
+
