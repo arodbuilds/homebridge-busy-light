@@ -6,6 +6,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { MSG, header, parseHeader } from '../src/lifx.js';
+import type { UdpSocket } from '../src/lifx.js';
 import type { Log } from '../src/log.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -122,4 +124,153 @@ export function fakeLog(): { log: Log; entries: LogLine[]; lines: (level: LogLin
     lines: (level) => entries.filter((l) => l.level === level).map((l) => l.msg),
     all: () => entries.map((l) => l.msg),
   };
+}
+
+export interface FakeBulb {
+  serial: string;
+  label: string;
+  host: string;
+  answers: boolean;
+}
+
+export interface Sent {
+  to: string;
+  port: number;
+  buf: Buffer;
+}
+
+/** A network of simulated bulbs. Nothing is sent anywhere: replies are delivered to the socket that asked. */
+export class FakeNetwork {
+  bulbs: FakeBulb[] = [];
+  sent: Sent[] = [];
+  /** When set, acknowledgements carry this sequence instead of the request's. */
+  wrongSequence = false;
+  sockets = 0;
+  closed = 0;
+
+  factory = (): UdpSocket => {
+    let listener: ((msg: Buffer, from: string) => void) | null = null;
+    this.sockets++;
+    return {
+      onMessage: (l) => {
+        listener = l;
+      },
+      bind: async () => undefined,
+      setBroadcast: () => undefined,
+      send: async (buf, port, to) => {
+        this.sent.push({ to, port, buf: Buffer.from(buf) });
+        const h = parseHeader(buf)!;
+        for (const bulb of this.bulbs) {
+          const reaches = to === bulb.host || to === '255.255.255.255' || (to.endsWith('.255') && bulb.host.startsWith(to.slice(0, -3)));
+          const addressed = h.tagged || h.serial === bulb.serial;
+          if (!reaches || !addressed) {
+            continue;
+          }
+          const reply = (msg: Buffer) => setImmediate(() => listener?.(msg, bulb.host));
+          if (h.type === MSG.GetService) {
+            const msg = header(41, MSG.StateService, { serial: bulb.serial, sequence: h.sequence, ackRequired: false });
+            msg.writeUInt8(1, 36);
+            msg.writeUInt32LE(56700, 37);
+            reply(msg);
+          } else if (h.type === MSG.GetLabel) {
+            const msg = header(68, MSG.StateLabel, { serial: bulb.serial, sequence: h.sequence, ackRequired: false });
+            Buffer.from(bulb.label, 'utf8').copy(msg, 36);
+            reply(msg);
+          } else if ((buf.readUInt8(22) & 2) && bulb.answers) {
+            const sequence = this.wrongSequence ? (h.sequence + 128) & 0xff : h.sequence;
+            reply(header(36, MSG.Acknowledgement, { serial: bulb.serial, sequence, ackRequired: false }));
+          }
+        }
+      },
+      close: () => {
+        this.closed++;
+      },
+    };
+  };
+
+  typesTo(host: string): number[] {
+    return this.sent.filter((s) => s.to === host).map((s) => parseHeader(s.buf)!.type);
+  }
+}
+
+/** Lets pending promises and immediates run. */
+export async function settle(rounds = 20): Promise<void> {
+  for (let i = 0; i < rounds; i++) {
+    await new Promise((r) => setImmediate(r));
+  }
+}
+
+interface FakeTimer {
+  id: number;
+  at: number;
+  every: number | null;
+  fn: () => void;
+}
+
+/** A clock whose timers fire only when the test advances it. */
+export class FakeClock {
+  private timers: FakeTimer[] = [];
+  private nextId = 1;
+
+  constructor(public t: number) {}
+
+  now = (): number => this.t;
+
+  setTimeout = (fn: () => void, ms: number): unknown => {
+    const id = this.nextId++;
+    this.timers.push({ id, at: this.t + Math.max(0, ms), every: null, fn });
+    return id;
+  };
+
+  setInterval = (fn: () => void, ms: number): unknown => {
+    const id = this.nextId++;
+    this.timers.push({ id, at: this.t + ms, every: ms, fn });
+    return id;
+  };
+
+  clearTimeout = (id: unknown): void => {
+    this.timers = this.timers.filter((t) => t.id !== id);
+  };
+
+  clearInterval = (id: unknown): void => {
+    this.clearTimeout(id);
+  };
+
+  /** Timers due within `ms` from now, earliest first, without firing them. */
+  pending(): { at: number; every: number | null }[] {
+    return this.timers.map((t) => ({ at: t.at, every: t.every })).sort((a, b) => a.at - b.at);
+  }
+
+  /** Moves time forward, firing due timers in order and letting their async work settle. */
+  async advance(ms: number): Promise<void> {
+    const target = this.t + ms;
+    for (;;) {
+      const due = this.timers.filter((t) => t.at <= target).sort((a, b) => a.at - b.at)[0];
+      if (!due) {
+        break;
+      }
+      this.t = Math.max(this.t, due.at);
+      if (due.every) {
+        due.at += due.every;
+      } else {
+        this.timers = this.timers.filter((t) => t !== due);
+      }
+      due.fn();
+      await settle();
+    }
+    this.t = target;
+    await settle();
+  }
+}
+
+
+/** A small calendar in UTC: each entry is [uid, start, end, extra lines]. */
+export function icsOf(events: [string, number, number, string[]?][]): string {
+  const stamp = (ms: number) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Busy Light tests//Synthetic//EN'];
+  for (const [uid, start, end, extra] of events) {
+    lines.push('BEGIN:VEVENT', `UID:${uid}`, `SUMMARY:Synthetic ${uid}`, `DTSTART:${stamp(start)}`, `DTEND:${stamp(end)}`, ...(extra ?? []), 'END:VEVENT');
+  }
+  lines.push('END:VCALENDAR');
+  return lines.join('\r\n');
 }

@@ -285,7 +285,7 @@ export class MicrosoftAuth {
   }
 
   /** The error to report while there is no token. Cheap to retry: it only looks at the token file. */
-  private notSignedIn(): SourceError {
+  notSignedIn(): SourceError {
     if (this.refusedReason) {
       return new SourceError('signInNeeded', this.refusedReason, { refused: true, help: ADMIN_HELP_URL, noToken: true });
     }

@@ -8,76 +8,9 @@ import {
   KELVIN, LifxClient, MSG, SOURCE_ID, buildGetLabel, buildGetService, buildSetColor, buildSetPower, header, hexToHsb,
   interfaceBroadcasts, normalizeSerial, parseHeader, parseStateLabel,
 } from '../src/lifx.js';
-import type { UdpSocket } from '../src/lifx.js';
 import { LightController, REDISCOVER_MS, lightFile, matchesBulb } from '../src/light.js';
-import { fakeLog, tmpDir } from './helpers.js';
-
-interface FakeBulb {
-  serial: string;
-  label: string;
-  host: string;
-  answers: boolean;
-}
-
-interface Sent {
-  to: string;
-  port: number;
-  buf: Buffer;
-}
-
-/** A network of simulated bulbs. Nothing is sent anywhere: replies are delivered to the socket that asked. */
-class FakeNetwork {
-  bulbs: FakeBulb[] = [];
-  sent: Sent[] = [];
-  /** When set, acknowledgements carry this sequence instead of the request's. */
-  wrongSequence = false;
-  sockets = 0;
-  closed = 0;
-
-  factory = (): UdpSocket => {
-    let listener: ((msg: Buffer, from: string) => void) | null = null;
-    this.sockets++;
-    return {
-      onMessage: (l) => {
-        listener = l;
-      },
-      bind: async () => undefined,
-      setBroadcast: () => undefined,
-      send: async (buf, port, to) => {
-        this.sent.push({ to, port, buf: Buffer.from(buf) });
-        const h = parseHeader(buf)!;
-        for (const bulb of this.bulbs) {
-          const reaches = to === bulb.host || to === '255.255.255.255' || (to.endsWith('.255') && bulb.host.startsWith(to.slice(0, -3)));
-          const addressed = h.tagged || h.serial === bulb.serial;
-          if (!reaches || !addressed) {
-            continue;
-          }
-          const reply = (msg: Buffer) => setImmediate(() => listener?.(msg, bulb.host));
-          if (h.type === MSG.GetService) {
-            const msg = header(41, MSG.StateService, { serial: bulb.serial, sequence: h.sequence, ackRequired: false });
-            msg.writeUInt8(1, 36);
-            msg.writeUInt32LE(56700, 37);
-            reply(msg);
-          } else if (h.type === MSG.GetLabel) {
-            const msg = header(68, MSG.StateLabel, { serial: bulb.serial, sequence: h.sequence, ackRequired: false });
-            Buffer.from(bulb.label, 'utf8').copy(msg, 36);
-            reply(msg);
-          } else if ((buf.readUInt8(22) & 2) && bulb.answers) {
-            const sequence = this.wrongSequence ? (h.sequence + 128) & 0xff : h.sequence;
-            reply(header(36, MSG.Acknowledgement, { serial: bulb.serial, sequence, ackRequired: false }));
-          }
-        }
-      },
-      close: () => {
-        this.closed++;
-      },
-    };
-  };
-
-  typesTo(host: string): number[] {
-    return this.sent.filter((s) => s.to === host).map((s) => parseHeader(s.buf)!.type);
-  }
-}
+import { FakeNetwork, fakeLog, tmpDir } from './helpers.js';
+import type { FakeBulb } from './helpers.js';
 
 const interfaces = (): NodeJS.Dict<os.NetworkInterfaceInfo[]> => ({
   lo: [{ address: '127.0.0.1', netmask: '255.0.0.0', family: 'IPv4', mac: '00:00:00:00:00:00', internal: true, cidr: '127.0.0.1/8' }],

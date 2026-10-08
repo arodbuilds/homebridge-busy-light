@@ -53,3 +53,63 @@ export function bulbSilent(host: string): string {
 export function bulbBack(host: string): string {
   return `The LIFX bulb at ${host} is answering again.`;
 }
+
+/** `1 minute`, `2 minutes`: a count with its noun, singular when the count is 1. */
+export function count(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? '' : 's'}`;
+}
+
+/** A time as `h:mm AM/PM` in the host's locale and time zone, 12-hour (SPEC 12). */
+export function formatTime(ms: number): string {
+  return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', hour12: true })
+    .format(new Date(ms))
+    .replace(/[\u202f\u00a0]/g, ' ');
+}
+
+/** `light on at {host}`, `light on` while the bulb is still being found, or `light off`. */
+export function startup(version: string, calendars: number, light: { enabled: boolean; host: string | null }, sensors: number): string {
+  const lightPart = !light.enabled ? 'off' : light.host ? `on at ${light.host}` : 'on';
+  return `Busy Light ${version}: ${count(calendars, 'calendar')}, light ${lightPart}, ${count(sensors, 'sensor')}.`;
+}
+
+export function noCalendars(): string {
+  return 'No calendars are set up yet. Open the plugin settings to add one.';
+}
+
+/** `Status: In a meeting (Work, until 2:30 PM).` The parenthesis is left out with no reason, `until` with no time. */
+export function statusLine(displayName: string, reason: { source: string | null; until: number | null } | null): string {
+  const parts: string[] = [];
+  if (reason?.source) {
+    parts.push(reason.source);
+  }
+  if (reason?.until != null) {
+    parts.push(`until ${formatTime(reason.until)}`);
+  }
+  return parts.length ? `Status: ${displayName} (${parts.join(', ')}).` : `Status: ${displayName}.`;
+}
+
+export function statusUnknown(): string {
+  return 'Status unknown: none of your calendars could be read.';
+}
+
+export function icloudDiscovery(name: string, found: string[], used: string[]): string {
+  const list = (names: string[]) => (names.length ? names.join(', ') : 'none');
+  return `${name}: calendars found: ${list(found)}. In use: ${list(used)}.`;
+}
+
+export function sourceFailed(name: string, reason: string, minutes: number): string {
+  return `${name}: could not be read (${reason}). Trying again in ${count(minutes, 'minute')}.`;
+}
+
+export function sourceRecovered(name: string): string {
+  return `${name}: working again.`;
+}
+
+export function icloudRejected(name: string): string {
+  return `${name}: iCloud did not accept the Apple ID and app-specific password. Check them in the plugin settings.`;
+}
+
+/** `{path}: {message}` for a configuration issue. */
+export function validation(path: string, message: string): string {
+  return `${path}: ${message}`;
+}
