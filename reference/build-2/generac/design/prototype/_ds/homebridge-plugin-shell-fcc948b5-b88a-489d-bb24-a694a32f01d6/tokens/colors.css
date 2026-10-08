@@ -1,0 +1,87 @@
+/* Host (Homebridge UI / Bootstrap 5) colours. The plugin owns no palette: every token reads the host's Bootstrap
+   variable with the host's light value as the fallback, as homebridge-ui/public/index.css does. Values with no host
+   variable (index.css writes them as literals) are marked "literal in index.css". */
+:root {
+  --ns-bg: var(--bs-body-bg, #ffffff);
+  --ns-text: var(--bs-body-color, #212529);
+  --ns-secondary: var(--bs-secondary-color, rgba(33, 37, 41, 0.75));
+  --ns-tertiary: var(--bs-tertiary-color, rgba(33, 37, 41, 0.5));
+  --ns-border: var(--bs-border-color, #dee2e6);
+  --ns-cardborder: var(--bs-border-color-translucent, rgba(0, 0, 0, 0.176));
+  --ns-subtle: var(--bs-card-cap-bg, rgba(33, 37, 41, 0.03));
+  --ns-locked: var(--bs-secondary-bg, #e9ecef);
+  --ns-link: var(--bs-link-color, #0d6efd);
+  --ns-link-hover: var(--bs-link-hover-color, #0a58ca);
+  --ns-primary: var(--bs-primary, #607d8b); /* the Homebridge UI's btn-primary */
+  --ns-primary-hover: #526b77; /* Bootstrap darkens btn-primary itself; no root variable */
+  --ns-danger: var(--bs-danger, #dc3545);
+  --ns-success: var(--bs-success, #198754);
+  --ns-badge: var(--bs-secondary, #6c757d);
+  --ns-warnbg: var(--bs-warning-bg-subtle, #fff3cd);
+  --ns-warnborder: #ffecb5; /* literal in index.css, both themes */
+  --ns-warntext: var(--bs-warning-text-emphasis, #664d03);
+  --ns-successbg: var(--bs-success-bg-subtle, #d1e7dd);
+  --ns-successborder: var(--bs-success-border-subtle, #a3cfbb);
+  --ns-successtext: var(--bs-success-text-emphasis, #0a3622);
+  --ns-dangerbg: var(--bs-danger-bg-subtle, #f8d7da);
+  --ns-dangerborder: var(--bs-danger-border-subtle, #f1aeb5);
+  --ns-dangertext: var(--bs-danger-text-emphasis, #58151c);
+  --ns-infobg: var(--bs-info-bg-subtle, #cff4fc);
+  --ns-infoborder: var(--bs-info-border-subtle, #9eeaf9);
+  --ns-infotext: var(--bs-info-text-emphasis, #055160);
+  --ns-hover-wash: rgba(128, 128, 128, 0.08); /* literal in index.css */
+  --ns-press-wash: rgba(128, 128, 128, 0.2); /* literal in index.css */
+  --ns-focus-ring: var(--bs-focus-ring-color, rgba(13, 110, 253, 0.25));
+  --ns-focus-ring-neutral: rgba(128, 128, 128, 0.25); /* literal in index.css */
+  --ns-backdrop: rgba(0, 0, 0, 0.55); /* literal in index.css (.ns-modal-backdrop) */
+  --ns-button-fg: #ffffff; /* literal in index.css (badge and filled-button text) */
+  --ns-qr-ground: white; /* literal in index.css (.ns-qr, needed for scanning) */
+  /* Banner artwork (assets/notify-switch-banner.png) */
+  --ns-brand-field: #16263a;
+  --ns-brand-mark: #f2f2f3;
+  --ns-brand-tagline: #a9c7ea;
+  /* Semantic aliases */
+  --surface-page: var(--ns-bg);
+  --surface-card: var(--ns-bg);
+  --surface-strip: var(--ns-subtle);
+  --surface-locked: var(--ns-locked);
+  --text-body: var(--ns-text);
+  --text-secondary: var(--ns-secondary);
+  --text-link: var(--ns-link);
+  --border-rule: var(--ns-border);
+  --border-card: var(--ns-cardborder);
+  --action-primary: var(--ns-primary);
+  --action-danger: var(--ns-danger);
+  --status-success: var(--ns-success);
+}
+/* The host's dark marker, exactly as index.css selects it (`body.dark-mode`, `body[class*="config-ui-x-dark-mode"]`).
+   The variables index.css re-declares there, with its values; the --ns-* tokens above pick them up. */
+body.dark-mode, body[class*="config-ui-x-dark-mode"] {
+  --bs-secondary-color: rgba(222, 226, 230, 0.75);
+  --bs-secondary-color-rgb: 222, 226, 230;
+  --bs-tertiary-color: rgba(222, 226, 230, 0.5);
+  --bs-border-color: #495057;
+  --bs-border-color-translucent: rgba(255, 255, 255, 0.15);
+  --bs-secondary-bg: #343a40;
+  --bs-link-color: #6ea8fe;
+  --bs-link-color-rgb: 110, 168, 254;
+  --bs-link-hover-color: #8bb9fe;
+  --bs-link-hover-color-rgb: 139, 185, 254;
+  --bs-warning-bg-subtle: #3a3524;
+  --bs-warning-text-emphasis: #ffe69c;
+  --bs-card-cap-bg: #262626; /* index.css declares this on .card */
+  /* Not in index.css: the host paints the body, its alerts and its focus ring itself in dark mode. Declared here only so
+     previews without the host render on the host's dark values. */
+  --bs-body-bg: #1c1c1c;
+  --bs-body-color: #ffffff;
+  --bs-success-bg-subtle: #051b11;
+  --bs-success-border-subtle: #0f5132;
+  --bs-success-text-emphasis: #75b798;
+  --bs-danger-bg-subtle: #2c0b0e;
+  --bs-danger-border-subtle: #842029;
+  --bs-danger-text-emphasis: #ea868f;
+  --bs-info-bg-subtle: #032830;
+  --bs-info-border-subtle: #087990;
+  --bs-info-text-emphasis: #6edff6;
+  --bs-focus-ring-color: rgba(110, 168, 254, 0.25);
+}

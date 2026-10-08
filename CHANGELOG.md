@@ -4,6 +4,10 @@ All notable changes to Busy Light are recorded here. Versions follow [semantic v
 
 ## Unreleased
 
+### Changed
+
+- Settings form: the App-specific password help now links to account.apple.com and to Apple's instructions for creating one.
+
 ### Fixed
 
 - Settings form: choosing a calendar type no longer leaves the whole calendar entry stuck to the mouse pointer. No list in the form can be dragged to reorder.

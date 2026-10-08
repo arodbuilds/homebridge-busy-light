@@ -1,0 +1,460 @@
+/* Layout for the Generac for Homebridge settings UI: the shell stylesheet of homebridge-notify-switch 1.3.2
+   (homebridge-ui/public/index.css) with the rules this page has no use for removed and the root class renamed.
+   Colours, controls and typography come from the Bootstrap 5 stylesheet and theme the Homebridge UI injects into
+   this iframe. Every colour this file sets is a theme variable with a fallback that follows the surrounding text
+   colour, never a fixed grey, so secondary text stays readable in light and dark mode (SPEC section 11.2). */
+
+/* The iframe document is never a scroll container. The host sizes the iframe to the page's
+   `document.body.scrollHeight` plus 10px and scrolls its modal body around it; the document itself scrolls nothing.
+   No fixed or percentage height on either element: the height is the content's. The host links its own stylesheet
+   into the iframe after this one, and that stylesheet carries `html, body { height: 100% }`; the rule is written on
+   `:root` (a pseudo-class, so it outranks the host's element selectors whatever the order of the sheets). */
+:root,
+:root > body {
+  overflow: hidden;
+  height: auto;
+}
+
+/* The Homebridge UI shows this page in an iframe inside its settings modal with no padding of its own. The container
+   supplies it. Every element on the page keeps its box inside the viewport: no negative margins, no width over 100%. */
+.generac-ui {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  padding: 0 16px 1rem;
+  overflow-wrap: anywhere;
+}
+
+.generac-ui *,
+.generac-ui *::before,
+.generac-ui *::after {
+  box-sizing: border-box;
+}
+
+/* Theme variables. The Homebridge UI marks dark mode inside this iframe by adding `dark-mode` (and
+   `config-ui-x-dark-mode-{theme}`) to the body and colouring the body and the cards itself; it does not put
+   Bootstrap's `data-bs-theme` on the root, so Bootstrap's own variables keep their light values in dark mode. Under
+   the host's marker the variables this page reads are re-declared with Bootstrap's dark values. */
+body.dark-mode .generac-ui,
+body[class*="config-ui-x-dark-mode"] .generac-ui {
+  --bs-secondary-color: rgba(222, 226, 230, 0.75);
+  --bs-secondary-color-rgb: 222, 226, 230;
+  --bs-tertiary-color: rgba(222, 226, 230, 0.5);
+  --bs-border-color: #495057;
+  --bs-border-color-translucent: rgba(255, 255, 255, 0.15);
+  --bs-secondary-bg: #343a40;
+  --bs-link-color: #6ea8fe;
+  --bs-link-color-rgb: 110, 168, 254;
+  --bs-link-hover-color: #8bb9fe;
+  --bs-link-hover-color-rgb: 139, 185, 254;
+  --bs-warning-bg-subtle: #3a3524;
+  --bs-warning-text-emphasis: #ffe69c;
+  --bs-success-bg-subtle: #051b11;
+  --bs-success-border-subtle: #0f5132;
+  --bs-success-text-emphasis: #75b798;
+  --bs-danger-bg-subtle: #2c0b0e;
+  --bs-danger-border-subtle: #842029;
+  --bs-danger-text-emphasis: #ea868f;
+  --bs-info-bg-subtle: #032830;
+  --bs-info-border-subtle: #087990;
+  --bs-info-text-emphasis: #6edff6;
+}
+
+/* The card's own variables are declared on `.card` by Bootstrap, so the dark value it needs is re-declared there too. */
+body.dark-mode .generac-ui .card,
+body[class*="config-ui-x-dark-mode"] .generac-ui .card {
+  --bs-card-cap-bg: #262626;
+}
+
+/* Secondary text, one rule for all of it: field help, hints, empty-state lines, captions, disclosure labels and
+   disabled buttons. The theme's secondary colour where the host defines it, otherwise the surrounding text colour. */
+.generac-ui .form-text,
+.generac-ui .ns-secondary,
+.generac-ui details > summary,
+.generac-ui .btn:disabled,
+.generac-ui .btn.disabled {
+  color: var(--bs-secondary-color, currentColor);
+}
+
+/* Disabled buttons (Connect while Checking, Sign in while signing in, Continue after three failures, the Reset
+   dialog's Confirm until RESET is typed): full opacity, a transparent fill, the border colour and the secondary text
+   colour, never Bootstrap's dimmed copy of the enabled button and never the host's dark fill. Pointer events stay
+   on so the not-allowed cursor shows (a disabled button fires no click either way). */
+.generac-ui .btn:disabled,
+.generac-ui .btn.disabled {
+  opacity: 1;
+  color: var(--bs-secondary-color, currentColor);
+  border-color: var(--bs-border-color, currentColor);
+  background-color: transparent;
+  cursor: not-allowed;
+  pointer-events: auto;
+}
+
+/* Links inside help text and the footer: the theme's link colour (re-declared above for dark mode). */
+.generac-ui .ns-help-link,
+.generac-ui .ns-footer a {
+  color: var(--bs-link-color, inherit);
+}
+
+/* The 12-column grid: gap based, no negative margins. */
+.ns-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  column-gap: 0.5rem;
+  row-gap: 0;
+  width: 100%;
+}
+
+.ns-grid > * {
+  min-width: 0;
+}
+
+.ns-span-4 { grid-column: span 4; }
+.ns-span-6 { grid-column: span 6; }
+.ns-span-12 { grid-column: span 12; }
+
+/* A single column on phones: every field takes the full width below 600px. */
+@media (max-width: 599.98px) {
+  .ns-grid > * {
+    grid-column: 1 / -1;
+  }
+}
+
+.lead-copy,
+.section-copy {
+  line-height: 1.5;
+}
+
+.lead-copy {
+  margin-bottom: 0.5rem;
+}
+
+.ns-section {
+  margin-top: 1.5rem;
+}
+
+.ns-section h2 {
+  font-weight: 300;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.35));
+}
+
+/* ---- Shell: the card and control rules shared with the author's other plugins. ---- */
+
+/* The page banner: the first element of the page, full container width at 4:1, served from the plugin's own folder. */
+.generac-ui .ns-banner {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 1;
+  object-fit: cover;
+  border-radius: 6px;
+  margin-top: 16px;
+  margin-bottom: 1rem;
+}
+
+/* Buttons: 4px radius throughout; small (secondary) actions are 31px tall, 13.5px uppercase; the one section
+   primary button is 38px with uppercase 16px text. Text buttons keep their case. Form controls keep their 6px radius. */
+.generac-ui .btn {
+  border-radius: 4px;
+}
+
+.generac-ui .btn-sm {
+  min-height: 31px;
+  padding: 4px 8px;
+  font-size: 13.5px;
+  line-height: 21px;
+  text-transform: uppercase;
+}
+
+.generac-ui .ns-section-add {
+  min-height: 38px;
+  padding: 6px 12px;
+  font-size: 16px;
+  line-height: 24px;
+  text-transform: uppercase;
+}
+
+/* Text buttons (links) and the password field's attached Show / Hide keep their case and size; the attached button
+   follows the 38px control it is joined to. */
+.generac-ui .btn-link {
+  text-transform: none;
+  font-size: inherit;
+  line-height: inherit;
+  min-height: 0;
+}
+
+.generac-ui .btn-sm.btn-link {
+  padding: 0;
+}
+
+.generac-ui .input-group > .btn {
+  font-size: 13.5px;
+  text-transform: uppercase;
+}
+
+/* Form controls: 38px tall, 6px radius, 11px side padding, 16px text; checkboxes 16px. */
+.generac-ui .form-control:not(.form-control-sm) {
+  padding-left: 11px;
+  padding-right: 11px;
+}
+
+.generac-ui .form-check-input {
+  width: 16px;
+  height: 16px;
+}
+
+/* Card header strip: the bold title and the status badges on the left, aligned on the first baseline, so on a phone
+   the badges wrap under the title. */
+.generac-ui .ns-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem 1rem;
+}
+
+.generac-ui .ns-card-header .ns-card-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ns-card-title {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+}
+
+.ns-card-title .badge {
+  margin-left: 0;
+}
+
+/* The card's name in the header: bold at weight 700. */
+.generac-ui .ns-card-name {
+  font-weight: 700;
+}
+
+/* Badges: 11.5px weight 600, 3px 7px padding, 4px radius; the shell's status badge on the success fill. */
+.generac-ui .badge {
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 3px 7px;
+  border-radius: 4px;
+  vertical-align: middle;
+  top: 0;
+}
+
+.generac-ui .badge.text-bg-success {
+  color: #fff;
+  background-color: var(--bs-success, #198754) !important;
+}
+
+/* Card body: 16px padding with none at the bottom (each field carries 16px below it). */
+.generac-ui .card-body {
+  padding: 16px 16px 0;
+}
+
+.generac-ui .card-body details.ns-advanced {
+  margin-bottom: 1rem;
+}
+
+/* The Advanced disclosure line: "▸ Advanced" closed, "▾ Advanced" open, in secondary text at 12.6px. The glyph is drawn
+   by the stylesheet so the label itself stays the word. */
+.generac-ui details.ns-advanced > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.generac-ui details.ns-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.generac-ui details.ns-advanced > summary::before {
+  content: "\25B8\00A0";
+}
+
+.generac-ui details.ns-advanced[open] > summary::before {
+  content: "\25BE\00A0";
+}
+
+/* Footer strip: 8px 16px on the subtle fill with a 1px rule above (Bootstrap's card footer); the primary action is an
+   outlined, link-coloured 31px button. */
+.generac-ui .ns-card-footer {
+  padding: 8px 16px;
+}
+
+.generac-ui .ns-card-footer .btn-outline-primary,
+.generac-ui .ns-footer-action {
+  color: var(--bs-link-color, #0d6efd);
+  border-color: var(--bs-link-color, #0d6efd);
+}
+
+.generac-ui .ns-footer-action:not(:disabled):hover,
+.generac-ui .ns-footer-action:not(:disabled):focus-visible {
+  color: var(--bs-link-color, #0d6efd);
+  background-color: rgba(128, 128, 128, 0.08);
+  border-color: var(--bs-link-color, #0d6efd);
+}
+
+/* Every alert box (a Connect error) is left-aligned whatever the host's own alert styling. */
+.generac-ui .alert {
+  text-align: start;
+}
+
+/* The danger box (a Connect error) on the theme's danger colours, which the host's own alert rule would otherwise
+   replace with its grey box in both themes. Written with the body element so it outranks the host's
+   `.config-ui-x-{theme} .alert` rule, which the host loads after this file. */
+body .generac-ui .alert-danger {
+  color: var(--bs-danger-text-emphasis, #58151c);
+  background-color: var(--bs-danger-bg-subtle, #f8d7da);
+  border: 1px solid var(--bs-danger-border-subtle, #f1aeb5);
+  box-shadow: none;
+}
+
+/* Text buttons keep their intent colours under the host's dark marker, which paints every `.btn-link` grey: one rule
+   reads the button's intent (danger for Reset, the link colour otherwise). */
+body.dark-mode .generac-ui .btn-link,
+body[class*="config-ui-x-dark-mode"] .generac-ui .btn-link {
+  color: var(--ns-text-button-color, var(--bs-link-color, #6ea8fe)) !important;
+}
+
+.generac-ui .ns-danger-link {
+  --ns-text-button-color: var(--bs-danger, #dc3545);
+}
+
+/* ---- End of the shell rules. ---- */
+
+/* Placeholders read as examples: italic and lighter than typed text. The colour itself is the host's. */
+.generac-ui .form-control::placeholder {
+  font-style: italic;
+  opacity: 1;
+}
+
+/* Outlined secondary buttons keep their outline on hover and focus with a light highlight instead of Bootstrap's
+   solid fill; only a press (active) is a shade darker, so a hovered button never reads as pressed. */
+.generac-ui .btn-outline-secondary:not(:disabled):hover,
+.generac-ui .btn-outline-secondary:not(:disabled):focus,
+.generac-ui .btn-outline-secondary:not(:disabled):focus-visible {
+  color: var(--bs-btn-color, inherit);
+  background-color: rgba(128, 128, 128, 0.08);
+  border-color: var(--bs-border-color, #6c757d);
+  box-shadow: none;
+}
+
+.generac-ui .btn-outline-secondary:not(:disabled):active,
+.generac-ui .btn-outline-secondary:not(:disabled).active {
+  color: var(--bs-btn-color, inherit);
+  background-color: rgba(128, 128, 128, 0.2);
+  border-color: var(--bs-border-color, #6c757d);
+  box-shadow: none;
+}
+
+.generac-ui .btn-outline-secondary:not(:disabled):focus-visible {
+  box-shadow: 0 0 0 0.2rem rgba(128, 128, 128, 0.25);
+}
+
+.form-label {
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.form-text {
+  line-height: 1.4;
+}
+
+.has-issue > .invalid-feedback {
+  display: block;
+}
+
+.status-box:empty {
+  display: none;
+}
+
+/* Link-style buttons (Cancel, Keep, Disconnect) and the red text button (Reset). */
+.ns-link-button {
+  text-decoration: none;
+  vertical-align: baseline;
+}
+
+.ns-link-button:hover,
+.ns-link-button:focus {
+  text-decoration: underline;
+}
+
+/* Read-only and disabled controls: the theme's secondary background (re-declared for dark mode above) behind the
+   surrounding text colour, so a disabled field is never a light box with dark text on a dark page. */
+.generac-ui .form-control[readonly],
+.generac-ui .form-control:disabled {
+  background-color: var(--bs-secondary-bg, rgba(128, 128, 128, 0.12));
+  color: inherit;
+  opacity: 1;
+}
+
+/* Card footer: one outlined action on the right (Rename), or the Disconnect link and its in-place confirmation. */
+.ns-card-footer {
+  display: flex;
+  flex-direction: row-reverse;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ns-footer-right {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  flex: 1 1 auto;
+  justify-content: flex-end;
+}
+
+.ns-footer-right:empty {
+  display: none;
+}
+
+/* Touch targets: every button, text buttons included, is at least 44px tall on touch devices. */
+@media (pointer: coarse) {
+  .generac-ui .btn,
+  .generac-ui .btn-close {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+body.ns-touch .generac-ui .btn,
+body.ns-touch .generac-ui .btn-close {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Version and credit footer: one line of secondary text that wraps between its items on narrow screens. */
+.ns-footer {
+  margin-top: 1.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.35));
+  line-height: 1.5;
+}
+
+.ns-footer-item {
+  white-space: nowrap;
+}
+
+/* The brand mark beside the plugin name in the footer credit: 20px, in the text colour (currentColor). */
+.ns-mark-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  vertical-align: bottom;
+}
+
+.ns-mark-svg {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+}

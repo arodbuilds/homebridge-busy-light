@@ -74,7 +74,7 @@ Then restart Homebridge.
 
 ### iCloud
 
-1. Sign in at [account.apple.com](https://account.apple.com), open Sign-In and Security, then App-Specific Passwords, and create one named Busy Light.
+1. Sign in at [account.apple.com](https://account.apple.com), open Sign-In and Security, then App-Specific Passwords, and create one named Busy Light. Apple's step-by-step instructions: [Sign in to apps with your Apple Account using app-specific passwords](https://support.apple.com/en-us/102654).
 2. In the plugin settings, add a calendar of type iCloud with your Apple ID email and that app-specific password. This is not your Apple ID password, and Busy Light never sees your Apple ID password or two-factor codes.
 3. Leave "Calendars to include" empty to use every calendar, or list the names you want. After a restart the log lists the calendar names found, for example:
 

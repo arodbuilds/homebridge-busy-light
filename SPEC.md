@@ -23,7 +23,7 @@ Not affiliated with Apple, Google, Microsoft or LIFX.
 5. HomeKit occupancy sensors: three roll-ups and seven individual statuses (section 7).
 6. An optional Do Not Disturb override switch.
 7. A command line tool for checking sources, signing in to Microsoft and testing the bulb (section 10.2).
-8. Build 1: the standard Homebridge settings form (`config.schema.json`). Build 2: the custom settings page on the shared shell (section 11).
+8. Build 1: the standard Homebridge settings form (`config.schema.json`). Build 2: the custom settings page on the shared shell (section 11), with calendars picked from a list after Connect, a per-calendar "Counts for" choice, Microsoft sign-in from the page, and the LIFX bulb found and tested from the page.
 
 ### 2.2 Deferred
 
@@ -121,7 +121,7 @@ All HTTP uses the built-in `fetch` with a 20 second timeout.
 1. `PROPFIND https://caldav.icloud.com/` (Depth 0) for `current-user-principal`.
 2. `PROPFIND` the principal (Depth 0) for `calendar-home-set`. The home is on a `pNN-caldav.icloud.com` host; resolve relative hrefs against the URL just requested.
 3. `PROPFIND` the home (Depth 1) for `displayname`, `resourcetype` and `supported-calendar-component-set`. Keep collections whose resource type contains `calendar` and that support `VEVENT` (this drops Reminders lists).
-4. If the source lists calendar names, keep those (case-insensitive match); otherwise keep all. Log the names found and the names in use once per discovery. A calendar without a display name is called `Unnamed calendar`, never by its path (the path holds the account number).
+4. Choose the calendars by the source's `calendars` list (9.1 item 13): with no list, or an empty one, keep all; otherwise keep each calendar whose path matches an entry's `id`, or, for an entry without an `id` or whose `id` matches nothing, whose name matches the entry's name without regard to case. Each kept calendar carries its entry's `use`. Calendars found but not kept are reported once per discovery in the "New calendars" log line when the list is not empty. Log the names found and the names in use once per discovery. A calendar without a display name is called `Unnamed calendar`, never by its path (the path holds the account number).
 5. For each kept calendar, `REPORT` (Depth 1) a `calendar-query` with a `time-range` on `VEVENT` for the window, asking for `calendar-data`.
 6. Each `calendar-data` value is parsed as in 5.4.
 7. Discovery (steps 1 to 4) is cached and repeated after any failure and every 24 hours.
@@ -135,11 +135,12 @@ XML is read with small helpers that ignore namespace prefixes and decode entitie
 3. A body over 10 MB is refused, whether or not `Content-Length` says so. A body without `BEGIN:VCALENDAR` is refused as not a calendar.
 4. The body is parsed as in 5.4.
 5. A Google source differs from a URL source in two ways only: its optional `email` is used for the declined-invitation rule (6.4), and the settings page shows different help.
+6. The source's `use` (9.1 item 15) applies to all its events.
 
 ### 5.3 Microsoft 365 (Graph)
 
 1. Presence, when the source uses Teams status: `GET https://graph.microsoft.com/v1.0/me/presence`. Read `availability`, `activity` and `outOfOfficeSettings.isOutOfOffice` (treat a missing `outOfOfficeSettings` as false).
-2. Calendar, when the source uses the Outlook calendar: `GET /v1.0/me/calendarView?startDateTime={from}&endDateTime={to}&$select=showAs,start,end,isAllDay,isCancelled&$top=200` with the header `Prefer: outlook.timezone="UTC"`. Follow `@odata.nextLink` up to five pages.
+2. Calendar, when the source uses the Outlook calendar: with no `calendars` list, or an empty one, the default calendar, `GET /v1.0/me/calendarView?startDateTime={from}&endDateTime={to}&$select=showAs,start,end,isAllDay,isCancelled&$top=200` with the header `Prefer: outlook.timezone="UTC"`; with a list, the same request on `/v1.0/me/calendars/{id}/calendarView` for each entry, carrying the entry's `use`. Follow `@odata.nextLink` up to five pages per calendar. A listed calendar that answers 404 (deleted, or no longer shared) is left out with one warning and the others are read.
 3. Timed events: `start.dateTime` and `end.dateTime` are UTC without a zone suffix. All-day events are dates and are read in the Homebridge host's local time zone.
 4. A 429 or 503 honours `Retry-After`: the source is not tried again before that time, even when the retry schedule of 8.3 would come sooner.
 5. No other Graph field is requested. `/me/presence` takes no `$select`; only the three fields of item 1 are read. An `@odata.nextLink` is followed only when it is on `https://graph.microsoft.com/`.
@@ -162,6 +163,8 @@ Parsing and recurrence use `ical.js`.
 ### 6.1 Event model
 
 Each event becomes `{ showAs, start, end, isAllDay, isCancelled, source }` where `showAs` is one of `free`, `tentative`, `busy`, `oof`, and times are epoch milliseconds. Nothing else about the event is kept.
+
+An event from a calendar whose `use` is `outOfOffice` keeps `showAs` `oof` and is otherwise `free`: it can make the status Out of office and nothing else.
 
 ### 6.2 Statuses
 
@@ -248,7 +251,7 @@ One accessory per sensor, so each can be placed in a room and used in automation
 3. UUIDs come from `busy-light:sensor:{key}` and never from the display name, so renaming keeps rooms and automations.
 4. Accessory Information: Manufacturer "Busy Light", Model "Status sensor", Serial Number the key, Firmware Revision the package version.
 5. The override switch, when enabled, is a Switch accessory named `{name} Override`, UUID from `busy-light:override`. Its state is kept in the accessory context and survives restarts. Turning it on or off re-resolves the status at once. HomeKit's write is answered as soon as the state is stored; the status and the bulb follow without holding it up. Accessory Information: Manufacturer "Busy Light", Model "Override switch", Serial Number `override`, Firmware Revision the package version.
-6. Accessories no longer wanted by the configuration are unregistered at startup.
+6. Accessories no longer wanted by the configuration are unregistered at startup. When `busy-light/reset-pending` exists at startup (10.3 item 6), every cached accessory is unregistered first and the marker deleted.
 7. On Homebridge 2, set `ConfiguredName` where the service supports it so the Home app shows the same names. "Supports" means the service's HAP definition lists it; in HAP-NodeJS 2.2 neither OccupancySensor nor Switch does, so today only `Name` is set (and the accessory's display name follows a rename).
 
 ## 8. Polling, timing and backoff
@@ -301,6 +304,16 @@ Each source is in one of four states, shown in the state file and, from build 2,
 }
 ```
 
+Build 2 extends this example, and the schema, with the fields of 9.1 items 13 to 15. A build 2 calendar list looks like this:
+
+```json
+{ "type": "icloud", "id": "cal-mgx3k2f1a9q", "name": "iCloud", "appleId": "", "appPassword": "",
+  "calendars": [ { "id": "/123456789/calendars/home/", "name": "Alex", "use": "all" },
+                 { "id": "/123456789/calendars/family-1/", "name": "Family", "use": "outOfOffice" } ] }
+```
+
+and a Google or URL source carries `"use": "all"` or `"use": "outOfOffice"`.
+
 ### 9.1 Rules
 
 1. Every field except `platform` is optional. A missing field takes its default. An empty `calendars` list is valid (the plugin starts and logs the "no calendars" line).
@@ -315,6 +328,10 @@ Each source is in one of four states, shown in the state file and, from build 2,
 10. `null` and empty text count as missing. Optional fields inside a source (`email`, `calendars`, `useTeamsStatus`, `useCalendar`) fall back to their defaults with a warning; required ones skip the source. `useTeamsStatus` and `useCalendar` default to on. GUIDs are kept in lower case, colors in upper case (`off` in lower case), and `webcal://` addresses are stored as `https://`.
 11. Rule 4 is applied by skipping the later Microsoft source that also has `useTeamsStatus` on.
 12. `pollSeconds` is at most 240 and `calendarSeconds` at most 600, below the 5 and 15 minutes that presence and events stay fresh (6.5), so data does not go stale between checks. `lifx.refreshSeconds` is at most 86400 (a day).
+13. iCloud `calendars` (from build 2) is a list whose items are either a name (text, as build 1 wrote them) or `{ "id", "name", "use" }`, where `id` is the CalDAV collection path, `name` the display name when it was ticked, and `use` as in item 15. A text item is read as `{ "name": text, "use": "all" }`. No list, or an empty one, keeps every calendar, as in build 1; the settings page always writes an explicit list.
+14. Microsoft `calendars` (from build 2) is a list of `{ "id", "name", "use" }` with the Graph calendar id. No list, or an empty one, reads the default calendar only, as in build 1. It is ignored when `useCalendar` is off.
+15. `use` is `all` (the default) or `outOfOffice`, on each item of an iCloud or Microsoft `calendars` list and on a Google or URL source itself. Any other value falls back to `all` with a warning.
+16. An item of a `calendars` list with neither an `id` nor a name is ignored with a warning. Two items with the same `id` keep the first.
 
 The validation messages, after `{path}: `:
 
@@ -343,8 +360,13 @@ The validation messages, after `{path}: `:
 | `must be a whole number from 0 to 86400` | warn | `lifx.refreshSeconds` |
 | `must be a whole number from 15 to 240` / `from 60 to 600` | warn | `pollSeconds`, `calendarSeconds` |
 | `is not a sensor, ignored` | warn | An unknown key in `sensors` |
+| `must be all or outOfOffice` | warn | A `use` value (rule 15) |
+| `must be a calendar name or entry, ignored` | warn | A `calendars[].calendars` item that is neither text nor an object, or has neither `id` nor name (rule 16) |
+| `repeats an earlier calendar, ignored` | warn | A repeated `id` in a `calendars[].calendars` list (rule 16) |
 
 ### 9.2 Standard settings form (build 1)
+
+From build 2 the custom page of section 11 replaces this form (`customUi`). The schema stays complete and in step with section 9 (including the build 2 fields: object items in `calendars[].calendars` and `calendars[].calendars` for Microsoft, and `use`), because Homebridge still uses it to check the block; the titles below still apply to it.
 
 `config.schema.json` describes the whole block for the Homebridge UI's standard form (`pluginAlias` `BusyLight`, `pluginType` `platform`, `singular` true). The calendar list is an array whose type-specific fields use the form's `condition` support so only the fields for the chosen type show. Secret fields are plain text fields in this form (the standard form has no reliable password control for array items); build 2 replaces the form.
 
@@ -357,7 +379,7 @@ Titles and descriptions, verbatim:
 | `calendars[].type` | Type | (enum titles: iCloud, Google Calendar, Microsoft 365, Calendar URL) |
 | `calendars[].name` | Name | A name for this calendar. It appears in the log. |
 | `appleId` | Apple ID email | |
-| `appPassword` | App-specific password | Create one at account.apple.com under Sign-In and Security. This is not your Apple ID password. |
+| `appPassword` | App-specific password | Create one at <a href="https://account.apple.com" target="_blank" rel="noopener noreferrer">account.apple.com</a> under Sign-In and Security, then App-Specific Passwords (<a href="https://support.apple.com/en-us/102654" target="_blank" rel="noopener noreferrer">how to</a>). This is not your Apple ID password. |
 | `calendars[].calendars` | Calendars to include | Leave empty to use every calendar. The log lists the calendar names found. |
 | `url` (Google) | Secret address in iCal format | In Google Calendar settings, pick the calendar, then Integrate calendar. Treat it like a password. |
 | `email` | Your Google email | Optional. Lets Busy Light ignore invitations you declined. |
@@ -444,30 +466,213 @@ The CLI follows the same logging rules as the plugin (section 12).
 
 ### 10.3 UI server (build 2)
 
-`homebridge-ui/server.js` with `@homebridge/plugin-ui-utils`. Endpoints: `/version`, `/status` (the state file), `/test-calendar` (one fetch of an unsaved source, returning state, calendar names for iCloud, and an event count), `/microsoft/start` and `/microsoft/poll` (the device code flow for the settings page), `/test-light`, `/reset`. Detailed in the build 2 revision of this section.
+`src/ui/server.ts` on `@homebridge/plugin-ui-utils`, compiled with the platform and started through `homebridge-ui/server.js` (the file the Homebridge UI looks for), exactly as in `homebridge-generac`. It reuses the plugin's own source, token store, discovery and state modules; nothing is written twice. Every request is a `homebridge.request(path, body)` call from the page. Every response is JSON; a failure is `{ "error": key }` with the keys listed per endpoint, never a thrown error, and never carries a secret, a token, a calendar address or an event title.
+
+| Endpoint | Request | Response |
+| --- | --- | --- |
+| `/version` | none | `{ "version" }` from `package.json` |
+| `/status` | none | The state file of 10.1 as is, or `{ "status": null }` when there is none yet (Homebridge has not run the plugin). |
+| `/icloud/calendars` | `{ "appleId", "appPassword" }` | `{ "calendars": [ICloudCalendar] }` or `{ "error": "rejected" \| "network" \| "unexpected" }` |
+| `/url/test` | `{ "url", "email"? }` | `{ "eventsToday": n }` or `{ "error": "insecure" \| "notCalendar" \| "http" \| "network" \| "tooLarge", "host", "code"? }` |
+| `/microsoft/start` | `{ "id", "tenantId", "clientId", "useTeamsStatus", "useCalendar" }` | `{ "verificationUri", "userCode", "expiresAt" }` or `{ "error": "refused", "reason", "help" }` or `{ "error": "network" }` |
+| `/microsoft/poll` | `{ "id" }` | `{ "state": "waiting" \| "done" \| "expired" }` or `{ "state": "refused", "reason", "help" }` |
+| `/microsoft/cancel` | `{ "id" }` | `{ "ok": true }` |
+| `/microsoft/calendars` | `{ "id", "tenantId", "clientId" }` | `{ "calendars": [MicrosoftCalendar] }` or `{ "error": "notSignedIn" \| "network" }` or `{ "error": "refused", "reason", "help" }` |
+| `/microsoft/disconnect` | `{ "id" }` | `{ "ok": true }` (deletes that source's token file) |
+| `/lifx/discover` | none | `{ "bulbs": [{ "label", "serial", "ip" }] }` (empty when none answer) |
+| `/lifx/test` | `{ "serial"? , "host"?, "brightness" }` | `{ "answered": true \| false }` |
+| `/reset` | none | `{ "ok": true }` |
+
+`ICloudCalendar` is `{ "id", "name", "shared", "subscribed", "eventsToday" }` and `MicrosoftCalendar` is `{ "id", "name", "isDefault", "shared", "eventsToday" }`. `eventsToday` counts the timed and all-day events overlapping the host's local today that are not free and not cancelled; it is null when the count could not be read. Nothing else about an event leaves the server.
+
+1. `/icloud/calendars` runs discovery (5.1 steps 1 to 3) with the credentials given, then one `REPORT` per calendar for today only. `id` is the collection's path on the CalDAV host (it holds the account number: it is stored in `config.json` but never logged). `shared` is true when the collection's `resourcetype` contains `shared` (a calendar someone else shared with the user) and false for `shared-owner`. `subscribed` is true when it contains `subscribed`; those calendars are listed but cannot be ticked (11.3 C). A 401 is `rejected`.
+2. `/url/test` fetches the address once under the rules of 5.2 and counts today's events. `host` is the host name only.
+3. The Microsoft sign-in runs inside the UI server process, with the device code flow of 4.3 and the token store of 4.4: one pending flow per source id, held in memory, ended by `done`, `expired`, `refused`, `/microsoft/cancel` or after 15 minutes. Only one code is issued per `/microsoft/start` (the three-code limit of 4.3 item 5 is for the plugin's own unattended flow). On `done` the token file `busy-light/microsoft-{id}.json` is written exactly as the plugin writes it, and the plugin picks it up within one tick (4.4 item 6). Refusals use the reason and help address of 4.3.1.
+4. `/microsoft/calendars` uses the stored token: `GET /v1.0/me/calendars?$select=id,name,isDefaultCalendar,owner` (follow `@odata.nextLink` on `https://graph.microsoft.com/` up to five pages), then one `calendarView` per calendar for today, selecting only the fields of 5.3. `shared` is true when the calendar's `owner.address` differs from the default calendar's. This needs `Calendars.Read` only.
+5. `/lifx/discover` is the discovery of 13.2 item 1 and changes nothing. `/lifx/test` sends red, then green, then the Available color, each held 1 second, with acknowledgements (13.1), to the bulb by serial (untagged) or by host (tagged), and reports whether every packet was answered. It never writes `light.json`; the plugin's next send restores the status color.
+6. `/reset` deletes every file in `busy-light/` (tokens, state, `light.json`) and leaves a `reset-pending` marker there; the platform removes every cached accessory on its next start and deletes the marker. The page then replaces the platform block with the defaults through `updatePluginConfig()`; the host's SAVE persists it.
+7. The page never sends the server a value it did not need for that one call, and the server writes nothing to `config.json`: every configuration change goes through the page's `updatePluginConfig()` and the host's SAVE.
 
 ## 11. Settings page (build 2)
 
-Not part of build 1. The page is built on the shared shell from the Claude Design prototype, which is pending. Until it lands, `design/BRIEF.md` Part 3 records the intended anatomy and the decided copy.
+From build 2, `config.schema.json` sets `"customUi": true` and keeps the full schema (Homebridge still uses it to check the block). The page is `homebridge-ui/` built on the shared shell, structured as `homebridge-generac`'s (`src/` compiled by `scripts/build-ui.mjs` to `public/`). There is no separate design prototype: the shell code and rules in `homebridge-notify-switch` and `homebridge-generac` are the design, the banner and footer mark in `assets/` are Busy Light's own, and this section supplies the content.
+
+For build 2, `reference/README.md` lists the sibling code and shell documents copied into the repository to build from.
 
 ### 11.1 Anatomy, top to bottom
 
-1. Banner (`assets/busy-light-banner.png`).
-2. Intro, then the affiliation line.
-3. Right now: a read-only status row from the state file.
-4. Calendars: one card per source, an Add calendar chooser with four tiles.
-5. Colors: one row per status in precedence order.
-6. Lights: the LIFX card, then the sensors checklist and the automation example.
-7. Settings: a single collapsed Advanced disclosure.
-8. Closing line, credit footer.
+1. Banner (`assets/busy-light-banner.png`, served beside the bundle), the only place the plugin carries color apart from the status swatches.
+2. Intro (11.3 A), then the affiliation line, muted.
+3. **Right now**: a read-only status row (11.3 B), refreshed from `/status` every 15 seconds while the page is open.
+4. **Calendars**: heading, one line of help, one card per source (11.3 C), then the ADD CALENDAR button, which opens the shell's chooser tiles with four choices. A new card opens expanded and its Name field takes focus.
+5. **Colors**: heading, one line of help, one card holding nine rows in the precedence order of 6.3 (11.3 D).
+6. **Lights**: heading, the LIFX bulb card, then "Other lights in the Home app" (no card): the sensors checklist and a three-step automation example (11.3 E).
+7. **Settings**: heading and a single collapsed Advanced disclosure (11.3 F).
+8. Closing line, then the credit footer with `assets/busy-light-footer.svg` inlined at 20 px.
+
+Desktop max width 800 px in the host modal; phone width 390 px collapses the grid to one column. Both host themes.
 
 ### 11.2 Shell invariants
 
-Inherit `homebridge-notify-switch` `design/HANDOFF.md` and `design/BUILD-CONTRACT.md` in full, with the additions recorded in `homebridge-generac` SPEC 11.2: no palette of its own, host variables for every color, the iframe never scrolls, nothing fixed or sticky, inline confirmations, validation on blur with "{Label} is required.", no `crypto.randomUUID`. The one place user data carries color is the status swatches.
+Inherit, in full: `homebridge-notify-switch` `design/HANDOFF.md`, `design/BUILD-CONTRACT.md` and `design/BUILD-CONTRACT-DEFINITIONS.md`, and `homebridge-generac` SPEC 11.2 with its additions. In short: no palette of its own, host variables for every color with the host's light and dark values as fallbacks, `:root` rules for anything that must win, the iframe never scrolls, no `vh` and nothing sticky or `position: fixed`, dialogs and confirmations inline (then `scrollIntoView({ block: 'center' })`), validation on blur with "{Label} is required." and the shape-and-fix messages of 11.3 H, the issues summary in the page flow after Settings, a draft only after a change and never holding a credential, sentence case with uppercase buttons from `text-transform` only, italic "e.g." placeholders, no em dashes, no emoji, and no `crypto.randomUUID` (unavailable over plain http).
+
+Busy Light additions:
+
+1. The status swatches in Right now and Colors carry the user's colors. Everything else uses host variables.
+2. Source state pills use the host's success (Connected), secondary (Checking, Not saved yet), warning (Sign-in needed) and danger (Not reachable) subtle variables.
+3. A new card needs an id before it is saved, for its Microsoft token file: `cal-` followed by `Date.now().toString(36)` and four random base-36 characters from `Math.random()`. The id is written into the block and never changes, including on rename (9.1 item 2).
+4. Secret fields (App-specific password, Secret address in iCal format) are password inputs with Show and Hide. They hold what `getPluginConfig()` returned; drafts never hold them (shell rule).
+5. Connect, Test and Search are the only actions that reach the network, and only when pressed; the bulb search also runs once when "Use a LIFX bulb" is ticked. Opening the page calls only `/version` and `/status`.
+6. Each card's state pill comes from the state file's entry with the same id. A card that is not in the saved configuration shows "Not saved yet" instead. Changes on the page apply after Save and a Homebridge restart; the Right now row always describes the running plugin.
+7. The Microsoft code view replaces the card body in place and hands back to the card when it ends, as Generac's Connect flow does. Polling `/microsoft/poll` every 3 seconds stops when the view closes.
 
 ### 11.3 Copy (verbatim)
 
-To be filled from the prototype in build 2. The strings in `design/BRIEF.md` Part 3 marked decided carry over unchanged.
+**A. Intro**
+
+- Banner alt text: `Busy Light for Homebridge: your calendar and Teams status on a light.`
+- Intro 1: `Busy Light shows whether you are free on a light. It reads your calendars and, if you use Microsoft 365, your Teams status, then sets a color for each.`
+- Intro 2: `Add at least one calendar, then choose how the light is controlled.`
+- Affiliation: `Not affiliated with or endorsed by Apple, Google, Microsoft or LIFX.`
+- Closing: `Your status also appears in the Home app as sensors. Use them in automations to set any other light or scene.`
+
+**B. Right now**
+
+- Heading: `Right now`
+- Row: the status swatch, the display name of 6.2, then one muted line:
+  - With a source and `until`: `Until {time}, from {source}.`
+  - With a source and no `until`: `From {source}.`
+  - Decided by Teams presence: `From Teams.` (with `until`: `Until {time}, from Teams.`)
+  - Available with nothing on any calendar: `Nothing on your calendars until {time}.` or, with no later event, `Nothing on your calendars right now.`
+  - Override switch on: `The override switch is on.`
+- No calendars saved: `Add a calendar to see your status here.` (no swatch)
+- No state file yet: `Busy Light has not started yet. Save, then restart Homebridge.` (no swatch)
+- Unknown (warning tone): `Status unknown. None of your calendars could be read.`
+- State file older than 5 minutes, added under the row: `Last updated {relative time}. Is Homebridge running?`
+
+**C. Calendars**
+
+- Heading: `Calendars`
+- Help: `Add every calendar that should count. Events from all of them are combined.`
+- Empty: `No calendars yet.`
+- Add button: `Add calendar`
+- Chooser tiles, title and help:
+  - `iCloud`: `Calendars in your Apple account.`
+  - `Google Calendar`: `One Google calendar, by its secret address.`
+  - `Microsoft 365`: `Outlook calendars and Teams status. Needs an app registration from your administrator.`
+  - `Calendar URL`: `Any calendar link that starts with https:// or webcal://.`
+- Card header: the name (`New calendar` until named), a type badge (`iCloud`, `Google Calendar`, `Microsoft 365`, `Calendar URL`), a state pill (`Connected`, `Checking`, `Sign-in needed`, `Not reachable`, `Not saved yet`), and the meta `Last checked {relative time}`. A state-file `error` shows under the header in the pill's tone.
+- Every card: `Name` (required, placeholder `e.g. Work`, help `A name for this calendar. It appears in the log.`). Footer text button `Remove`, inline question `Remove {name}?` with `Remove` (danger) and `Cancel`.
+- `Counts for` (select) with `Busy and out of office` and `Out of office only`, help `Out of office only uses this calendar's out of office events and ignores the rest. Useful for a family calendar.` It sits on each ticked calendar row (iCloud, Microsoft 365) and on the card itself (Google Calendar, Calendar URL).
+
+iCloud card:
+
+- `Apple ID email` (required, placeholder `e.g. you@icloud.com`)
+- `App-specific password` (required, password field) with help `Not your Apple ID password. Create one at account.apple.com under Sign-In and Security, then App-Specific Passwords.` and the link `How to create one` (`https://support.apple.com/en-us/102654`, new tab).
+- Button `Connect` (busy `Connecting…`); once connected it reads `Refresh list`.
+- Errors: rejected `iCloud did not accept that Apple ID and app-specific password. Check both, or create a new app-specific password.`; network `Could not reach iCloud. Try again in a minute.`; unexpected `iCloud answered in a way Busy Light did not expect. Try again, and report an issue if it keeps happening.`
+- Subheading `Calendars to use`, help `Tick the calendars that should count. Calendars you add to iCloud later stay off until you tick them here.`
+- Row: checkbox, the calendar name, the meta `{n} events today` (`1 event today`, `No events today`, or nothing when null), and badges `Shared with you` and `New` (in the list from Connect but neither in the saved list nor ticked before on this page).
+- A subscribed calendar's row is disabled with the line `Subscribed calendar. Add its address as a Calendar URL instead.`
+- Before Connect on a saved card, the rows are the saved calendars, ticked, with the line `Connect to see all your calendars.`
+- A saved card from build 1 whose list holds names only shows those names, ticked, with the same line.
+- Validation after Connect when none is ticked: `Choose at least one calendar.`
+
+Google Calendar card:
+
+- `Secret address in iCal format` (required, password field) with help `In Google Calendar settings, pick the calendar, then Integrate calendar. Treat it like a password.`
+- `Your Google email` (optional, placeholder `e.g. you@gmail.com`) with help `Lets Busy Light ignore invitations you declined.`
+- `Counts for`
+- Button `Test` (busy `Testing…`). Result `Read the calendar: {n} events today.` (`1 event today`, `no events today`).
+
+Calendar URL card:
+
+- `Address` (required) with help `Any calendar link that starts with https:// or webcal://.`
+- `Counts for`
+- Button `Test`, with the same result line.
+- Test errors (both cards): insecure `Use an address that starts with https:// or webcal://.`; notCalendar `That address did not return a calendar.` and, on a Google card only, the second sentence `Copy the Secret address in iCal format, not the public address.`; http `{host} answered with an error ({code}).`; network `Could not reach {host}.`; tooLarge `That calendar is over 10 MB, which is more than Busy Light reads.`
+
+Microsoft 365 card:
+
+- Muted note at the top: `Needs an app registration from your Microsoft 365 administrator.` with the link `What do I ask for?` (`https://github.com/arodbuilds/homebridge-busy-light/blob/latest/docs/microsoft-365-admin-request.md`, new tab).
+- `Directory (tenant) ID` and `Application (client) ID` (required, monospace, placeholder `e.g. 00000000-0000-0000-0000-000000000000`)
+- Checkboxes `Use Teams status` and `Use Outlook calendars`
+- Button `Connect` (busy `Getting a code…`); once connected, a `Disconnect` text button with the inline question `Sign out of Microsoft 365 on this Homebridge? Busy Light stops reading these calendars and your Teams status until you connect again.` and `Disconnect` (danger) and `Keep`.
+- Code view title `Sign in to Microsoft 365`, body `Open the Microsoft sign-in page, enter this code, and sign in with your work account.`, the code in large monospace, buttons `Copy code` (then `Copied`) and `Open Microsoft sign-in` (the `verificationUri`, new tab) and the text button `Cancel`, and the line `Waiting for you to finish signing in…`.
+- Code expired: `The code expired. Connect again to get a new one.`
+- Refused: `Microsoft did not allow the sign-in: {reason}. This needs your Microsoft 365 administrator.` and the link `Instructions to send them` (the help address).
+- Network: `Could not reach Microsoft. Try again in a minute.`
+- Signed in: the card returns with the `Connected` pill and, when `Use Outlook calendars` is on, the subheading `Calendars to use`, help `Tick the calendars that should count. Calendars added later stay off until you tick them here.`, rows as for iCloud with the badges `Default`, `Shared with you` and `New`. Before the first Connect on a page load, `Connect to see all your calendars.`
+- Not signed in when listing: `Sign in again to see your calendars.`
+- A saved Microsoft source with no `calendars` list reads the default calendar (9.1 item 14); its card shows `Your default calendar.` in place of the rows until Connect.
+
+**D. Colors**
+
+- Heading: `Colors`
+- Help: `The color the light shows for each status. Choose Off to turn the light off instead.`
+- One row per status: the display name of 6.2, a swatch that opens the browser's color picker, the hex value field (monospace), and an `Off` checkbox that disables the swatch and the field.
+- Badge `Teams only`, muted, on Do not disturb, In a call, Busy, Away and Offline while no saved or unsaved Microsoft 365 source has `Use Teams status` on.
+- Line under the rows: `When more than one applies, the one highest in this list wins.`
+- Text button `Reset colors` (no confirmation; the draft keeps the previous values until Save).
+
+**E. Lights**
+
+- Heading: `Lights`
+- LIFX card title: `LIFX bulb`
+- Checkbox: `Use a LIFX bulb`. Ticking it starts a search at once.
+- Searching: `Looking for LIFX bulbs on your network…`
+- One found: `Found {label} ({ip}). Busy Light will use it.`
+- Several found: `Found {n} bulbs. Choose one:` then one radio per bulb, `{label} ({ip})`. The choice is saved as the bulb's serial number in `lifx.bulb`.
+- None found: `No LIFX bulb found. Check that it is on and on the same network as Homebridge.`
+- The saved bulb not among those found: `{label} was not found just now. It may be switched off.`
+- Text button `Search again`
+- `Brightness (percent)` (1 to 100)
+- Button `Test light` (busy `Testing…`), help `Shows red, then green, on the bulb.`; results `The bulb answered.` and `No answer from the bulb. Check that it is on and on the same network as Homebridge.`
+- Advanced disclosure inside the card:
+  - `Bulb not found? Enter its IP address.` as the help of `Bulb IP address` (placeholder `e.g. 192.168.1.50`), followed by `Only needed when the search cannot reach the bulb, for example when Homebridge runs in Docker without host networking.` When filled in, the search results are hidden and the line `Busy Light will use the bulb at {ip}.` shows instead.
+  - `Send the color again every (seconds)` with help `Recovers a bulb that was switched off at the wall. 0 sends only when the status changes.`
+- Subheading: `Other lights in the Home app`
+- Text: `Busy Light cannot control other HomeKit lights itself. It adds sensors to the Home app, and an automation there sets the light.`
+- `Sensors to create`: checkboxes `{name} Available`, `{name} Busy`, `{name} Out of Office` (ticked by default), then a disclosure `Show all statuses` with the other seven in the order of section 7.
+- Steps (shell Step component):
+  1. `In the Home app, add an automation: A sensor detects something.`
+  2. `Choose {name} Busy, then Detects occupancy.`
+  3. `Set your light to red.`
+
+**F. Settings (Advanced disclosure)**, in this order:
+
+- `Name` (required, default `Busy Light`), help `Starts the name of every sensor, for example "Busy Light Available".`
+- `Check status every (seconds)` (15 to 240, default 30)
+- `Reload calendars every (seconds)` (60 to 600, default 180)
+- `Ignore all-day events marked busy` (default on), help `All-day out of office events always count.`
+- `Out of office words` (list, default Out of office, OOO, Vacation, PTO), help `iCloud, Google and URL calendar events with one of these words in the title count as out of office.`
+- `Override switch` (default off), help `Adds a switch to the Home app that forces Do not disturb while it is on.`
+- `Debug logging` (default off), help `Verbose logging. Passwords, calendar addresses and event titles are never logged, even with this on.`
+- `Reset plugin to fresh install`; dialog lines `Signs out of Microsoft 365 and removes the saved sign-in.`, `Removes every Busy Light sensor and switch from the Home app.`, `Clears all settings on this page.`; done state title `Reset done`, body `Click Save, then restart Homebridge.`
+
+**G. Shell strings** (shared with the other plugins, as in `homebridge-generac` SPEC 11.3 F)
+
+- Disclosure summary: `Advanced`
+- Reset: button `Reset plugin to fresh install`, dialog title `Reset plugin to fresh install?`, prompt `Type RESET to confirm.`, button `Confirm`, text button `Cancel`
+- Password field toggle: `Show`, `Hide`
+- Credit footer: `Busy Light v{version}`, `Made by Alex Rodriguez`, `alex-rodriguez.com` (`https://alex-rodriguez.com/?ref=busy-light#building`), `Report an issue` (`https://github.com/arodbuilds/homebridge-busy-light/issues`)
+- Relative times: `just now`, `1 minute ago`, `{n} minutes ago`, `1 hour ago`, `{n} hours ago`, `1 day ago`, `{n} days ago`
+- Times: 12-hour in the host's locale, for example `1:00 PM`
+- Failures of the host itself: `Could not load the configuration.`, `Could not update the configuration.`
+
+**H. Validation** (on blur; the summary box lists the same messages)
+
+- Empty required field: `{Label} is required.` with the field's own label.
+- Two calendars with the same name: `Another calendar already uses this name.`
+- Apple ID email or Google email that does not look like one: `That does not look like an email address.`
+- Address not starting with `https://` or `webcal://`: `Use an address that starts with https:// or webcal://.`
+- Tenant or client ID: `Enter it as 00000000-0000-0000-0000-000000000000.`
+- Color: `Enter a color as #RRGGBB, for example #FF0000.`
+- Numbers: `Enter a whole number from {min} to {max}.`
+- Bulb IP address: `Enter an IP address such as 192.168.1.50, or a host name.`
+- Microsoft 365 with both checkboxes off: `Turn on Use Teams status, Use Outlook calendars, or both.`
+- A second Microsoft 365 card with Use Teams status on: `Only one Microsoft 365 calendar can use Teams status.`
+- Calendars to use, after Connect, none ticked: `Choose at least one calendar.`
 
 ## 12. Logging
 
@@ -484,6 +689,8 @@ Lines, verbatim (`{}` are values):
 | iCloud discovery | info | `{name}: calendars found: {a, b, c}. In use: {a, b}.` (an empty list is `none`) |
 | Source failed | warn | `{name}: could not be read ({short reason}). Trying again in {n} minutes.` |
 | Source recovered | info | `{name}: working again.` |
+| New calendars | info | `{name}: calendars not in use: {a, b}. Tick them in the plugin settings to use them.` (once per discovery, only when the source has a non-empty `calendars` list and calendars outside it exist) |
+| Listed calendar gone | warn | `{name}: the calendar "{calendar}" was not found. It may have been deleted or unshared.` (once, until it is found again) |
 | iCloud 401 | warn | `{name}: iCloud did not accept the Apple ID and app-specific password. Check them in the plugin settings.` |
 | Microsoft code | warn | `{name}: Microsoft sign-in needed. Open {verificationUri} and enter the code {userCode}.` |
 | Microsoft done | info | `{name}: signed in to Microsoft 365.` |
@@ -553,13 +760,18 @@ All tests use `node:test`, run from `build-test/`, and never open a socket.
 10. CLI: `check` and `status` against a temporary storage directory with `fetch` replaced.
 11. Settings form: `config.schema.json` is valid JSON, every title and description matches the table of 9.2 and the `headerDisplay` above (read from this file), every field of the section 9 example is present, defaults match the plugin's, and each source type shows only its own fields.
 
+12. Calendar choice (build 2): iCloud `calendars` as names, as objects matched by `id`, an `id` that no longer matches but a name that does, an empty list; Microsoft with no list (default calendar) and with two listed calendars, one answering 404; `use: outOfOffice` on each source type keeping only out of office events; the "New calendars" line written once.
+13. UI server (build 2): every endpoint of 10.3 with a fake `fetch`, a fake LIFX network and a temporary storage directory, including every error key; that no response, log line or error carries a password, token, calendar address or event title; the Microsoft flow from start to done writing the same token file the plugin reads; cancel and the 15 minute expiry; `/reset` leaving only the marker.
+14. Settings page (build 2), with a fake DOM as in `homebridge-generac` (`test/fake-dom.ts`, `ui-page.test.ts`): every string of 11.3 comes from one copy module and matches this file; each card type's fields and validation; Connect listing calendars with the `New` and `Shared with you` badges and writing the chosen list with ids and `use`; build 1 name-only lists shown ticked; the Microsoft code view and its four endings; the LIFX one, several and none cases writing `lifx.bulb` as a serial and the IP override hiding the search; the Teams only badges; the draft holding no secret; Reset.
+15. Layout (build 2): the headless check of `homebridge-notify-switch` SPEC 11.2 item 18 in both host themes at 800 and 390 pixels: contrast of secondary text and locked fields, no horizontal scroll, the iframe never scrolling.
+
 Test helpers (`test/helpers.ts`) provide a fake `fetch` that throws on any address it was not given, a simulated network of LIFX bulbs on a fake socket, a fake clock, and a logger that records every line. Fixtures under `test/fixtures/` are synthetic; every event title in them starts with "Synthetic", and the redaction tests check that no log line contains one.
 
 ## 16. Release plan
 
 1. Build 1 (overnight, October 7 to 8, 2026): everything in sections 3 to 10.2 and 12 to 15, the standard settings form, README, CHANGELOG, SECURITY.md, NOTICE, version `0.1.0-beta.1`, one pull request against `latest`. `reference/` is deleted in the last commit. Built October 8, 2026; every network path and the bulb were exercised with fixtures only.
-2. Morning test on the Pi: merge, then clone and build under the Homebridge storage directory and link it (as Generac build 1), or publish the pre-release. `homebridge-busy-light check` first, then the Home app sensors, then the bulb.
-3. Build 2: the settings page from the Design prototype, the UI server, `customUi`, sign-in from the page.
+2. Morning test on the Pi (done October 8, 2026: iCloud read, the Floor bulb found by discovery and answering): merge, then clone and build under the Homebridge storage directory and link it (as Generac build 1), or publish the pre-release. `homebridge-busy-light check` first, then the Home app sensors, then the bulb.
+3. Build 2: the settings page of section 11 on the shared shell (no separate prototype), the UI server of 10.3, `customUi`, the build 2 configuration of 9.1 items 13 to 16, version `0.1.0-beta.2`. Then on the Pi: `git pull`, `npm ci`, `npm run build`, restart, and a Chrome pass on the page in both themes and at phone width.
 4. Build 3: README with masked screenshots, first npm publish as `v0.1.0-beta.1` pre-release (one-time token, then trusted publishing), reinstall from npm through the Homebridge UI.
 5. Soak, r/homebridge tester post, `1.0.0`, then the Homebridge verification request.
 
@@ -596,10 +808,18 @@ Test helpers (`test/helpers.ts`) provide a fake `fetch` that throws on any addre
 - 2026-10-08: `pollSeconds` is capped at 240 and `calendarSeconds` at 600 (9.1 item 12). With longer intervals, presence or events would go stale between checks and the status would flip or turn Unknown. `lifx.refreshSeconds` is capped at a day.
 - 2026-10-08: From a review before the pull request: the device code flow ends cleanly when another caller notices a CLI sign-in first (it used to stop Homebridge), and a token file that cannot be written keeps the sign-in in memory; a Graph 403 refusal clears only when the refused read works again; `invalid_grant` after a refusal still starts a new sign-in; `check` never starts one; one warning per Microsoft source; the override switch answers HomeKit at once; an unnamed iCloud calendar is never named by its path.
 - 2026-10-08: CLI output wording, beyond the log lines it shares with the plugin, is recorded in 10.2. `@homebridge/hap-nodejs` is a development dependency only, for the platform tests.
-- Open: confirm on the Pi that broadcast discovery finds the bulb, and that a bulb given only by IP acknowledges a tagged packet with a zero target.
+- 2026-10-08: On the Pi, broadcast discovery found the user's bulb (Floor) with `lifx.bulb` and `lifx.host` empty, and it acknowledged the untagged color send.
+- 2026-10-08: Build 2 needs no separate design prototype. The shell code and rules of the sibling plugins are the design; `assets/` holds Busy Light's own banner and marks.
+- 2026-10-08: Calendars are picked from a list after Connect (iCloud and Microsoft 365). Nothing is ticked by default, and a calendar added later stays off until ticked. Calendars are matched by id, falling back to the name.
+- 2026-10-08: Each calendar (or Google and URL source) counts for "Busy and out of office" or "Out of office only" (`use`).
+- 2026-10-08: Microsoft 365 lists the user's Outlook calendars to pick from, with `Calendars.Read` only.
+- 2026-10-08: The LIFX bulb is found by the page as soon as "Use a LIFX bulb" is ticked; the IP address moves under Advanced as the exception. Build 1's form made both optional fields look required.
+- Open: confirm that a bulb given only by IP acknowledges a tagged packet with a zero target.
+- Open: confirm the `shared` and `subscribed` resource types on the user's iCloud account (10.3 item 1); Universalis Automatic and Ayling are likely candidates.
 - Open: confirm `outOfOfficeSettings` is present on `/me/presence` in the user's tenant.
 - Open: Google can take hours to reflect a change in the secret address feed. Measure it and say so in the README.
 - Open: iCloud calendars shared from another person, and subscribed calendars inside iCloud, have not been checked against discovery.
 - Open: the settings page prototype from Design (section 11).
 - Open: confirm that LIFX bulbs acknowledge with the request's sequence and reply to the sender's port, as the LAN protocol documents, on the user's bulb.
 - 2026-10-08: The settings form's lists are not reorderable (`orderable: false`), after the calendar entry stuck to the pointer in Homebridge UI 5.29.0 on the Pi. Order has no meaning for any of them.
+- 2026-10-08: The App-specific password help links to account.apple.com and to Apple's instructions (support.apple.com/en-us/102654), both opening in a new tab. The Homebridge UI renders field descriptions as HTML. The custom settings page (build 2) keeps both links under "Where do I find this?".
