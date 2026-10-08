@@ -69,6 +69,10 @@ export interface SourceRunnerOptions {
   now?: () => number;
   /** Replaces the Microsoft sign-in's waits (tests). */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  /** False for the CLI `check`, which prints each source's reason itself and does not try again. */
+  logFailures?: boolean;
+  /** False for the CLI `check`: a lost Microsoft sign-in never starts the device code flow by itself. */
+  autoSignIn?: boolean;
   /** Called when the state, the sign-in code or the error changes, so the state file can be written. */
   onChange?: () => void;
 }
@@ -117,6 +121,7 @@ export class SourceRunner {
         log: options.log,
         now: this.now,
         sleep: options.sleep,
+        autoSignIn: options.autoSignIn,
         onChange: () => options.onChange?.(),
       });
       this.graph = new GraphClient(this.auth, c.name, this.now);
@@ -248,7 +253,7 @@ export class SourceRunner {
     }
     const after = this.state;
     const failed = (s: SourceState) => s === 'signInNeeded' || s === 'notReachable';
-    if (failure) {
+    if (failure && this.options.logFailures !== false) {
       const line = this.failureLine(failure, delay);
       // Presence and calendar run in parallel, so both can see the source as working before either fails:
       // the warning is written once per source.
