@@ -9,7 +9,7 @@ There are two ways in:
 
 Both lead to the same place: Busy Light combines what senders report with your calendars and Microsoft Teams status, and the light and the Home app sensors follow.
 
-Status of this document: the specification for API version 1, written October 8, 2026 and revised the same day (signed requests, names in Unicode, `clear`, finding Busy Light by name, and sending from a laptop that leaves home), ahead of the build that implements it. Section and rule numbers refer to Busy Light's `SPEC.md`, section 18.
+Status of this document: the specification for API version 1, written October 8, 2026 and revised the same day (signed requests, names in Unicode, `clear`, finding Busy Light by name, and sending from a laptop that leaves home), and again for replay memory, the plain key setting and sender restarts, ahead of the build that implements it. Section and rule numbers refer to Busy Light's `SPEC.md`, section 18.
 
 ## 1. What a sender can report
 
@@ -55,8 +55,8 @@ The user can replace the key at any time, which disconnects every sender until i
 ### 2.2 Security model
 
 1. **Local network only.** Busy Light refuses requests from addresses that are not private (10/8, 172.16/12, 192.168/16, 127/8, 169.254/16, fc00::/7, fe80::/10, ::1) with `403`. Do not expose the port to the internet.
-2. **Signed requests.** Apps sign each request with the key (section 2.4), so the key itself never crosses the network. Busy Light refuses a signature from a clock more than 5 minutes off, and refuses a report it has already seen, so a captured request cannot be replayed.
-3. **Plain key, for the user's own tools.** Busy Light also accepts the key itself in the request (`Authorization: Bearer <key>`), because Apple Shortcuts and a quick curl test cannot sign. This form sends the key unencrypted. **Apps must sign.**
+2. **Signed requests.** Apps sign each request with the key (section 2.4), so the key itself never crosses the network. Busy Light refuses a signature from a clock more than 5 minutes off, and refuses a report whose `ts` is not newer than the last one it accepted from that sender. It remembers that `ts` for 5 minutes whatever happens to the report (cleared, expired) and across a Homebridge restart, so a captured report can never be sent again, not even right after the call ends. The one exception is `GET /v1/status`: it has no sender, so a captured one can be sent again within 5 minutes, and it only reads the status, which is visible on the network anyway.
+3. **Plain key, for the user's own tools.** Busy Light also accepts the key itself in the request (`Authorization: Bearer <key>`), because Apple Shortcuts and a quick curl test cannot sign. This form sends the key unencrypted, and one such request seen on the network gives away the key, which can then sign anything. So the user can turn it off: **Allow the plain key** in Busy Light's settings, on until the user turns it off. With it off, a plain-key request gets `401 plain_key_off`. The settings page shows, for each sender, whether its last report was signed, so the user knows when it is safe to turn the plain key off. **Apps must sign.**
 4. **Plain HTTP.** There is no TLS, as with most devices on a home network. With signed requests, someone watching the network can see the statuses and sender names, but cannot learn the key, change the light, or replay what they saw.
 5. **Rate limit.** 60 requests a minute from one address; beyond that `429` with `Retry-After`.
 6. **No browser access.** The API sends no CORS headers, and authentication travels in an `Authorization` header, so a web page cannot call it.
@@ -148,6 +148,8 @@ Authorization: BusyLight-HMAC-SHA256 ts=<ts>, sig=<sig>
 3. `sig`: the lowercase hex HMAC-SHA256 of that string, keyed with the key's characters as UTF-8 bytes (the key as given, not decoded from base64).
 4. Sign the bytes you send. If your JSON encoder runs again after signing, the hash no longer matches.
 5. Each report from a sender must carry a `ts` greater than that sender's previous one, or it is refused with `401 replayed`. Take the current time in milliseconds, and if it is not greater than the last `ts` you sent, use the last one plus 1.
+   1. **Store your last `ts`** where it survives your app restarting (for example in user defaults), and read it back at launch. Otherwise a clock that stepped backward (a time sync, a manual change) leaves your next reports below the one Busy Light remembers, and they are refused with `replayed` for no reason you can see.
+   2. A `replayed` answer carries `"lastTs"`, the `ts` Busy Light remembers for you (a string of digits). Store `lastTs` plus 1 as your last `ts` and send the report again once. Do not loop: if that is refused too, show the error.
 6. Keep the computer's clock set automatically. A `ts` more than 300 seconds from Busy Light's clock is refused with `401 clock_skew`, and the message says by how much.
 
 Test vector. With the key `Synthetic-test-key-0000-do-not-use-anywhere`, `ts` `1791547380000` and this exact body (81 bytes, with a curly apostrophe):
@@ -175,7 +177,7 @@ For a status the user sets deliberately and that should last, such as "do not di
 
 ### 2.6 Errors
 
-Every error is JSON: `{ "error": "<key>", "message": "<plain sentence>" }`.
+Every error is JSON: `{ "error": "<key>", "message": "<plain sentence>" }`. `replayed` adds one field, `lastTs`.
 
 | Code | `error` | Meaning |
 | --- | --- | --- |
@@ -184,7 +186,8 @@ Every error is JSON: `{ "error": "<key>", "message": "<plain sentence>" }`.
 | 400 | `invalid_sender`, `invalid_status`, `invalid_app`, `invalid_ttl` | That field breaks its rule |
 | 401 | `unauthorized` | Missing or wrong key, a wrong signature, or a malformed `Authorization` header |
 | 401 | `clock_skew` | The signed `ts` is more than 300 seconds from Busy Light's clock |
-| 401 | `replayed` | The signed `ts` is not greater than this sender's previous one |
+| 401 | `replayed` | The signed `ts` is not greater than this sender's previous one. The answer also has `"lastTs"` (section 2.4, item 5) |
+| 401 | `plain_key_off` | The plain key was sent, and the user has turned off Allow the plain key |
 | 403 | `not_local` | The request came from outside the local network |
 | 404 | `not_found` | Unknown path |
 | 405 | `method_not_allowed` | Wrong method for the path |
@@ -258,7 +261,7 @@ Notes for a Mac app:
 1. **Local Network permission.** The first request to a device on the local network triggers macOS's Local Network prompt; plan for it in your onboarding.
 2. **App Transport Security.** `URLSession` refuses plain HTTP to most hosts. `NSAllowsLocalNetworking` in the app's `NSAppTransportSecurity` dictionary allows `.local` names and unqualified names, which covers the usual setup code. For an IP address host, Apple's guidance has changed over the years: older releases exempted IP addresses from ATS entirely, and Apple's networking engineer has since said IP addresses need `NSExceptionDomains` entries, which accept CIDR ranges (`192.168.0.0/16` with `NSExceptionAllowsInsecureHTTPLoads`), with a fix for a CIDR bug in later iOS 17 releases. Not yet verified on macOS 27: test both a `.local` host and an IP address host on the macOS versions you support before relying on either. Network framework connections are not subject to ATS.
 
-Apple Shortcuts: a **Get Contents of URL** action with method POST, a header `Authorization` set to `Bearer ` followed by the key, and a JSON request body with `sender` and `status`. Shortcuts cannot sign, so it sends the key itself: use it only from a device that stays at home, and prefer the On a Call switch (section 3) from a laptop.
+Apple Shortcuts: a **Get Contents of URL** action with method POST, a header `Authorization` set to `Bearer ` followed by the key, and a JSON request body with `sender` and `status`. Shortcuts cannot sign, so it sends the key itself, and works only while Allow the plain key is on: use it only from a device that stays at home, and prefer the On a Call switch (section 3), which needs no key at all.
 
 ## 3. The On a Call switch
 
@@ -276,9 +279,10 @@ The switch reports only `inCall`. For other statuses, use the status API.
 
 1. Let the user paste the setup code. Keep its host as a name when it is one, and check it with `GET /v1/ping`, comparing `id`.
 2. Pick a stable `sender` name that includes the device. The computer's own name, curly apostrophe and all, is fine.
-3. Sign every request (section 2.4), and check your code against the test vector. Never send the plain key from an app.
-4. Send on change, repeat every 60 seconds while not `clear`, send `clear` when done.
-5. Send only `sender`, `status`, `app` and `ttlSeconds`. Never content.
-6. Follow section 2.7 when the network changes: confirm the `id` before reporting, stay quiet when Busy Light is not reachable, never queue old reports, and send the current status fresh on return.
-7. Handle `401` (`unauthorized`: key replaced; `clock_skew`: the clock is off; `replayed`: your `ts` went backwards), `403` (wrong network), `429` (back off) and no answer (Busy Light off or not on this network) with a plain message to the user.
-8. Expect the overall status to differ from what you sent; Busy Light decides.
+3. Sign every request (section 2.4), and check your code against the test vector. Never send the plain key from an app: the user may have turned it off, and sending it gives the key away.
+4. Store your last `ts` across restarts, and on `replayed` continue from `lastTs` plus 1, once.
+5. Send on change, repeat every 60 seconds while not `clear`, send `clear` when done.
+6. Send only `sender`, `status`, `app` and `ttlSeconds`. Never content.
+7. Follow section 2.7 when the network changes: confirm the `id` before reporting, stay quiet when Busy Light is not reachable, never queue old reports, and send the current status fresh on return.
+8. Handle `401` (`unauthorized`: key replaced; `clock_skew`: the clock is off; `replayed`: your `ts` went backwards, see item 4; `plain_key_off`: an app sent the plain key), `403` (wrong network), `429` (back off) and no answer (Busy Light off or not on this network) with a plain message to the user.
+9. Expect the overall status to differ from what you sent; Busy Light decides.
