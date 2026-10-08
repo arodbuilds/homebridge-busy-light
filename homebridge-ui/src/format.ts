@@ -19,7 +19,7 @@ export function formatTime(d: Date): string {
 }
 
 /** "just now", "2 minutes ago", "3 hours ago", "2 days ago". */
-export function relativeTime(d: Date, now: Date = new Date()): string {
+export function relativeTime(d: Date, now: Date = new Date(Date.now())): string {
   const seconds = Math.max(0, Math.round((now.getTime() - d.getTime()) / 1000));
   if (seconds < 45) {
     return RELATIVE.justNow;
