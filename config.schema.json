@@ -2,6 +2,7 @@
   "pluginAlias": "BusyLight",
   "pluginType": "platform",
   "singular": true,
+  "customUi": true,
   "headerDisplay": "Busy Light shows whether you are free on a light. Add at least one calendar, then choose how the light is controlled. Not affiliated with or endorsed by Apple, Google, Microsoft or LIFX.",
   "schema": {
     "type": "object",
@@ -78,7 +79,30 @@
               "description": "Leave empty to use every calendar. The log lists the calendar names found.",
               "type": "array",
               "items": {
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "use": {
+                        "type": "string",
+                        "enum": [
+                          "all",
+                          "outOfOffice"
+                        ],
+                        "default": "all"
+                      }
+                    }
+                  }
+                ]
               }
             },
             "url": {
@@ -113,6 +137,25 @@
               "title": "Use Outlook calendar",
               "type": "boolean",
               "default": true
+            },
+            "use": {
+              "title": "Counts for",
+              "type": "string",
+              "oneOf": [
+                {
+                  "title": "Busy and out of office",
+                  "enum": [
+                    "all"
+                  ]
+                },
+                {
+                  "title": "Out of office only",
+                  "enum": [
+                    "outOfOffice"
+                  ]
+                }
+              ],
+              "default": "all"
             }
           }
         }
@@ -340,6 +383,12 @@
           "description": "Any calendar link that starts with https:// or webcal://.",
           "condition": {
             "functionBody": "return model.calendars[arrayIndices].type === 'url';"
+          }
+        },
+        {
+          "key": "calendars[].use",
+          "condition": {
+            "functionBody": "return ['google', 'url'].includes(model.calendars[arrayIndices].type);"
           }
         },
         {

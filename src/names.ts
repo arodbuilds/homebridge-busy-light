@@ -10,6 +10,8 @@ export const PLUGIN_NAME = 'homebridge-busy-light';
 export const PLATFORM_NAME = 'BusyLight';
 export const DISPLAY_NAME = 'Busy Light';
 export const STORAGE_DIR = 'busy-light';
+/** Left in the storage directory by the settings page's Reset (SPEC 10.3 item 6); the platform acts on it at startup. */
+export const RESET_MARKER = 'reset-pending';
 
 let cachedVersion: string | null = null;
 

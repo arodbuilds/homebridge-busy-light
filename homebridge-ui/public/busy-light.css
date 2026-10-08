@@ -1,0 +1,387 @@
+/* What this page adds to the shell (SPEC 11.1 and 11.2 additions): the affiliation line, the state pills and badges,
+   and the pieces of each section. Every colour is a host variable with the host's light value as the fallback; the dark
+   values are re-declared in index.css under the host's dark marker. The status swatches are the one place the page
+   shows the user's own colours (SPEC 11.2 addition 1). */
+
+/* The affiliation line: muted, directly under the intro paragraphs, never in the footer. */
+.bl-affiliation {
+  margin: 0 0 0.5rem;
+  color: var(--bs-secondary-color, currentColor);
+}
+
+/* Badges beyond the shell's type badge (SPEC 11.2 addition 2): the host's subtle success (Connected), secondary
+   (Checking, Not saved yet), warning (Sign-in needed) and danger (Not reachable) variables; a secondary outline for
+   Teams only, Default and Shared with you; the link colour for New. */
+.busy-light-ui .bl-badge {
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.busy-light-ui .bl-badge-connected {
+  color: var(--bs-success-text-emphasis, #0a3622);
+  background-color: var(--bs-success-bg-subtle, #d1e7dd);
+  border-color: var(--bs-success-border-subtle, #a3cfbb);
+}
+
+.busy-light-ui .bl-badge-checking {
+  color: var(--bs-secondary-color, currentColor);
+  background-color: var(--bs-secondary-bg, rgba(128, 128, 128, 0.12));
+  border-color: var(--bs-border-color, rgba(128, 128, 128, 0.35));
+}
+
+.busy-light-ui .bl-badge-warning {
+  color: var(--bs-warning-text-emphasis, #664d03);
+  background-color: var(--bs-warning-bg-subtle, #fff3cd);
+  border-color: #ffecb5;
+}
+
+.busy-light-ui .bl-badge-danger {
+  color: var(--bs-danger-text-emphasis, #58151c);
+  background-color: var(--bs-danger-bg-subtle, #f8d7da);
+  border-color: var(--bs-danger-border-subtle, #f1aeb5);
+}
+
+.busy-light-ui .bl-badge-muted {
+  color: var(--bs-secondary-color, currentColor);
+  background-color: transparent;
+  border-color: var(--bs-secondary, #6c757d);
+}
+
+.busy-light-ui .bl-badge-new {
+  color: var(--bs-link-color, #0d6efd);
+  background-color: transparent;
+  border-color: var(--bs-link-color, #0d6efd);
+}
+
+/* A section's empty line ("No calendars yet."). */
+.bl-empty {
+  color: var(--bs-secondary-color, currentColor);
+  margin: 0 0 0.75rem;
+}
+
+/* A row of buttons under a body or a section: a primary button and its text Cancel. */
+.bl-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 0 0 16px;
+}
+
+/* The inline Reset dialog (SPEC 11.2), in the page flow directly below the Reset link, never a fixed overlay. It carries
+   Bootstrap's `card` class, so its fill, border and text are the host's card surface in both themes; this rule sets
+   none of them (the host's dark theme leaves `--bs-body-bg` white and paints `.card` itself). */
+.busy-light-ui .ns-inline-dialog {
+  margin-top: 0.75rem;
+  max-width: 28rem;
+}
+
+.busy-light-ui .ns-inline-dialog-title {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.35));
+}
+
+.busy-light-ui .ns-inline-dialog-body {
+  padding: 1rem;
+}
+
+.busy-light-ui .ns-inline-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.35));
+}
+
+/* Right now (SPEC 11.3 B): the status swatch in the user's colour, the status name and one muted line. */
+.bl-now {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 0.5rem;
+}
+
+.bl-now-name {
+  font-weight: 600;
+}
+
+.bl-now-line {
+  margin-top: 0;
+}
+
+.bl-now-stale {
+  margin: 0 0 0.5rem;
+}
+
+/* A status swatch: the user's colour in a circle with the border colour around it; Off is the empty ring. */
+.bl-swatch {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.35));
+}
+
+.bl-swatch-off {
+  background: transparent;
+  border-style: dashed;
+}
+
+/* Calendars (SPEC 11.3 C). */
+
+/* The state file's error under a card's header, in its pill's tone. */
+.bl-card-error {
+  padding: 6px 16px;
+  font-size: 0.875em;
+  border-bottom: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.35));
+}
+
+.bl-tone-connected,
+.bl-tone-checking {
+  color: var(--bs-secondary-color, currentColor);
+}
+
+.bl-tone-warning {
+  color: var(--bs-warning-text-emphasis, #664d03);
+  background-color: var(--bs-warning-bg-subtle, #fff3cd);
+}
+
+.bl-tone-danger {
+  color: var(--bs-danger-text-emphasis, #58151c);
+  background-color: var(--bs-danger-bg-subtle, #f8d7da);
+}
+
+.bl-pill-holder:empty {
+  display: none;
+}
+
+.busy-light-ui .bl-source-card {
+  margin-bottom: 0.75rem;
+}
+
+/* "Calendars to use": a subheading, one line of help, then a row per calendar. */
+.bl-calendars {
+  margin: 0 0 1rem;
+}
+
+.bl-subheading {
+  font-weight: 600;
+  margin: 0.25rem 0 0;
+}
+
+.bl-subheading-help {
+  margin: 0 0 0.5rem;
+}
+
+.bl-cal-list {
+  margin: 0 0 0.5rem;
+}
+
+/* A calendar row: the checkbox, the name, today's count and the badges; a ticked row adds Counts for beside them, or
+   under them on a phone. */
+.bl-cal-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.35));
+}
+
+.bl-cal-row:first-child {
+  border-top: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.35));
+}
+
+.busy-light-ui .bl-cal-check {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  flex: 1 1 16rem;
+  min-width: 0;
+  margin: 0;
+}
+
+.busy-light-ui .bl-cal-check .form-check-input {
+  margin-top: 0;
+}
+
+.bl-cal-meta {
+  color: var(--bs-secondary-color, currentColor);
+  font-size: 0.875em;
+}
+
+.bl-cal-use-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 auto;
+}
+
+.busy-light-ui .bl-cal-use-label {
+  margin: 0;
+  font-weight: 400;
+  font-size: 0.875em;
+  white-space: nowrap;
+}
+
+.busy-light-ui .bl-cal-use {
+  width: auto;
+  min-height: 31px;
+}
+
+.bl-cal-line {
+  flex: 1 0 100%;
+  margin-top: 0;
+  padding-left: 1.5em;
+}
+
+.bl-connect-line,
+.bl-default-line,
+.bl-sign-in-again {
+  margin: 0.25rem 0 0;
+}
+
+.busy-light-ui .bl-cal-list > .form-text {
+  margin-top: 0.25rem;
+}
+
+/* The Microsoft note and the code view, which takes the card body's place while a code waits. */
+.bl-ms-note {
+  margin: 0 0 0.75rem;
+}
+
+.bl-code-view {
+  padding-bottom: 0.5rem;
+}
+
+.bl-code-title {
+  margin-bottom: 0.25rem;
+}
+
+.bl-code-body {
+  margin: 0 0 0.5rem;
+}
+
+.bl-code {
+  font-size: 1.75rem;
+  letter-spacing: 0.12em;
+  margin: 0 0 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.bl-code-waiting {
+  margin: 0;
+}
+
+/* Colors (SPEC 11.3 D): a row per status, the name on the left and the swatch, the hex value and Off on the right;
+   on a phone the controls wrap under the name. */
+.bl-color-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.35));
+}
+
+.bl-color-row:first-child {
+  padding-top: 0;
+}
+
+.bl-color-name {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  flex: 1 1 12rem;
+  min-width: 0;
+  margin: 0;
+  font-weight: 600;
+}
+
+.bl-color-controls {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.busy-light-ui .bl-color-swatch {
+  width: 44px;
+  height: 38px;
+  padding: 4px;
+  cursor: pointer;
+}
+
+.busy-light-ui .bl-color-hex {
+  width: 7.5rem;
+}
+
+.busy-light-ui .bl-color-off {
+  margin: 0;
+  min-height: 0;
+}
+
+.busy-light-ui .bl-color-row > .invalid-feedback {
+  flex: 1 0 100%;
+  margin-top: 0;
+}
+
+.bl-precedence {
+  margin: 0.75rem 0 0.5rem;
+}
+
+/* Lights (SPEC 11.3 E): the bulb search lines and choice, Test light's help in the footer, the sensors and the steps. */
+.bl-lifx-results {
+  margin: 0 0 0.75rem;
+}
+
+.bl-lifx-line {
+  margin: 0 0 0.5rem;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.busy-light-ui .bl-lifx-choice {
+  margin: 0 0 0.5rem;
+  padding: 0;
+  border: 0;
+}
+
+.busy-light-ui .bl-lifx-actions {
+  margin-bottom: 0;
+}
+
+.busy-light-ui .bl-test-help {
+  margin-top: 0;
+}
+
+.busy-light-ui .bl-lifx-card {
+  margin-bottom: 1rem;
+}
+
+.bl-other-heading {
+  font-size: 1rem;
+  margin: 1rem 0 0.25rem;
+}
+
+.bl-sensors-heading {
+  margin-bottom: 0.5rem;
+}
+
+.busy-light-ui .bl-sensors .form-check {
+  margin-bottom: 0.5rem;
+}
+
+.busy-light-ui .bl-all-sensors {
+  margin: 0 0 1rem;
+}
+
+/* Settings (SPEC 11.3 F): the Reset link and, in its place after Confirm, the done state. */
+.bl-reset {
+  margin-top: 0.25rem;
+  margin-bottom: 1rem;
+}

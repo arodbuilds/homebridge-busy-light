@@ -19,6 +19,20 @@ export const SOURCE_TYPE_NAMES: Record<SourceType, string> = {
   url: 'Calendar URL',
 };
 
+/** What a calendar counts for (SPEC 9.1 item 15): every event, or its out of office events only. */
+export type CalendarUse = 'all' | 'outOfOffice';
+
+export const CALENDAR_USES: readonly CalendarUse[] = ['all', 'outOfOffice'];
+
+/** One item of an iCloud or Microsoft `calendars` list (SPEC 9.1 items 13 and 14). */
+export interface CalendarChoice {
+  /** The CalDAV collection path or the Graph calendar id. Null for a build 1 item that names the calendar only. */
+  id: string | null;
+  /** The display name when it was ticked. Empty when only the id was given. */
+  name: string;
+  use: CalendarUse;
+}
+
 interface SourceBase {
   /** Names the Microsoft token file and identifies the source in the state file. */
   id: string;
@@ -29,8 +43,8 @@ export interface ICloudSourceConfig extends SourceBase {
   type: 'icloud';
   appleId: string;
   appPassword: string;
-  /** Calendar names to keep. Empty keeps every calendar. */
-  calendars: string[];
+  /** The calendars to read. Empty keeps every calendar. */
+  calendars: CalendarChoice[];
 }
 
 export interface GoogleSourceConfig extends SourceBase {
@@ -38,6 +52,7 @@ export interface GoogleSourceConfig extends SourceBase {
   /** Always `https://` (a `webcal://` address is rewritten). */
   url: string;
   email: string;
+  use: CalendarUse;
 }
 
 export interface MicrosoftSourceConfig extends SourceBase {
@@ -46,12 +61,15 @@ export interface MicrosoftSourceConfig extends SourceBase {
   clientId: string;
   useTeamsStatus: boolean;
   useCalendar: boolean;
+  /** The Outlook calendars to read, each with an id. Empty reads the default calendar only. */
+  calendars: CalendarChoice[];
 }
 
 export interface UrlSourceConfig extends SourceBase {
   type: 'url';
   /** Always `https://` (a `webcal://` address is rewritten). */
   url: string;
+  use: CalendarUse;
 }
 
 export type SourceConfig = ICloudSourceConfig | GoogleSourceConfig | MicrosoftSourceConfig | UrlSourceConfig;
@@ -120,6 +138,16 @@ const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const COLOR = /^#[0-9a-f]{6}$/i;
 const EXPLICIT_ID = /^[a-z0-9-]{1,64}$/;
 const HOST_NAME = /^(?=.{1,253}\.?$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.?$/i;
+
+/** A Microsoft tenant or client ID. */
+export function isGuid(value: string): boolean {
+  return GUID.test(value);
+}
+
+/** An explicit source id: 1 to 64 lower case letters, digits and hyphens (SPEC 9.1 item 9). It names the token file. */
+export function isSourceId(value: string): boolean {
+  return EXPLICIT_ID.test(value);
+}
 
 /** The id derived from a name: lower case, every run of characters outside a-z0-9 replaced by a hyphen. */
 export function deriveId(name: string): string {
@@ -250,6 +278,61 @@ function readTextList(raw: unknown, path: string, fallback: readonly string[], i
   return out;
 }
 
+/** `all` or `outOfOffice`; anything else is `all` with a warning (SPEC 9.1 item 15). */
+function readUse(raw: unknown, path: string, issues: Issues): CalendarUse {
+  if (isMissing(raw)) {
+    return 'all';
+  }
+  if (typeof raw !== 'string' || !(CALENDAR_USES as readonly string[]).includes(raw)) {
+    issues.warn(path, 'must be all or outOfOffice');
+    return 'all';
+  }
+  return raw as CalendarUse;
+}
+
+/** Trimmed text, or null when missing, empty or not text. */
+function optionalText(raw: unknown): string | null {
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
+}
+
+/**
+ * An iCloud or Microsoft `calendars` list (SPEC 9.1 items 13, 14 and 16). A text item is a calendar name, as build 1
+ * wrote them; an object item is `{ id, name, use }`. An item with neither an id nor a name is ignored with a warning,
+ * and so is a repeated id. With `requireId` (Microsoft), an item without an id cannot be read and is ignored too.
+ */
+function readCalendarChoices(raw: unknown, path: string, requireId: boolean, issues: Issues): CalendarChoice[] {
+  if (isMissing(raw)) {
+    return [];
+  }
+  if (!Array.isArray(raw)) {
+    issues.warn(path, 'must be a list');
+    return [];
+  }
+  const out: CalendarChoice[] = [];
+  raw.forEach((item, i) => {
+    const itemPath = `${path}[${i}]`;
+    let choice: CalendarChoice | null = null;
+    if (typeof item === 'string') {
+      choice = item.trim() ? { id: null, name: item.trim(), use: 'all' } : null;
+    } else if (isObject(item)) {
+      const id = optionalText(item.id);
+      const name = optionalText(item.name);
+      const use = readUse(item.use, `${itemPath}.use`, issues);
+      choice = id !== null || name !== null ? { id, name: name ?? '', use } : null;
+    }
+    if (!choice || (requireId && choice.id === null)) {
+      issues.warn(itemPath, 'must be a calendar name or entry, ignored');
+      return;
+    }
+    if (choice.id !== null && out.some((c) => c.id === choice.id)) {
+      issues.warn(itemPath, 'repeats an earlier calendar, ignored');
+      return;
+    }
+    out.push(choice);
+  });
+  return out;
+}
+
 function requireText(raw: unknown, path: string, issues: Issues): string | null {
   if (isMissing(raw)) {
     issues.error(path, 'is required');
@@ -324,7 +407,7 @@ function readSource(raw: unknown, path: string, issues: Issues): SourceConfig | 
     if (appPassword === null) {
       return null;
     }
-    const calendars = readTextList(raw.calendars, `${path}.calendars`, [], issues);
+    const calendars = readCalendarChoices(raw.calendars, `${path}.calendars`, false, issues);
     return { type: 'icloud', id, name, appleId, appPassword, calendars };
   }
   case 'google': {
@@ -333,14 +416,16 @@ function readSource(raw: unknown, path: string, issues: Issues): SourceConfig | 
       return null;
     }
     const email = readText(raw.email, `${path}.email`, '', issues);
-    return { type: 'google', id, name, url, email };
+    const use = readUse(raw.use, `${path}.use`, issues);
+    return { type: 'google', id, name, url, email, use };
   }
   case 'url': {
     const url = requireCalendarUrl(raw.url, `${path}.url`, issues);
     if (url === null) {
       return null;
     }
-    return { type: 'url', id, name, url };
+    const use = readUse(raw.use, `${path}.use`, issues);
+    return { type: 'url', id, name, url, use };
   }
   case 'microsoft': {
     const tenantId = requireGuid(raw.tenantId, `${path}.tenantId`, issues);
@@ -357,7 +442,9 @@ function readSource(raw: unknown, path: string, issues: Issues): SourceConfig | 
       issues.error(`${path}.useCalendar`, 'Use Teams status and Use Outlook calendar cannot both be off');
       return null;
     }
-    return { type: 'microsoft', id, name, tenantId, clientId, useTeamsStatus, useCalendar };
+    // Read whether or not the calendar is used, so the list survives turning Use Outlook calendars off and on.
+    const calendars = readCalendarChoices(raw.calendars, `${path}.calendars`, true, issues);
+    return { type: 'microsoft', id, name, tenantId, clientId, useTeamsStatus, useCalendar, calendars };
   }
   }
 }

@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defaultConfig, deriveId, normalizeCalendarUrl, normalizeColor, ownerAddresses, parseConfig } from '../src/config.js';
 import type { ConfigIssue } from '../src/config.js';
 import { DEFAULT_COLORS } from '../src/model.js';
@@ -7,6 +10,8 @@ import { DEFAULT_COLORS } from '../src/model.js';
 const TENANT = '11111111-2222-3333-4444-555555555555';
 const CLIENT = '66666666-7777-8888-9999-000000000000';
 const FEED = 'https://calendar.example.com/ical/synthetic-secret/basic.ics';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 const lines = (issues: ConfigIssue[]) => issues.map((i) => `${i.level} ${i.path}: ${i.message}`);
 
@@ -32,35 +37,52 @@ test('rule 1: an empty calendars list is valid', () => {
   assert.deepEqual(config.calendars, []);
 });
 
-test('the example block of SPEC section 9 reads cleanly', () => {
+test('the example block of SPEC section 9 (the build 2 shape) reads cleanly', () => {
+  const spec = fs.readFileSync(path.join(root, 'SPEC.md'), 'utf8');
+  const example = JSON.parse(/## 9\. Configuration[\s\S]*?```json\n([\s\S]*?)```/.exec(spec)![1]) as { calendars: Record<string, unknown>[] };
+  // The example leaves the secrets and addresses empty; fill them with synthetic values.
+  const fill: Record<string, Record<string, string>> = {
+    icloud: { appleId: 'person@example.com', appPassword: 'abcd-efgh-ijkl-mnop' },
+    google: { url: FEED, email: 'person@example.org' },
+    microsoft: { tenantId: TENANT, clientId: CLIENT },
+    url: { url: 'webcal://rota.example.net/team.ics' },
+  };
+  example.calendars = example.calendars.map((c) => ({ ...c, ...fill[c.type as string] }));
+  const { config, issues } = parseConfig(example);
+  assert.deepEqual(issues, []);
+  assert.deepEqual(config.calendars.map((c) => [c.type, c.id, c.name]), [
+    ['icloud', 'cal-mgx3k2f1a9q', 'iCloud'],
+    ['google', 'cal-mgx3k5b7c2d', 'Personal'],
+    ['microsoft', 'cal-mgx3k8e4f6g', 'Work'],
+    ['url', 'cal-mgx3kb9h1j4', 'Team rota'],
+  ]);
+  const [icloud, google, microsoft, url] = config.calendars;
+  assert.deepEqual(icloud.type === 'icloud' && icloud.calendars, [
+    { id: '/123456789/calendars/home/', name: 'Alex', use: 'all' },
+    { id: '/123456789/calendars/family-1/', name: 'Family', use: 'outOfOffice' },
+  ]);
+  assert.equal(google.type === 'google' && google.use, 'all');
+  assert.deepEqual(microsoft.type === 'microsoft' && microsoft.calendars, [{ id: 'AAMkAGSyntheticCalendarId=', name: 'Calendar', use: 'all' }]);
+  assert.equal(url.type === 'url' && url.url, 'https://rota.example.net/team.ics');
+  assert.equal(url.type === 'url' && url.use, 'outOfOffice');
+  assert.deepEqual(ownerAddresses(config), ['person@example.com', 'person@example.org']);
+});
+
+test('a block written by build 1 reads as before: no ids, an iCloud list of names, no use', () => {
+  // The shape of the configuration on the Pi: one iCloud source with one calendar name, the bulb found by discovery.
   const { config, issues } = parseConfig({
     platform: 'BusyLight',
     name: 'Busy Light',
-    calendars: [
-      { type: 'icloud', name: 'Family', appleId: 'person@example.com', appPassword: 'abcd-efgh-ijkl-mnop', calendars: [] },
-      { type: 'google', name: 'Personal', url: FEED, email: 'person@example.org' },
-      { type: 'microsoft', name: 'Work', tenantId: TENANT, clientId: CLIENT, useTeamsStatus: true, useCalendar: true },
-      { type: 'url', name: 'Team rota', url: 'webcal://rota.example.net/team.ics' },
-    ],
-    colors: { available: '#00FF00', offline: 'off' },
-    lifx: { enabled: false, bulb: '', host: '', brightness: 100, refreshSeconds: 300 },
+    calendars: [{ type: 'icloud', name: 'iCloud', appleId: 'person@example.com', appPassword: 'abcd-efgh-ijkl-mnop', calendars: ['Alex'],
+      useTeamsStatus: true, useCalendar: true }],
+    lifx: { enabled: true },
     sensors: ['available', 'busyAny', 'outOfOffice'],
-    overrideSwitch: false,
-    pollSeconds: 30,
-    calendarSeconds: 180,
-    ignoreAllDayBusy: true,
-    outOfOfficeWords: ['Out of office', 'OOO', 'Vacation', 'PTO'],
-    debug: false,
   });
   assert.deepEqual(issues, []);
-  assert.deepEqual(config.calendars.map((c) => [c.type, c.id, c.name]), [
-    ['icloud', 'family', 'Family'],
-    ['google', 'personal', 'Personal'],
-    ['microsoft', 'work', 'Work'],
-    ['url', 'team-rota', 'Team rota'],
-  ]);
-  assert.equal(config.calendars[3].type === 'url' && config.calendars[3].url, 'https://rota.example.net/team.ics');
-  assert.deepEqual(ownerAddresses(config), ['person@example.com', 'person@example.org']);
+  assert.deepEqual(config.calendars, [{
+    type: 'icloud', id: 'icloud', name: 'iCloud', appleId: 'person@example.com', appPassword: 'abcd-efgh-ijkl-mnop',
+    calendars: [{ id: null, name: 'Alex', use: 'all' }],
+  }]);
 });
 
 test('rule 2: name is required, 1 to 64 printable characters, unique without regard to case', () => {
@@ -273,4 +295,110 @@ test('calendar addresses', () => {
   assert.equal(normalizeCalendarUrl('https://example.com/a.ics'), 'https://example.com/a.ics');
   assert.equal(normalizeCalendarUrl('http://example.com/a.ics'), null);
   assert.equal(normalizeCalendarUrl('https://'), null);
+});
+
+const ICLOUD = { type: 'icloud', name: 'Family', appleId: 'person@example.com', appPassword: 'synthetic' };
+const MICROSOFT = { type: 'microsoft', name: 'Work', tenantId: TENANT, clientId: CLIENT };
+
+test('rule 13: iCloud calendars are names (build 1) or { id, name, use } entries; an empty list keeps every calendar', () => {
+  const { config, issues } = parseConfig({
+    calendars: [{
+      ...ICLOUD,
+      calendars: [
+        ' Alex ',
+        { id: '/123456789/calendars/home/', name: 'Home', use: 'all' },
+        { id: '/123456789/calendars/family-1/', name: 'Family', use: 'outOfOffice' },
+        { name: 'Name only' },
+        { id: '/123456789/calendars/id-only/' },
+      ],
+    }],
+  });
+  assert.deepEqual(issues, []);
+  const icloud = config.calendars[0];
+  assert.deepEqual(icloud.type === 'icloud' && icloud.calendars, [
+    { id: null, name: 'Alex', use: 'all' },
+    { id: '/123456789/calendars/home/', name: 'Home', use: 'all' },
+    { id: '/123456789/calendars/family-1/', name: 'Family', use: 'outOfOffice' },
+    { id: null, name: 'Name only', use: 'all' },
+    { id: '/123456789/calendars/id-only/', name: '', use: 'all' },
+  ]);
+  for (const list of [undefined, null, []]) {
+    const empty = parseConfig({ calendars: [{ ...ICLOUD, calendars: list }] });
+    assert.deepEqual(empty.issues, []);
+    assert.deepEqual(empty.config.calendars[0].type === 'icloud' && empty.config.calendars[0].calendars, []);
+  }
+});
+
+test('rule 14: Microsoft calendars are { id, name, use } entries; none means the default calendar; kept when useCalendar is off', () => {
+  const { config, issues } = parseConfig({
+    calendars: [
+      { ...MICROSOFT, calendars: [{ id: 'AAMkSyntheticOne=', name: 'Calendar' }, { id: 'AAMkSyntheticTwo=', name: 'Holidays', use: 'outOfOffice' }] },
+      { ...MICROSOFT, name: 'Presence', useTeamsStatus: false, calendars: undefined },
+    ],
+  });
+  assert.deepEqual(issues, []);
+  assert.deepEqual(config.calendars.map((c) => c.type === 'microsoft' && c.calendars), [
+    [{ id: 'AAMkSyntheticOne=', name: 'Calendar', use: 'all' }, { id: 'AAMkSyntheticTwo=', name: 'Holidays', use: 'outOfOffice' }],
+    [],
+  ]);
+  const off = parseConfig({ calendars: [{ ...MICROSOFT, useCalendar: false, calendars: [{ id: 'AAMkSyntheticOne=', name: 'Calendar' }] }] });
+  assert.deepEqual(off.issues, []);
+  assert.equal(off.config.calendars[0].type === 'microsoft' && off.config.calendars[0].calendars.length, 1);
+});
+
+test('rule 15: use is all or outOfOffice on Google and URL sources and on each listed calendar; anything else is all with a warning', () => {
+  const { config, issues } = parseConfig({
+    calendars: [
+      { type: 'google', name: 'Personal', url: FEED, use: 'outOfOffice' },
+      { type: 'url', name: 'Rota', url: FEED },
+      { type: 'url', name: 'Odd', url: FEED, use: 'busy' },
+      { ...ICLOUD, calendars: [{ id: '/1/calendars/a/', name: 'A', use: 'OutOfOffice' }, { id: '/1/calendars/b/', name: 'B', use: 7 }] },
+    ],
+  });
+  assert.deepEqual(lines(issues), [
+    'warn calendars[2].use: must be all or outOfOffice',
+    'warn calendars[3].calendars[0].use: must be all or outOfOffice',
+    'warn calendars[3].calendars[1].use: must be all or outOfOffice',
+  ]);
+  const uses = config.calendars.map((c) => (c.type === 'google' || c.type === 'url' ? c.use : c.type === 'icloud' ? c.calendars.map((x) => x.use) : null));
+  assert.deepEqual(uses, ['outOfOffice', 'all', 'all', ['all', 'all']]);
+});
+
+test('rule 16: an item with neither id nor name, or with a repeated id, is ignored with a warning; Microsoft items need an id', () => {
+  const { config, issues } = parseConfig({
+    calendars: [
+      {
+        ...ICLOUD,
+        calendars: [
+          'Home', '', 42, null, { use: 'all' }, { id: ' ', name: ' ' }, ['x'], { id: '/1/calendars/a/', name: 'A' }, { id: '/1/calendars/a/', name: 'Again' },
+        ],
+      },
+      { ...MICROSOFT, calendars: [{ name: 'No id' }, { id: 'AAMkSyntheticOne=' }, { id: 'AAMkSyntheticOne=', name: 'Twice' }] },
+    ],
+  });
+  assert.deepEqual(lines(issues), [
+    'warn calendars[0].calendars[1]: must be a calendar name or entry, ignored',
+    'warn calendars[0].calendars[2]: must be a calendar name or entry, ignored',
+    'warn calendars[0].calendars[3]: must be a calendar name or entry, ignored',
+    'warn calendars[0].calendars[4]: must be a calendar name or entry, ignored',
+    'warn calendars[0].calendars[5]: must be a calendar name or entry, ignored',
+    'warn calendars[0].calendars[6]: must be a calendar name or entry, ignored',
+    'warn calendars[0].calendars[8]: repeats an earlier calendar, ignored',
+    'warn calendars[1].calendars[0]: must be a calendar name or entry, ignored',
+    'warn calendars[1].calendars[2]: repeats an earlier calendar, ignored',
+  ]);
+  assert.deepEqual(config.calendars.map((c) => (c.type === 'icloud' || c.type === 'microsoft' ? c.calendars : null)), [
+    [{ id: null, name: 'Home', use: 'all' }, { id: '/1/calendars/a/', name: 'A', use: 'all' }],
+    [{ id: 'AAMkSyntheticOne=', name: '', use: 'all' }],
+  ]);
+});
+
+test('rules 13 to 16: warnings never carry a calendar id, which can hold the iCloud account number', () => {
+  const { issues } = parseConfig({
+    calendars: [{ ...ICLOUD, calendars: [{ id: '/123456789/calendars/a/', name: 'A', use: 'x' }, { id: '/123456789/calendars/a/' }] }],
+  });
+  assert.equal(issues.length, 2);
+  for (const line of lines(issues)) {
+    assert.ok(!line.includes('123456789'), line);
+  }
 });

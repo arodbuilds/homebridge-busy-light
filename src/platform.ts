@@ -2,6 +2,8 @@
  * The Homebridge platform (SPEC section 7): one occupancy sensor accessory per wanted sensor, the optional override
  * switch, and the engine that keeps them up to date.
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import type { API, CharacteristicValue, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig, Service } from 'homebridge';
 import { parseConfig } from './config.js';
 import type { BusyLightConfig } from './config.js';
@@ -14,7 +16,7 @@ import type { Log } from './log.js';
 import { validation } from './messages.js';
 import { SENSOR_NAMES, SENSOR_STATUSES } from './model.js';
 import type { SensorKey, Status } from './model.js';
-import { PLATFORM_NAME, PLUGIN_NAME, packageVersion } from './names.js';
+import { PLATFORM_NAME, PLUGIN_NAME, RESET_MARKER, packageVersion } from './names.js';
 
 export const MANUFACTURER = 'Busy Light';
 export const SENSOR_MODEL = 'Status sensor';
@@ -74,6 +76,7 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
 
   start(): void {
     const storageDir = ensureStorageDir(this.api.user.storagePath());
+    this.resetIfPending(storageDir);
     this.setupAccessories();
     this.engine = new BusyLightEngine({
       config: this.config,
@@ -86,6 +89,23 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
       onStatus: (status) => this.showStatus(status),
     });
     this.engine.start();
+  }
+
+  /**
+   * After Reset on the settings page (SPEC 7 item 6, 10.3 item 6): every cached accessory is unregistered, so the
+   * sensors and the switch come back fresh, and the marker is deleted.
+   */
+  private resetIfPending(storageDir: string): void {
+    const marker = path.join(storageDir, RESET_MARKER);
+    if (!fs.existsSync(marker)) {
+      return;
+    }
+    const cached = [...this.cached.values()];
+    if (cached.length) {
+      this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, cached);
+    }
+    this.cached.clear();
+    fs.rmSync(marker, { force: true });
   }
 
   /** Creates or restores the wanted accessories and unregisters the rest (SPEC 7 item 6). */

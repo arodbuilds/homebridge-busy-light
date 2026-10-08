@@ -97,6 +97,16 @@ export function icloudDiscovery(name: string, found: string[], used: string[]): 
   return `${name}: calendars found: ${list(found)}. In use: ${list(used)}.`;
 }
 
+/** Once per discovery, when the source lists its calendars and others exist on the account. */
+export function calendarsNotInUse(name: string, names: string[]): string {
+  return `${name}: calendars not in use: ${names.join(', ')}. Tick them in the plugin settings to use them.`;
+}
+
+/** Once, until the calendar is found again. `calendar` is its name, never its id. */
+export function listedCalendarGone(name: string, calendar: string): string {
+  return `${name}: the calendar "${calendar}" was not found. It may have been deleted or unshared.`;
+}
+
 export function sourceFailed(name: string, reason: string, minutes: number): string {
   return `${name}: could not be read (${reason}). Trying again in ${count(minutes, 'minute')}.`;
 }

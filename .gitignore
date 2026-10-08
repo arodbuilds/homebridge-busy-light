@@ -127,3 +127,7 @@ dist
 
 # Test build output
 build-test
+
+# Built settings page (tsc -p homebridge-ui) and the banner copied beside it
+homebridge-ui/public/js
+homebridge-ui/public/busy-light-banner.png

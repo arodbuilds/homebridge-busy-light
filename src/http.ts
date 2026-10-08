@@ -58,7 +58,7 @@ export async function send(url: string, init: RequestInit = {}): Promise<Respons
   try {
     return await fetch(url, { ...init, signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) });
   } catch (err) {
-    throw new SourceError('notReachable', describeNetworkError(err, hostOf(url)));
+    throw new SourceError('notReachable', describeNetworkError(err, hostOf(url)), { kind: 'network' });
   }
 }
 
@@ -67,7 +67,7 @@ export async function readLimited(res: Response, limit: number, tooLarge: string
   const declared = Number(res.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > limit) {
     await res.body?.cancel().catch(() => undefined);
-    throw new SourceError('notReachable', tooLarge);
+    throw new SourceError('notReachable', tooLarge, { kind: 'tooLarge' });
   }
   if (!res.body) {
     return '';
@@ -83,7 +83,7 @@ export async function readLimited(res: Response, limit: number, tooLarge: string
     total += value.byteLength;
     if (total > limit) {
       await reader.cancel().catch(() => undefined);
-      throw new SourceError('notReachable', tooLarge);
+      throw new SourceError('notReachable', tooLarge, { kind: 'tooLarge' });
     }
     chunks.push(value);
   }
