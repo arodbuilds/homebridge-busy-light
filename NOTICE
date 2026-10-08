@@ -1,0 +1,18 @@
+homebridge-busy-light (Busy Light for Homebridge)
+Copyright 2026 Alex Rodriguez (arodbuilds) https://alex-rodriguez.com
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+This product uses the following project:
+
+1. ical.js (https://github.com/kewisch/ical.js)
+   Used unmodified, as a runtime dependency installed from npm, to read
+   iCalendar data and expand recurring events. Licensed under the Mozilla
+   Public License, Version 2.0 (MPL-2.0). Its source code is available
+   from the address above.
+
+No code is taken from any other project.
+
+Apple, iCloud, Google, Google Calendar, Microsoft, Microsoft 365, Outlook,
+Teams and LIFX are trademarks of their respective owners. This project is
+not affiliated with or endorsed by Apple, Google, Microsoft or LIFX.

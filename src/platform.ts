@@ -1,150 +1,189 @@
-import type { API, Characteristic, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig, Service } from 'homebridge';
-
-import { ExamplePlatformAccessory } from './platformAccessory.js';
-import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
-
-// This is only required when using Custom Services and Characteristics not support by HomeKit
-import { EveHomeKitTypes } from 'homebridge-lib/EveHomeKitTypes';
-
 /**
- * HomebridgePlatform
- * This class is the main constructor for your plugin, this is where you should
- * parse the user config and discover/register accessories with Homebridge.
+ * The Homebridge platform (SPEC section 7): one occupancy sensor accessory per wanted sensor, the optional override
+ * switch, and the engine that keeps them up to date.
  */
-export class ExampleHomebridgePlatform implements DynamicPlatformPlugin {
-  public readonly Service: typeof Service;
-  public readonly Characteristic: typeof Characteristic;
+import type { API, CharacteristicValue, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig, Service } from 'homebridge';
+import { parseConfig } from './config.js';
+import type { BusyLightConfig } from './config.js';
+import { BusyLightEngine } from './engine.js';
+import type { Clock } from './engine.js';
+import { ensureStorageDir } from './files.js';
+import type { LifxClient } from './lifx.js';
+import { withDebug } from './log.js';
+import type { Log } from './log.js';
+import { validation } from './messages.js';
+import { SENSOR_NAMES, SENSOR_STATUSES } from './model.js';
+import type { SensorKey, Status } from './model.js';
+import { PLATFORM_NAME, PLUGIN_NAME, packageVersion } from './names.js';
 
-  // this is used to track restored cached accessories
-  public readonly accessories: Map<string, PlatformAccessory> = new Map();
-  public readonly discoveredCacheUUIDs: string[] = [];
+export const MANUFACTURER = 'Busy Light';
+export const SENSOR_MODEL = 'Status sensor';
+export const OVERRIDE_MODEL = 'Override switch';
 
-  // This is only required when using Custom Services and Characteristics not support by HomeKit
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  public readonly CustomServices: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  public readonly CustomCharacteristics: any;
+/** UUIDs come from the key, never the display name, so renaming keeps rooms and automations (SPEC 7 item 3). */
+export function sensorUuidSeed(key: SensorKey): string {
+  return `busy-light:sensor:${key}`;
+}
+
+export const OVERRIDE_UUID_SEED = 'busy-light:override';
+
+/** Whether a sensor detects occupancy for a status. Unknown turns every sensor off. */
+export function sensorOn(key: SensorKey, status: Status | null): boolean {
+  return status !== null && status !== 'unknown' && SENSOR_STATUSES[key].includes(status);
+}
+
+/** Test seams: a clock and a LIFX client. */
+export interface PlatformDeps {
+  clock?: Clock;
+  lifx?: LifxClient;
+}
+
+export class BusyLightPlatform implements DynamicPlatformPlugin {
+  readonly config: BusyLightConfig;
+  engine: BusyLightEngine | null = null;
+  private readonly log: Log;
+  private readonly cached = new Map<string, PlatformAccessory>();
+  private readonly sensors = new Map<SensorKey, Service>();
+  private overrideAccessory: PlatformAccessory | null = null;
 
   constructor(
-    public readonly log: Logging,
-    public readonly config: PlatformConfig,
-    public readonly api: API,
+    log: Logging,
+    rawConfig: PlatformConfig,
+    private readonly api: API,
+    private readonly deps: PlatformDeps = {},
   ) {
-    this.Service = api.hap.Service;
-    this.Characteristic = api.hap.Characteristic;
-
-    // This is only required when using Custom Services and Characteristics not support by HomeKit
-    this.CustomServices = new EveHomeKitTypes(this.api).Services;
-    this.CustomCharacteristics = new EveHomeKitTypes(this.api).Characteristics;
-
-    this.log.debug('Finished initializing platform:', this.config.name);
-
-    // When this event is fired it means Homebridge has restored all cached accessories from disk.
-    // Dynamic Platform plugins should only register new accessories after this event was fired,
-    // in order to ensure they weren't added to homebridge already. This event can also be used
-    // to start discovery of new accessories.
+    const { config, issues } = parseConfig(rawConfig);
+    this.config = config;
+    this.log = withDebug(log, config.debug);
+    for (const issue of issues) {
+      this.log[issue.level](validation(issue.path, issue.message));
+    }
     this.api.on('didFinishLaunching', () => {
-      log.debug('Executed didFinishLaunching callback');
-      // run the method to discover / register your devices as accessories
-      this.discoverDevices();
+      try {
+        this.start();
+      } catch (err) {
+        this.log.error(`Could not start: ${(err as Error).message}`);
+      }
     });
+    this.api.on('shutdown', () => this.engine?.stop());
   }
 
-  /**
-   * This function is invoked when homebridge restores cached accessories from disk at startup.
-   * It should be used to set up event handlers for characteristics and update respective values.
-   */
-  configureAccessory(accessory: PlatformAccessory) {
-    this.log.info('Loading accessory from cache:', accessory.displayName);
-
-    // add the restored accessory to the accessories cache, so we can track if it has already been registered
-    this.accessories.set(accessory.UUID, accessory);
+  configureAccessory(accessory: PlatformAccessory): void {
+    this.cached.set(accessory.UUID, accessory);
   }
 
-  /**
-   * This is an example method showing how to register discovered accessories.
-   * Accessories must only be registered once, previously created accessories
-   * must not be registered again to prevent "duplicate UUID" errors.
-   */
-  discoverDevices() {
-    // EXAMPLE ONLY
-    // A real plugin you would discover accessories from the local network, cloud services
-    // or a user-defined array in the platform config.
-    const exampleDevices = [
-      {
-        exampleUniqueId: 'ABCD',
-        exampleDisplayName: 'Bedroom',
-      },
-      {
-        exampleUniqueId: 'EFGH',
-        exampleDisplayName: 'Kitchen',
-      },
-      {
-        // This is an example of a device which uses a Custom Service
-        exampleUniqueId: 'IJKL',
-        exampleDisplayName: 'Backyard',
-        CustomService: 'AirPressureSensor',
-      },
-    ];
+  start(): void {
+    const storageDir = ensureStorageDir(this.api.user.storagePath());
+    this.setupAccessories();
+    this.engine = new BusyLightEngine({
+      config: this.config,
+      storageDir,
+      log: this.log,
+      version: packageVersion(),
+      clock: this.deps.clock,
+      lifx: this.deps.lifx,
+      override: this.overrideAccessory?.context.override === true,
+      onStatus: (status) => this.showStatus(status),
+    });
+    this.engine.start();
+  }
 
-    // loop over the discovered devices and register each one if it has not already been registered
-    for (const device of exampleDevices) {
-      // generate a unique id for the accessory this should be generated from
-      // something globally unique, but constant, for example, the device serial
-      // number or MAC address
-      const uuid = this.api.hap.uuid.generate(device.exampleUniqueId);
+  /** Creates or restores the wanted accessories and unregisters the rest (SPEC 7 item 6). */
+  setupAccessories(): void {
+    const { Service: S, Characteristic: C } = this.api.hap;
+    const keep = new Set<string>();
+    const version = packageVersion();
 
-      // see if an accessory with the same uuid has already been registered and restored from
-      // the cached devices we stored in the `configureAccessory` method above
-      const existingAccessory = this.accessories.get(uuid);
-
-      if (existingAccessory) {
-        // the accessory already exists
-        this.log.info('Restoring existing accessory from cache:', existingAccessory.displayName);
-
-        // if you need to update the accessory.context then you should run `api.updatePlatformAccessories`. e.g.:
-        // existingAccessory.context.device = device;
-        // this.api.updatePlatformAccessories([existingAccessory]);
-
-        // create the accessory handler for the restored accessory
-        // this is imported from `platformAccessory.ts`
-        new ExamplePlatformAccessory(this, existingAccessory);
-
-        // it is possible to remove platform accessories at any time using `api.unregisterPlatformAccessories`, e.g.:
-        // remove platform accessories when no longer present
-        // this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [existingAccessory]);
-        // this.log.info('Removing existing accessory from cache:', existingAccessory.displayName);
-      } else {
-        // the accessory does not yet exist, so we need to create it
-        this.log.info('Adding new accessory:', device.exampleDisplayName);
-
-        // create a new accessory
-        const accessory = new this.api.platformAccessory(device.exampleDisplayName, uuid);
-
-        // store a copy of the device object in the `accessory.context`
-        // the `context` property can be used to store any data about the accessory you may need
-        accessory.context.device = device;
-
-        // create the accessory handler for the newly create accessory
-        // this is imported from `platformAccessory.ts`
-        new ExamplePlatformAccessory(this, accessory);
-
-        // link the accessory to your platform
-        this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
-      }
-
-      // push into discoveredCacheUUIDs
-      this.discoveredCacheUUIDs.push(uuid);
+    for (const key of this.config.sensors) {
+      const uuid = this.api.hap.uuid.generate(sensorUuidSeed(key));
+      const name = `${this.config.name} ${SENSOR_NAMES[key]}`;
+      keep.add(uuid);
+      const accessory = this.accessory(uuid, name);
+      accessory.getService(S.AccessoryInformation)!
+        .setCharacteristic(C.Manufacturer, MANUFACTURER)
+        .setCharacteristic(C.Model, SENSOR_MODEL)
+        .setCharacteristic(C.SerialNumber, key)
+        .setCharacteristic(C.FirmwareRevision, version);
+      const service = accessory.getService(S.OccupancySensor) ?? accessory.addService(S.OccupancySensor, name);
+      this.name(service, name);
+      service.updateCharacteristic(C.OccupancyDetected, C.OccupancyDetected.OCCUPANCY_NOT_DETECTED);
+      this.sensors.set(key, service);
     }
 
-    // you can also deal with accessories from the cache which are no longer present by removing them from Homebridge
-    // for example, if your plugin logs into a cloud account to retrieve a device list, and a user has previously removed a device
-    // from this cloud account, then this device will no longer be present in the device list but will still be in the Homebridge cache
-    for (const [uuid, accessory] of this.accessories) {
-      if (!this.discoveredCacheUUIDs.includes(uuid)) {
-        this.log.info('Removing existing accessory from cache:', accessory.displayName);
-        this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+    if (this.config.overrideSwitch) {
+      const uuid = this.api.hap.uuid.generate(OVERRIDE_UUID_SEED);
+      const name = `${this.config.name} Override`;
+      keep.add(uuid);
+      const accessory = this.accessory(uuid, name);
+      accessory.context.override = accessory.context.override === true;
+      accessory.getService(S.AccessoryInformation)!
+        .setCharacteristic(C.Manufacturer, MANUFACTURER)
+        .setCharacteristic(C.Model, OVERRIDE_MODEL)
+        .setCharacteristic(C.SerialNumber, 'override')
+        .setCharacteristic(C.FirmwareRevision, version);
+      const service = accessory.getService(S.Switch) ?? accessory.addService(S.Switch, name);
+      this.name(service, name);
+      service.updateCharacteristic(C.On, accessory.context.override);
+      service.getCharacteristic(C.On)
+        .onGet(() => accessory.context.override === true)
+        .onSet((value: CharacteristicValue) => this.setOverride(value === true));
+      this.overrideAccessory = accessory;
+    }
+
+    const stale = [...this.cached.values()].filter((a) => !keep.has(a.UUID));
+    if (stale.length) {
+      this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, stale);
+      for (const a of stale) {
+        this.cached.delete(a.UUID);
       }
     }
+  }
+
+  private accessory(uuid: string, name: string): PlatformAccessory {
+    let accessory = this.cached.get(uuid);
+    if (!accessory) {
+      accessory = new this.api.platformAccessory(name, uuid);
+      this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+      this.cached.set(uuid, accessory);
+    } else if (accessory.displayName !== name) {
+      accessory.displayName = name;
+      this.api.updatePlatformAccessories([accessory]);
+    }
+    return accessory;
+  }
+
+  /** The service name, and ConfiguredName where the service supports it (Homebridge 2, SPEC 7 item 7). */
+  // TODO(alex): HAP-NodeJS 2.2 lists ConfiguredName on neither OccupancySensor nor Switch, so this sets Name only.
+  // Many Homebridge 2 plugins add it as an optional characteristic anyway; say if that is wanted.
+  private name(service: Service, name: string): void {
+    const C = this.api.hap.Characteristic;
+    service.setCharacteristic(C.Name, name);
+    const configured = C.ConfiguredName;
+    if (configured && (service.testCharacteristic(configured) || service.optionalCharacteristics.some((c) => c.UUID === configured.UUID))) {
+      service.setCharacteristic(configured, name);
+    }
+  }
+
+  /** Stores the switch and answers HomeKit at once; the status and the bulb follow without holding up the Home app. */
+  private setOverride(on: boolean): void {
+    if (this.overrideAccessory) {
+      this.overrideAccessory.context.override = on;
+      this.api.updatePlatformAccessories([this.overrideAccessory]);
+    }
+    void this.engine?.setOverride(on);
+  }
+
+  /** Every sensor follows the status; unknown turns them all off. */
+  showStatus(status: Status): void {
+    const C = this.api.hap.Characteristic;
+    for (const [key, service] of this.sensors) {
+      service.updateCharacteristic(C.OccupancyDetected,
+        sensorOn(key, status) ? C.OccupancyDetected.OCCUPANCY_DETECTED : C.OccupancyDetected.OCCUPANCY_NOT_DETECTED);
+    }
+  }
+
+  /** The sensors currently in use, by key (for tests). */
+  sensorServices(): Map<SensorKey, Service> {
+    return this.sensors;
   }
 }

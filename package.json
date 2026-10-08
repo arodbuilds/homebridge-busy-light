@@ -1,40 +1,62 @@
 {
-  "name": "homebridge-plugin-name",
-  "displayName": "Plugin Name",
+  "name": "homebridge-busy-light",
+  "displayName": "Busy Light",
   "type": "module",
-  "version": "1.0.0",
-  "private": true,
-  "description": "A short description about what your plugin does.",
-  "author": "Your Name",
+  "version": "0.1.0-beta.1",
+  "description": "Shows your calendar and Teams status on a light: green when you are free, red when you are not. iCloud, Google Calendar, Microsoft 365 and calendar URLs, with LIFX control and HomeKit sensors.",
+  "author": "Alex Rodriguez (https://alex-rodriguez.com)",
   "license": "Apache-2.0",
-  "homepage": "https://github.com/USERNAME/GITHUB_PROJECT_NAME#readme",
+  "homepage": "https://github.com/arodbuilds/homebridge-busy-light#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/USERNAME/GITHUB_PROJECT_NAME.git"
+    "url": "https://github.com/arodbuilds/homebridge-busy-light.git"
   },
   "bugs": {
-    "url": "https://github.com/USERNAME/GITHUB_PROJECT_NAME/issues"
+    "url": "https://github.com/arodbuilds/homebridge-busy-light/issues"
   },
   "keywords": [
     "homebridge-plugin",
-    "supports-hap"
+    "supports-hap",
+    "busy light",
+    "busylight",
+    "status light",
+    "calendar",
+    "icloud",
+    "google calendar",
+    "microsoft 365",
+    "teams",
+    "presence",
+    "lifx",
+    "homekit"
   ],
   "main": "dist/index.js",
+  "bin": {
+    "homebridge-busy-light": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "config.schema.json",
+    "LICENSE",
+    "NOTICE",
+    "README.md",
+    "CHANGELOG.md",
+    "SECURITY.md"
+  ],
   "engines": {
-    "node": "^22.10.0 || ^24.0.0",
-    "homebridge": "^1.8.0 || ^2.0.0"
+    "node": "^20.18.0 || ^22.10.0 || ^24.0.0",
+    "homebridge": "^1.8.0 || ^2.0.0-beta.0"
   },
   "scripts": {
     "build": "rimraf ./dist && tsc",
     "lint": "eslint . --max-warnings=0",
     "prepublishOnly": "npm run lint && npm run build",
+    "test": "npm run lint && npm run build && npm run test:unit",
+    "test:unit": "rimraf ./build-test && tsc -p tsconfig.test.json && node --test build-test/test/*.test.js",
     "watch": "npm run build && npm link && nodemon"
-  },
-  "dependencies": {
-    "homebridge-lib": "^8.1.4"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@homebridge/hap-nodejs": "^2.2.3",
     "@types/node": "^26.2.0",
     "eslint": "^10.9.0",
     "homebridge": "^2.4.0",
@@ -43,5 +65,8 @@
     "ts-node": "^10.9.2",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.67.0"
+  },
+  "dependencies": {
+    "ical.js": "^2.2.1"
   }
 }

@@ -1,38 +1,36 @@
 ---
-name: Support Request
-about: Need help?
+name: Support request
+about: Help setting up Busy Light
 title: ''
 labels: question
 assignees: ''
 
 ---
 
-<!-- You must use the issue template below when submitting a support request -->
+<!-- Remove anything private first: passwords, app-specific passwords, tokens, secret calendar addresses, email addresses and event details. -->
 
-**Describe Your Problem:**
-<!-- A clear and concise description of what problem you are trying to solve. -->
+**What are you trying to do?**
 
-**Logs:**
+**Which calendars and which light?**
+<!-- iCloud / Google Calendar / Microsoft 365 / Calendar URL, and a LIFX bulb or HomeKit sensors -->
+
+**Output of `homebridge-busy-light check`:**
 
 ```
-Show the Homebridge logs here, remove any sensitive information.
+Paste it here.
 ```
 
-**Plugin Config:**
+**Log lines from Homebridge:**
 
-```json
-Show your Homebridge config.json here, remove any sensitive information.
 ```
-
-**Screenshots:**
-<!-- If applicable, add screenshots to help explain your problem. -->
+Paste the Busy Light lines here.
+```
 
 **Environment:**
 
-* **Plugin Version**:
-* **Homebridge Version**: <!-- homebridge -V -->
-* **Node.js Version**: <!-- node -v -->
-* **NPM Version**: <!-- npm -v -->
-* **Operating System**: <!-- Raspbian / Ubuntu / Debian / Windows / macOS / Docker / hb-service -->
+* **Busy Light version**:
+* **Homebridge version**: <!-- homebridge -V -->
+* **Node.js version**: <!-- node -v -->
+* **Operating system**: <!-- Raspberry Pi image / Debian / Docker / macOS / Windows -->
 
-<!-- Click the "Preview" tab before you submit to ensure the formatting is correct. -->
+<!-- Microsoft 365 sign-in refused? The log names the reason and links to docs/microsoft-365-admin-request.md, which you can send to your administrator as is. -->

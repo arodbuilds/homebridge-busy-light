@@ -1,44 +1,47 @@
 ---
-name: Bug Report
-about: Create a report to help us improve
+name: Bug report
+about: Something in Busy Light does not work as described
 title: ''
 labels: bug
 assignees: ''
 
 ---
 
-<!-- You must use the issue template below when submitting a bug -->
+<!-- Please fill in every section. Remove anything private first: passwords, app-specific passwords, tokens, secret calendar addresses, email addresses and event details. -->
 
-**Describe The Bug:**
-<!-- A clear and concise description of what the bug is. -->
+**What happened:**
+<!-- What did the light, the sensors or the log do? -->
 
-**To Reproduce:**
-<!-- Steps to reproduce the behavior. -->
+**What you expected:**
 
-**Expected behavior:**
-<!-- A clear and concise description of what you expected to happen. -->
+**Steps to reproduce:**
 
-**Logs:**
+**Output of `homebridge-busy-light check`:**
 
 ```
-Show the Homebridge logs here, remove any sensitive information.
+Paste it here.
 ```
 
-**Plugin Config:**
+**Log lines from Homebridge:**
+
+```
+Paste the Busy Light lines here. Turn on Debug logging in the plugin settings for more detail.
+```
+
+**Plugin configuration:**
 
 ```json
-Show your Homebridge config.json here, remove any sensitive information.
+Paste the BusyLight block from config.json here, with passwords, addresses and IDs removed.
 ```
 
-**Screenshots:**
-<!-- If applicable, add screenshots to help explain your problem. -->
+**Calendars and light:**
+
+* **Calendar types in use**: <!-- iCloud / Google Calendar / Microsoft 365 / Calendar URL -->
+* **Light**: <!-- LIFX bulb model, or HomeKit sensors with an automation -->
 
 **Environment:**
 
-* **Plugin Version**:
-* **Homebridge Version**: <!-- homebridge -V -->
-* **Node.js Version**: <!-- node -v -->
-* **NPM Version**: <!-- npm -v -->
-* **Operating System**: <!-- Raspbian / Ubuntu / Debian / Windows / macOS / Docker / hb-service -->
-
-<!-- Click the "Preview" tab before you submit to ensure the formatting is correct. -->
+* **Busy Light version**:
+* **Homebridge version**: <!-- homebridge -V -->
+* **Node.js version**: <!-- node -v -->
+* **Operating system**: <!-- Raspberry Pi image / Debian / Docker / macOS / Windows -->

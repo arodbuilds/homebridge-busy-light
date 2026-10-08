@@ -1,18 +1,476 @@
 {
-  "pluginAlias": "ExampleHomebridgePlugin",
+  "pluginAlias": "BusyLight",
   "pluginType": "platform",
   "singular": true,
-  "strictValidation": false,
+  "headerDisplay": "Busy Light shows whether you are free on a light. Add at least one calendar, then choose how the light is controlled. Not affiliated with or endorsed by Apple, Google, Microsoft or LIFX.",
   "schema": {
     "type": "object",
-    "required": ["name"],
-    "additionalProperties": false,
     "properties": {
       "name": {
         "title": "Name",
+        "description": "Starts the name of every sensor, for example \"Busy Light Available\".",
         "type": "string",
-        "default": "Example Dynamic Platform"
+        "default": "Busy Light"
+      },
+      "calendars": {
+        "title": "Calendars",
+        "description": "Add every calendar that should count. Events from all of them are combined.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "type",
+            "name"
+          ],
+          "properties": {
+            "type": {
+              "title": "Type",
+              "type": "string",
+              "oneOf": [
+                {
+                  "title": "iCloud",
+                  "enum": [
+                    "icloud"
+                  ]
+                },
+                {
+                  "title": "Google Calendar",
+                  "enum": [
+                    "google"
+                  ]
+                },
+                {
+                  "title": "Microsoft 365",
+                  "enum": [
+                    "microsoft"
+                  ]
+                },
+                {
+                  "title": "Calendar URL",
+                  "enum": [
+                    "url"
+                  ]
+                }
+              ]
+            },
+            "name": {
+              "title": "Name",
+              "description": "A name for this calendar. It appears in the log.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[a-z0-9-]{1,64}$"
+            },
+            "appleId": {
+              "title": "Apple ID email",
+              "type": "string"
+            },
+            "appPassword": {
+              "title": "App-specific password",
+              "description": "Create one at account.apple.com under Sign-In and Security. This is not your Apple ID password.",
+              "type": "string"
+            },
+            "calendars": {
+              "title": "Calendars to include",
+              "description": "Leave empty to use every calendar. The log lists the calendar names found.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "url": {
+              "title": "Address",
+              "description": "Any calendar link that starts with https:// or webcal://.",
+              "type": "string",
+              "pattern": "^([Hh][Tt][Tt][Pp][Ss]|[Ww][Ee][Bb][Cc][Aa][Ll])://.+"
+            },
+            "email": {
+              "title": "Your Google email",
+              "description": "Optional. Lets Busy Light ignore invitations you declined.",
+              "type": "string"
+            },
+            "tenantId": {
+              "title": "Directory (tenant) ID",
+              "description": "From your Microsoft 365 administrator.",
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
+            },
+            "clientId": {
+              "title": "Application (client) ID",
+              "description": "From your Microsoft 365 administrator.",
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
+            },
+            "useTeamsStatus": {
+              "title": "Use Teams status",
+              "type": "boolean",
+              "default": true
+            },
+            "useCalendar": {
+              "title": "Use Outlook calendar",
+              "type": "boolean",
+              "default": true
+            }
+          }
+        }
+      },
+      "colors": {
+        "title": "Colors",
+        "description": "A color such as #FF0000, or the word off to turn the light off for that status.",
+        "type": "object",
+        "properties": {
+          "outOfOffice": {
+            "title": "Out of office",
+            "type": "string",
+            "default": "#B400FF",
+            "pattern": "^(#[0-9A-Fa-f]{6}|[Oo][Ff][Ff])$"
+          },
+          "doNotDisturb": {
+            "title": "Do not disturb",
+            "type": "string",
+            "default": "#FF0000",
+            "pattern": "^(#[0-9A-Fa-f]{6}|[Oo][Ff][Ff])$"
+          },
+          "inCall": {
+            "title": "In a call",
+            "type": "string",
+            "default": "#FF0000",
+            "pattern": "^(#[0-9A-Fa-f]{6}|[Oo][Ff][Ff])$"
+          },
+          "inMeeting": {
+            "title": "In a meeting",
+            "type": "string",
+            "default": "#FF0000",
+            "pattern": "^(#[0-9A-Fa-f]{6}|[Oo][Ff][Ff])$"
+          },
+          "busy": {
+            "title": "Busy",
+            "type": "string",
+            "default": "#FF6A00",
+            "pattern": "^(#[0-9A-Fa-f]{6}|[Oo][Ff][Ff])$"
+          },
+          "tentative": {
+            "title": "Tentative",
+            "type": "string",
+            "default": "#FFD000",
+            "pattern": "^(#[0-9A-Fa-f]{6}|[Oo][Ff][Ff])$"
+          },
+          "away": {
+            "title": "Away",
+            "type": "string",
+            "default": "#FFD000",
+            "pattern": "^(#[0-9A-Fa-f]{6}|[Oo][Ff][Ff])$"
+          },
+          "available": {
+            "title": "Available",
+            "type": "string",
+            "default": "#00FF00",
+            "pattern": "^(#[0-9A-Fa-f]{6}|[Oo][Ff][Ff])$"
+          },
+          "offline": {
+            "title": "Offline",
+            "type": "string",
+            "default": "off",
+            "pattern": "^(#[0-9A-Fa-f]{6}|[Oo][Ff][Ff])$"
+          }
+        }
+      },
+      "lifx": {
+        "title": "LIFX bulb",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "title": "Set a LIFX bulb directly",
+            "type": "boolean",
+            "default": false
+          },
+          "bulb": {
+            "title": "Bulb name",
+            "description": "Leave empty if you have one LIFX bulb: it is found automatically. With several, enter the bulb's name from the LIFX app. The log lists the bulbs found.",
+            "type": "string"
+          },
+          "host": {
+            "title": "Bulb IP address",
+            "description": "Optional. Only needed when the bulb cannot be found automatically, for example when Homebridge runs in Docker without host networking.",
+            "type": "string"
+          },
+          "brightness": {
+            "title": "Brightness (percent)",
+            "type": "integer",
+            "default": 100,
+            "minimum": 1,
+            "maximum": 100
+          },
+          "refreshSeconds": {
+            "title": "Send the color again every (seconds)",
+            "description": "Recovers a bulb that was switched off at the wall. 0 sends only when the status changes.",
+            "type": "integer",
+            "default": 300,
+            "minimum": 0,
+            "maximum": 86400
+          }
+        }
+      },
+      "sensors": {
+        "title": "Sensors to create",
+        "description": "Each is an occupancy sensor in the Home app that is on while that is your status. Use them in automations to set any other light.",
+        "type": "array",
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "enum": [
+            "available",
+            "busyAny",
+            "outOfOffice",
+            "inMeeting",
+            "inCall",
+            "doNotDisturb",
+            "busy",
+            "tentative",
+            "away",
+            "offline"
+          ]
+        },
+        "default": [
+          "available",
+          "busyAny",
+          "outOfOffice"
+        ]
+      },
+      "overrideSwitch": {
+        "title": "Override switch",
+        "description": "Adds a switch to the Home app that forces Do not disturb while it is on.",
+        "type": "boolean",
+        "default": false
+      },
+      "pollSeconds": {
+        "title": "Check status every (seconds)",
+        "type": "integer",
+        "default": 30,
+        "minimum": 15,
+        "maximum": 240
+      },
+      "calendarSeconds": {
+        "title": "Reload calendars every (seconds)",
+        "type": "integer",
+        "default": 180,
+        "minimum": 60,
+        "maximum": 600
+      },
+      "ignoreAllDayBusy": {
+        "title": "Ignore all-day events marked busy",
+        "description": "All-day out of office events always count.",
+        "type": "boolean",
+        "default": true
+      },
+      "outOfOfficeWords": {
+        "title": "Out of office words",
+        "description": "iCloud, Google and URL calendar events with one of these words in the title count as out of office.",
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "default": [
+          "Out of office",
+          "OOO",
+          "Vacation",
+          "PTO"
+        ]
+      },
+      "debug": {
+        "title": "Debug logging",
+        "type": "boolean",
+        "default": false
       }
     }
-  }
+  },
+  "layout": [
+    "name",
+    {
+      "key": "calendars",
+      "type": "array",
+      "title": "Calendars",
+      "description": "Add every calendar that should count. Events from all of them are combined.",
+      "items": [
+        "calendars[].type",
+        "calendars[].name",
+        {
+          "key": "calendars[].appleId",
+          "condition": {
+            "functionBody": "return model.calendars[arrayIndices].type === 'icloud';"
+          }
+        },
+        {
+          "key": "calendars[].appPassword",
+          "condition": {
+            "functionBody": "return model.calendars[arrayIndices].type === 'icloud';"
+          }
+        },
+        {
+          "key": "calendars[].calendars",
+          "condition": {
+            "functionBody": "return model.calendars[arrayIndices].type === 'icloud';"
+          },
+          "type": "array",
+          "items": [
+            "calendars[].calendars[]"
+          ]
+        },
+        {
+          "key": "calendars[].url",
+          "title": "Secret address in iCal format",
+          "description": "In Google Calendar settings, pick the calendar, then Integrate calendar. Treat it like a password.",
+          "condition": {
+            "functionBody": "return model.calendars[arrayIndices].type === 'google';"
+          }
+        },
+        {
+          "key": "calendars[].email",
+          "condition": {
+            "functionBody": "return model.calendars[arrayIndices].type === 'google';"
+          }
+        },
+        {
+          "key": "calendars[].url",
+          "title": "Address",
+          "description": "Any calendar link that starts with https:// or webcal://.",
+          "condition": {
+            "functionBody": "return model.calendars[arrayIndices].type === 'url';"
+          }
+        },
+        {
+          "key": "calendars[].tenantId",
+          "condition": {
+            "functionBody": "return model.calendars[arrayIndices].type === 'microsoft';"
+          }
+        },
+        {
+          "key": "calendars[].clientId",
+          "condition": {
+            "functionBody": "return model.calendars[arrayIndices].type === 'microsoft';"
+          }
+        },
+        {
+          "key": "calendars[].useTeamsStatus",
+          "condition": {
+            "functionBody": "return model.calendars[arrayIndices].type === 'microsoft';"
+          }
+        },
+        {
+          "key": "calendars[].useCalendar",
+          "condition": {
+            "functionBody": "return model.calendars[arrayIndices].type === 'microsoft';"
+          }
+        }
+      ]
+    },
+    {
+      "type": "fieldset",
+      "title": "Colors",
+      "description": "A color such as #FF0000, or the word off to turn the light off for that status.",
+      "items": [
+        "colors.outOfOffice",
+        "colors.doNotDisturb",
+        "colors.inCall",
+        "colors.inMeeting",
+        "colors.busy",
+        "colors.tentative",
+        "colors.away",
+        "colors.available",
+        "colors.offline"
+      ]
+    },
+    {
+      "type": "fieldset",
+      "title": "LIFX bulb",
+      "items": [
+        "lifx.enabled",
+        {
+          "key": "lifx.bulb",
+          "condition": {
+            "functionBody": "return model.lifx && model.lifx.enabled === true;"
+          }
+        },
+        {
+          "key": "lifx.host",
+          "condition": {
+            "functionBody": "return model.lifx && model.lifx.enabled === true;"
+          }
+        },
+        {
+          "key": "lifx.brightness",
+          "condition": {
+            "functionBody": "return model.lifx && model.lifx.enabled === true;"
+          }
+        },
+        {
+          "key": "lifx.refreshSeconds",
+          "condition": {
+            "functionBody": "return model.lifx && model.lifx.enabled === true;"
+          }
+        }
+      ]
+    },
+    {
+      "key": "sensors",
+      "type": "checkboxes",
+      "titleMap": [
+        {
+          "value": "available",
+          "name": "Available"
+        },
+        {
+          "value": "busyAny",
+          "name": "Busy"
+        },
+        {
+          "value": "outOfOffice",
+          "name": "Out of Office"
+        },
+        {
+          "value": "inMeeting",
+          "name": "In a Meeting"
+        },
+        {
+          "value": "inCall",
+          "name": "In a Call"
+        },
+        {
+          "value": "doNotDisturb",
+          "name": "Do Not Disturb"
+        },
+        {
+          "value": "busy",
+          "name": "Busy in Teams"
+        },
+        {
+          "value": "tentative",
+          "name": "Tentative"
+        },
+        {
+          "value": "away",
+          "name": "Away"
+        },
+        {
+          "value": "offline",
+          "name": "Offline"
+        }
+      ]
+    },
+    "overrideSwitch",
+    "pollSeconds",
+    "calendarSeconds",
+    "ignoreAllDayBusy",
+    {
+      "key": "outOfOfficeWords",
+      "type": "array",
+      "items": [
+        "outOfOfficeWords[]"
+      ]
+    },
+    "debug"
+  ]
 }

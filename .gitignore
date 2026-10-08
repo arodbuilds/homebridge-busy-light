@@ -124,3 +124,6 @@ dist
 .idea
 
 /test/hbConfig
+
+# Test build output
+build-test

@@ -1,6 +1,6 @@
 # homebridge-busy-light SPEC
 
-Source of truth for behaviour, naming, configuration, log lines and UI copy. Written October 7, 2026, before build 1. Where anything else in the repository disagrees with this file, this file wins.
+Source of truth for behaviour, naming, configuration, log lines and UI copy. Written October 7, 2026, before build 1, and updated October 8, 2026, with what build 1 settled (section 17). Where anything else in the repository disagrees with this file, this file wins.
 
 ## 1. Overview
 
@@ -79,6 +79,9 @@ Public client, no client secret. The tenant ID and client ID come from an app re
 3. Show the `verification_uri` and `user_code` (log lines in section 12; the CLI prints the same).
 4. Poll `POST .../oauth2/v2.0/token` with `grant_type=urn:ietf:params:oauth:grant-type:device_code`, `client_id` and `device_code` at the returned `interval`. `authorization_pending` continues, `slow_down` adds 5 seconds to the interval, anything else ends the attempt.
 5. At startup, a source with no stored token starts this flow by itself. If a code expires unused, one more code is issued, up to three codes in total. After the third, the flow stops until Homebridge restarts or `homebridge-busy-light login` is run. The source is Sign-in needed throughout.
+6. A device code request that fails for network reasons (or with HTTP 5xx and no OAuth error) is tried again in the background after 1, 2, 5 and then 15 minutes, and does not count as a code; the CLI reports it and exits 1. A token poll that fails for network reasons is tried again at the next interval.
+7. While a code is waiting, the flow also watches the token file; a sign-in completed by the CLI ends it, whether the flow or another caller notices it first.
+8. If the token file cannot be written (a full or read-only disk), the sign-in is kept in memory for as long as Homebridge runs, with a debug line.
 
 ### 4.3.1 When Microsoft sign-in is refused
 
@@ -93,19 +96,19 @@ The Microsoft 365 source is fully built in build 1: with a tenant ID and client 
 | `AADSTS50020`, `AADSTS50059` | Wrong kind of account or tenant | `that account does not belong to this organization` |
 | anything else | | `Microsoft answered {AADSTS code or error}` |
 
-1. Each of these ends the attempt at once (no further codes are issued) and marks the source Sign-in needed with that reason in the state file.
+1. Each of these ends the attempt at once (no further codes are issued) and marks the source Sign-in needed with that reason in the state file. "Anything else" covers every OAuth error from either request other than `authorization_pending`, `slow_down` and `expired_token` (for example `authorization_declined`).
 2. The "Microsoft refused" log line of section 12 is written once. It carries the reason and the address of the instructions to give an administrator: `https://github.com/arodbuilds/homebridge-busy-light/blob/latest/docs/microsoft-365-admin-request.md`. The CLI `login` command prints the same two lines.
-3. A Graph 403 on `/me/presence` or `/me/calendarView` after a successful sign-in is treated the same way with the reason `your organization has not approved the permissions`, since it means the token lacks the scope.
+3. A Graph 403 on `/me/presence` or `/me/calendarView` after a successful sign-in is treated the same way with the reason `your organization has not approved the permissions`, since it means the token lacks the scope. The token is kept, the source is retried on the normal schedule, and the refusal clears once each read that answered 403 answers normally (a working calendar does not clear a refused presence).
 4. `docs/microsoft-365-admin-request.md` is written to be copied and pasted to an administrator as is: what the tool does, the exact registration steps, the two IDs to send back, and notes for a security review. The README links to it from the Microsoft 365 setup section and from Troubleshooting. From build 2 the settings page links to it as "What do I ask for?".
 
 ### 4.4 Microsoft 365: refresh and storage
 
 1. The access token is cached until 120 seconds before expiry. Concurrent callers share one refresh.
 2. Refresh: `grant_type=refresh_token` with `client_id`, `refresh_token` and the same `scope`. A rotated refresh token replaces the stored one.
-3. `invalid_grant` or `interaction_required` deletes the stored token, marks the source Sign-in needed, and starts the flow of 4.3 item 5 once.
-4. A Graph 401 clears the cached access token and the call is retried once after a refresh.
-5. Tokens are stored in `busy-light/microsoft-{id}.json` (mode 600, written to a temporary file and renamed). The file holds the refresh token, access token and expiry and nothing else.
-6. The plugin watches the token file's modification time before each refresh, so a sign-in completed by the CLI is picked up without a restart.
+3. `invalid_grant` or `interaction_required` deletes the stored token, clears any earlier refusal, marks the source Sign-in needed, and starts the flow of 4.3 item 5 once (never from the CLI `check`). HTTP 5xx, an answer that is not JSON, or `temporarily_unavailable` is Not reachable and keeps the token. Any other OAuth error is a refusal with the reason of 4.3.1 and keeps the token.
+4. A Graph 401 clears the cached access token and the call is retried once after a refresh. A second 401 is Sign-in needed (`graph.microsoft.com did not accept the sign-in`).
+5. Tokens are stored in `busy-light/microsoft-{id}.json` (mode 600, written to a temporary file and renamed). The file holds the refresh token, access token and expiry and nothing else: `{ "refreshToken", "accessToken", "expiresAt" }`, with `expiresAt` an ISO time.
+6. The plugin watches the token file's modification time before each refresh, and on every token use, so a sign-in completed by the CLI is picked up within one tick without a restart. Picking up a token this way writes the "Microsoft done" line.
 
 ## 5. Sources
 
@@ -118,7 +121,7 @@ All HTTP uses the built-in `fetch` with a 20 second timeout.
 1. `PROPFIND https://caldav.icloud.com/` (Depth 0) for `current-user-principal`.
 2. `PROPFIND` the principal (Depth 0) for `calendar-home-set`. The home is on a `pNN-caldav.icloud.com` host; resolve relative hrefs against the URL just requested.
 3. `PROPFIND` the home (Depth 1) for `displayname`, `resourcetype` and `supported-calendar-component-set`. Keep collections whose resource type contains `calendar` and that support `VEVENT` (this drops Reminders lists).
-4. If the source lists calendar names, keep those (case-insensitive match); otherwise keep all. Log the names found and the names in use once per discovery.
+4. If the source lists calendar names, keep those (case-insensitive match); otherwise keep all. Log the names found and the names in use once per discovery. A calendar without a display name is called `Unnamed calendar`, never by its path (the path holds the account number).
 5. For each kept calendar, `REPORT` (Depth 1) a `calendar-query` with a `time-range` on `VEVENT` for the window, asking for `calendar-data`.
 6. Each `calendar-data` value is parsed as in 5.4.
 7. Discovery (steps 1 to 4) is cached and repeated after any failure and every 24 hours.
@@ -128,8 +131,8 @@ XML is read with small helpers that ignore namespace prefixes and decode entitie
 ### 5.2 Google Calendar and calendar URLs
 
 1. The address must be `https://` or `webcal://` (rewritten to `https://`). `http://` is a validation error. Redirects are followed only to `https://`.
-2. `GET` the address, sending `If-None-Match` when the last response carried an `ETag`. A 304 keeps the last parsed events and counts as a successful check.
-3. A body over 10 MB is refused.
+2. `GET` the address, sending `If-None-Match` when the last response carried an `ETag`. A 304 keeps the last parsed events and counts as a successful check. `If-None-Match` is sent only while those events were parsed less than 6 hours ago, so recurring events keep up with the moving window without keeping the body in memory. At most 5 redirects are followed.
+3. A body over 10 MB is refused, whether or not `Content-Length` says so. A body without `BEGIN:VCALENDAR` is refused as not a calendar.
 4. The body is parsed as in 5.4.
 5. A Google source differs from a URL source in two ways only: its optional `email` is used for the declined-invitation rule (6.4), and the settings page shows different help.
 
@@ -138,8 +141,9 @@ XML is read with small helpers that ignore namespace prefixes and decode entitie
 1. Presence, when the source uses Teams status: `GET https://graph.microsoft.com/v1.0/me/presence`. Read `availability`, `activity` and `outOfOfficeSettings.isOutOfOffice` (treat a missing `outOfOfficeSettings` as false).
 2. Calendar, when the source uses the Outlook calendar: `GET /v1.0/me/calendarView?startDateTime={from}&endDateTime={to}&$select=showAs,start,end,isAllDay,isCancelled&$top=200` with the header `Prefer: outlook.timezone="UTC"`. Follow `@odata.nextLink` up to five pages.
 3. Timed events: `start.dateTime` and `end.dateTime` are UTC without a zone suffix. All-day events are dates and are read in the Homebridge host's local time zone.
-4. A 429 or 503 honours `Retry-After`.
-5. No other Graph field is requested.
+4. A 429 or 503 honours `Retry-After`: the source is not tried again before that time, even when the retry schedule of 8.3 would come sooner.
+5. No other Graph field is requested. `/me/presence` takes no `$select`; only the three fields of item 1 are read. An `@odata.nextLink` is followed only when it is on `https://graph.microsoft.com/`.
+6. `showAs` maps to the event model as is, except `workingElsewhere`, which is `free`, and anything unrecognised, which is `busy`.
 
 ### 5.4 Reading iCalendar data
 
@@ -149,8 +153,9 @@ Parsing and recurrence use `ical.js`.
 2. Group `VEVENT` components by UID into a series master and its changed occurrences (`RECURRENCE-ID`). Pass each master its own exceptions explicitly with `new ICAL.Event(master, { exceptions })`. Left alone, ical.js attaches every changed occurrence in the file to every series.
 3. Expand a recurring series through the window, stopping at the first occurrence that starts after the window, with a cap of 20,000 iterations per series.
 4. A changed occurrence whose master is absent is read as a single event.
-5. An event that cannot be read is skipped. A calendar is never dropped because of one bad event.
+5. An event that cannot be read is skipped. A calendar is never dropped because of one bad event. When ical.js rejects the whole file because of one event (it does for an RRULE it cannot read), each `VTIMEZONE` and `VEVENT` is parsed on its own and the unreadable ones are left out.
 6. A date-only start makes the event all-day, in the host's local time zone.
+7. `VTIMEZONE` definitions are registered every time a calendar is read (the latest wins); `UTC`, `GMT` and `Z` are never replaced. A `TZID` with no definition falls back to the host's time zone.
 
 ## 6. Status model
 
@@ -187,20 +192,25 @@ An event is active when it is not cancelled and `start <= now < end`. The first 
 7. An active event is `tentative`: `tentative`.
 8. Presence availability `Away` or `BeRightBack`: `away`.
 9. Presence availability `Available` or `AvailableIdle`: `available`.
-10. There is no presence source: `available`.
+10. There is no fresh presence (no source reads Teams status, or its presence is older than 5 minutes): `available`.
 11. Otherwise (presence `Offline`, `PresenceUnknown` or anything unrecognised): `offline`.
 
 With `ignoreAllDayBusy` on (the default), an all-day event that is `busy` or `tentative` is ignored in rules 5 and 7. An all-day `oof` event always counts.
 
 The result carries a reason for the state file and the settings page: the name of the source that decided it (or "Teams"), and `until`, the time the status is next expected to change according to the cached events (the end of the deciding event, or the start of the next counting event when available).
 
+1. A counting event is one that can decide a status: not cancelled, not `free`, and not an all-day `busy` or `tentative` event while `ignoreAllDayBusy` is on.
+2. `until` is the first start or end of a counting event after now at which the same rules, with the same presence and override, give a different status. This covers back-to-back and overlapping meetings (the status holds until the last one ends) and a higher status starting during a meeting.
+3. When presence and an active event both satisfy rule 2 or rule 5, the event names the source, since it carries an end time. With several deciding events, the one that ends last names the source.
+4. The override has no source and no `until`. With nothing on any calendar and no presence, the source is empty and `until` is the start of the next counting event, if any.
+
 ### 6.4 Classifying iCalendar events
 
 iCalendar has no out of office value, so `showAs` is derived, first match wins:
 
 1. `STATUS:CANCELLED` sets `isCancelled`.
-2. An `ATTENDEE` whose address matches one of the owner's addresses (the iCloud Apple ID, the Google source's `email`) with `PARTSTAT=DECLINED`: `free`.
-3. `X-MICROSOFT-CDO-BUSYSTATUS:OOF`, or the title contains one of the out of office words as a whole word, case-insensitive: `oof`. This applies even when the event is marked free.
+2. An `ATTENDEE` whose address matches one of the owner's addresses (the iCloud Apple ID, the Google source's `email`) with `PARTSTAT=DECLINED`: `free`. The addresses of every source are pooled, since all calendars belong to one person.
+3. `X-MICROSOFT-CDO-BUSYSTATUS:OOF`, or the title contains one of the out of office words as a whole word, case-insensitive: `oof`. This applies even when the event is marked free. Letters and digits in any script count as word characters.
 4. `TRANSP:TRANSPARENT`, or `X-MICROSOFT-CDO-BUSYSTATUS:FREE`: `free`.
 5. `STATUS:TENTATIVE`, or `X-MICROSOFT-CDO-BUSYSTATUS:TENTATIVE`: `tentative`.
 6. Otherwise `busy`.
@@ -212,8 +222,9 @@ The title is read for rule 3 only and is discarded with the parsed component.
 1. A source's events are fresh for 15 minutes after its last successful check. After that they are dropped until the next success, so a meeting never sticks because a calendar became unreachable.
 2. Presence is fresh for 5 minutes.
 3. Status is resolved from fresh data only. A source that is failing while others are fresh simply contributes nothing.
-4. When at least one source is configured and none has fresh data and there is no fresh presence, the status is `unknown`: every sensor is off, the bulb is left as it is, and the Unknown log line is written once.
-5. With no sources configured at all, the status is `unknown` and the plugin logs the "no calendars" line once at startup.
+4. When at least one source is configured and none has fresh data and there is no fresh presence, the status is `unknown`: every sensor is off, the bulb is left as it is, and the Unknown log line is written once each time the status becomes unknown.
+5. With no sources configured at all, the status is `unknown` and the plugin logs the "no calendars" line once at startup (and not the Unknown line).
+6. The override switch gives `doNotDisturb` even when no source has fresh data: it is the person's own choice and needs no data.
 
 ## 7. HomeKit model
 
@@ -236,16 +247,16 @@ One accessory per sensor, so each can be placed in a room and used in automation
 2. The first three are the roll-ups and are the default set. `tentative`, `away` and `offline` turn no roll-up on.
 3. UUIDs come from `busy-light:sensor:{key}` and never from the display name, so renaming keeps rooms and automations.
 4. Accessory Information: Manufacturer "Busy Light", Model "Status sensor", Serial Number the key, Firmware Revision the package version.
-5. The override switch, when enabled, is a Switch accessory named `{name} Override`, UUID from `busy-light:override`. Its state is kept in the accessory context and survives restarts. Turning it on or off re-resolves the status at once.
+5. The override switch, when enabled, is a Switch accessory named `{name} Override`, UUID from `busy-light:override`. Its state is kept in the accessory context and survives restarts. Turning it on or off re-resolves the status at once. HomeKit's write is answered as soon as the state is stored; the status and the bulb follow without holding it up. Accessory Information: Manufacturer "Busy Light", Model "Override switch", Serial Number `override`, Firmware Revision the package version.
 6. Accessories no longer wanted by the configuration are unregistered at startup.
-7. On Homebridge 2, set `ConfiguredName` where the service supports it so the Home app shows the same names.
+7. On Homebridge 2, set `ConfiguredName` where the service supports it so the Home app shows the same names. "Supports" means the service's HAP definition lists it; in HAP-NodeJS 2.2 neither OccupancySensor nor Switch does, so today only `Name` is set (and the accessory's display name follows a rename).
 
 ## 8. Polling, timing and backoff
 
 ### 8.1 Loop
 
-1. A tick runs every `pollSeconds` (default 30, minimum 15). A tick never overlaps the previous one.
-2. Each tick: read presence if a source uses it; reload any calendar source whose last check is older than `calendarSeconds` (default 180, minimum 60); resolve; apply.
+1. A tick runs every `pollSeconds` (default 30, minimum 15, maximum 240). A tick never overlaps the previous one.
+2. Each tick: read presence if a source uses it; reload any calendar source whose last check is older than `calendarSeconds` (default 180, minimum 60, maximum 600); resolve; apply. Sources are read in parallel. A failing source is read when its retry time (8.3) comes instead.
 3. After each resolve, a single timer is set for the next start or end of a cached counting event, if that is sooner than the next tick. When it fires, the status is resolved again from the cache with no network call. This makes the light change at the minute a meeting starts or ends.
 4. The first tick runs as soon as Homebridge finishes launching.
 
@@ -254,6 +265,7 @@ One accessory per sensor, so each can be placed in a room and used in automation
 1. On a change: log the status line, update every sensor, write the state file, and send the bulb its color.
 2. With no change, the bulb is sent its color again every `lifx.refreshSeconds` (default 300, 0 turns this off), so a bulb that was switched off at the wall recovers.
 3. `unknown` sends nothing to the bulb.
+4. A bulb chosen later (13.2 item 4) is sent the current color at once, with the 1 second fade.
 
 ### 8.3 Source status and backoff
 
@@ -261,7 +273,9 @@ Each source is in one of four states, shown in the state file and, from build 2,
 
 1. After a failure the source is retried after 1, 2, 5 and then 15 minutes, staying at 15. A success resets the schedule.
 2. `signInNeeded` for iCloud is retried hourly only, so a wrong app-specific password cannot lock the Apple ID.
-3. A failure is logged once at warning level when a source first fails and once at info level when it recovers. Repeats are debug.
+3. A failure is logged once at warning level when a source first fails and once at info level when it recovers. Repeats are debug. "First fails" is the move from `checking` or `connected` to a failure state; a change from one failure to another is debug too. For iCloud 401 the warning is the iCloud 401 line; for a Microsoft source without a token or refused, the Microsoft lines of section 12 are the warning, and they come from the sign-in itself. A Microsoft source whose presence and calendar fail together writes one warning.
+4. A Microsoft source without a token is checked on every tick, since that only reads the token file, so a sign-in shows within one tick.
+5. A Microsoft source's presence and calendar are each scheduled on their own; the source's state is the worse of the two (`signInNeeded`, then `notReachable`, then `checking`, then `connected`).
 
 ## 9. Configuration (config.json)
 
@@ -297,6 +311,38 @@ Each source is in one of four states, shown in the state file and, from build 2,
 6. `lifx.bulb` (a bulb's name as shown in the LIFX app, or its serial number) and `lifx.host` (an IPv4 address or host name) are both optional; section 13.2 says how the bulb is chosen. `brightness` is 1 to 100.
 7. `sensors` holds keys from section 7. Unknown keys are ignored with a warning. An empty list creates no sensors.
 8. Validation never stops Homebridge. An invalid source is skipped with one error line naming the field (for example `calendars[1].url: must start with https:// or webcal://`); an invalid scalar falls back to its default with one warning.
+9. Names are trimmed before the length check and before the id is derived. The derived id follows rule 2 literally (`Work (Contoso)` becomes `work-contoso-`). An explicit id is 1 to 64 of `a-z`, `0-9` and `-`. Two sources with the same id, given or derived, is an error on the later one.
+10. `null` and empty text count as missing. Optional fields inside a source (`email`, `calendars`, `useTeamsStatus`, `useCalendar`) fall back to their defaults with a warning; required ones skip the source. `useTeamsStatus` and `useCalendar` default to on. GUIDs are kept in lower case, colors in upper case (`off` in lower case), and `webcal://` addresses are stored as `https://`.
+11. Rule 4 is applied by skipping the later Microsoft source that also has `useTeamsStatus` on.
+12. `pollSeconds` is at most 240 and `calendarSeconds` at most 600, below the 5 and 15 minutes that presence and events stay fresh (6.5), so data does not go stale between checks. `lifx.refreshSeconds` is at most 86400 (a day).
+
+The validation messages, after `{path}: `:
+
+| Message | Level | When |
+| --- | --- | --- |
+| `is required` | error | A required source field is missing |
+| `must be text` | error or warn | Not a string (error for a required source field, warn otherwise) |
+| `must be 1 to 64 printable characters` | error | `calendars[].name` |
+| `must be unique` | error | `calendars[].name` repeats without regard to case |
+| `{id} is already used by another calendar` | error | `calendars[].id` repeats |
+| `must be 1 to 64 lower case letters, digits and hyphens` | error | An explicit `calendars[].id` |
+| `must be icloud, google, microsoft or url` | error | `calendars[].type` |
+| `must be a calendar entry` | error | A `calendars` item that is not an object |
+| `must start with https:// or webcal://` | error | `calendars[].url` |
+| `must be a GUID such as 00000000-0000-0000-0000-000000000000` | error | `tenantId`, `clientId` |
+| `only one Microsoft 365 calendar can use Teams status` | error | Rule 4 |
+| `Use Teams status and Use Outlook calendar cannot both be off` | error | Rule 4 (on `useCalendar`) |
+| `must be true or false` | warn | A boolean |
+| `must be a list` | warn | `calendars`, `sensors`, `outOfOfficeWords`, `calendars[].calendars` |
+| `must be text, ignored` | warn | An item of a list of words or names |
+| `must be a set of colors` / `must be a set of LIFX settings` | warn | `colors` or `lifx` is not an object |
+| `is not a status, ignored` | warn | An unknown key in `colors` |
+| `must be #RRGGBB or off` | warn | A color value |
+| `must be an IPv4 address or host name` | warn | `lifx.host` |
+| `must be a whole number from 1 to 100` | warn | `lifx.brightness` |
+| `must be a whole number from 0 to 86400` | warn | `lifx.refreshSeconds` |
+| `must be a whole number from 15 to 240` / `from 60 to 600` | warn | `pollSeconds`, `calendarSeconds` |
+| `is not a sensor, ignored` | warn | An unknown key in `sensors` |
 
 ### 9.2 Standard settings form (build 1)
 
@@ -336,6 +382,15 @@ Titles and descriptions, verbatim:
 
 `headerDisplay`: "Busy Light shows whether you are free on a light. Add at least one calendar, then choose how the light is controlled. Not affiliated with or endorsed by Apple, Google, Microsoft or LIFX."
 
+Build 1 form details not in the table above:
+
+1. The colors and LIFX settings are fieldsets titled "Colors" and "LIFX bulb". The LIFX fields after the checkbox show only while it is ticked.
+2. `calendars[].url` is one property shown twice in the layout, with the Google title and description or the URL title and description, by a `condition` on the type (evaluated by the Homebridge UI as `new Function('model', 'arrayIndices', body)`).
+3. The sensors are a checkbox list named with the accessory name endings of section 7 ("Available", "Busy", "Out of Office", and so on).
+4. `calendars[].id` is in the schema but not shown. Patterns flag colors that are not `#RRGGBB` or `off`, IDs that are not GUIDs, and addresses that do not start with `https://` or `webcal://`.
+5. The two lists of text (`calendars[].calendars` and `outOfOfficeWords`) are `array` entries in the layout with an item key (`outOfOfficeWords[]`). Given as a bare key, the Homebridge UI shows neither their items nor an Add button.
+6. Checked October 8, 2026, in Homebridge UI 5.29.0: each type shows only its fields, the address titles switch with the type, the LIFX fields appear when ticked, and saving writes a block the plugin reads. The form also writes `useTeamsStatus` and `useCalendar` into every calendar entry; the plugin ignores them for other types.
+
 ## 10. State file, CLI and UI server
 
 ### 10.1 State file
@@ -361,6 +416,8 @@ Titles and descriptions, verbatim:
 2. A source in `signInNeeded` or `notReachable` carries a short `error`; for a refused Microsoft sign-in it is the reason of 4.3.1, and the source also carries `"help"`, the address of the administrator instructions.
 2a. `signIn` is null, or `{ "id", "verificationUri", "userCode", "expiresAt" }` while a Microsoft code is waiting.
 3. The file never holds tokens, passwords, addresses or anything about an event beyond the count and the `until` time.
+4. `status` is `unknown` until the first resolve, and `reason` is null while the status is unknown. `lastChecked` is the last attempt (either part of a Microsoft source). `events` is null for a Microsoft source that does not read the calendar. A Microsoft source without a token has the `error` `waiting for sign-in`, `not signed in` or `the sign-in code was not used`. `help` appears only with a refused sign-in.
+5. `light.found` is `configured` (from `lifx.host`), `remembered` (from `light.json`), `discovered`, or null when no bulb is chosen. `lastSent` is `#RRGGBB` or `off`. The file is mode 600.
 
 ### 10.2 CLI
 
@@ -376,6 +433,13 @@ Titles and descriptions, verbatim:
 | `help` | Lists the commands. |
 
 The CLI follows the same logging rules as the plugin (section 12).
+
+1. `status`: the status line of section 12 (or the Unknown line), `The override switch is on.` when it is, `Updated {time}.`, one line per source `{name} ({type name}): {state}{ (error)}{, n events}, checked {time}.` (states in words: checking, connected, sign-in needed, not reachable; type names: iCloud, Google Calendar, Microsoft 365, Calendar URL), `  Instructions to send your Microsoft 365 administrator: {help}` after a refused source, the Microsoft code line while a code is waiting, and `Light: not used.`, `Light: no bulb chosen yet.` or `Light: {label at }{host}{, last sent {color} at {time}, answered|no answer}.` No state file exits 1.
+2. `check`: one line per source `{name} ({type name}): {state}{ (error)}{, n events in the window}.`, then for a connected source `  Teams: {availability}, {activity}{, out of office}.` and one `  Now: {start} to {end}, {showAs}.` per active event (or `  Nothing on this calendar right now.`), then the status line. It never starts a Microsoft sign-in (it prints `  Run "homebridge-busy-light login {name}" to sign in.`), does not write the state file, and does not print the plugin's retry lines. It exits 1 unless every source connects, and with no calendars.
+3. `login`: with several Microsoft sources the name (or id) is required. It prints the Microsoft lines of section 12 and exits 0 only when signed in.
+4. `lights`: `Searching for LIFX bulbs...`, then `{label}: serial number {serial}, IP address {ip}` per bulb, or the "no bulb" line and exit 1.
+5. `light`: an argument that is `#RRGGBB` or `off` is the color; the rest is the bulb. An IPv4 address is sent tagged; a name or serial is found by discovery and sent untagged; no bulb uses `lifx.host`, the remembered bulb or discovery as the plugin would, whether or not `lifx.enabled` is on, and never writes `light.json`. It prints `The LIFX bulb at {host} answered.` or the "bulb silent" line (exit 1).
+6. `help` (also `--help`, `-h`) prints the usage; an unknown command prints it and exits 1.
 
 ### 10.3 UI server (build 2)
 
@@ -412,11 +476,11 @@ Lines, verbatim (`{}` are values):
 
 | When | Level | Line |
 | --- | --- | --- |
-| Startup | info | `Busy Light {version}: {n} calendars, light {on at host\|off}, {m} sensors.` |
+| Startup | info | `Busy Light {version}: {n} calendars, light {on at host\|on\|off}, {m} sensors.` (`on` while the bulb is still being found) |
 | No sources | warn | `No calendars are set up yet. Open the plugin settings to add one.` |
 | Status change | info | `Status: {Display name} ({source}, until {h:mm AM/PM}).` The parenthesis is omitted when there is no reason, and `until` when there is no time. |
 | Unknown | warn | `Status unknown: none of your calendars could be read.` |
-| iCloud discovery | info | `{name}: calendars found: {a, b, c}. In use: {a, b}.` |
+| iCloud discovery | info | `{name}: calendars found: {a, b, c}. In use: {a, b}.` (an empty list is `none`) |
 | Source failed | warn | `{name}: could not be read ({short reason}). Trying again in {n} minutes.` |
 | Source recovered | info | `{name}: working again.` |
 | iCloud 401 | warn | `{name}: iCloud did not accept the Apple ID and app-specific password. Check them in the plugin settings.` |
@@ -427,11 +491,18 @@ Lines, verbatim (`{}` are values):
 | Bulbs found | info | `LIFX bulbs found: {label (ip), label (ip)}. Using {label}.` |
 | No bulb | warn | `No LIFX bulb was found on the network. Check that it is on, or enter its IP address in the plugin settings.` |
 | Several bulbs | warn | `More than one LIFX bulb was found: {labels}. Enter the name of the one to use in the plugin settings.` |
+| Bulb not named | warn | `No LIFX bulb named {bulb} was found. Bulbs found: {label (ip), label (ip)}.` |
 | Bulb silent | warn | `The LIFX bulb at {host} did not answer.` (once, then debug until it answers) |
 | Bulb back | info | `The LIFX bulb at {host} is answering again.` |
 | Validation | error or warn | `{path}: {message}` |
 
 Times in log lines use the host's locale and time zone, 12-hour.
+
+1. A count is written with the singular noun when it is 1: `1 calendar`, `1 sensor`, `Trying again in 1 minute.`
+2. In the bulb lines a bulb with no name is shown by its serial number. The bulb lines (found, no bulb, several, not named) are written only when the set of bulbs or the outcome changes.
+3. With the `debug` option on, debug lines are written at info level, so they show without `homebridge -D`. Debug lines report counts and times only, for example `{name}: {n} events in the window.`
+4. The "Status change" line is also written for the first status after startup. The Unknown line is written each time the status becomes unknown, and not when there are no calendars.
+5. Every line is built in `src/messages.ts`.
 
 ## 13. LIFX
 
@@ -443,18 +514,18 @@ LIFX LAN protocol over UDP port 56700. No LIFX account, no cloud.
 2. SetColor, type 102, 49 bytes: one reserved byte at 36, then hue, saturation, brightness and kelvin (uint16 each, from 37) and duration in milliseconds (uint32 at 45). Hue, saturation and brightness are the color's HSB scaled to 0 to 65535; brightness is further scaled by `lifx.brightness`. Kelvin is 3500.
 3. SetPower, type 117, 42 bytes: level (uint16 at 36, 0 or 65535) and duration (uint32 at 38).
 4. A color is sent as SetColor then SetPower on. `off` is SetPower off. Duration is 1000 ms on a status change and 0 on a refresh.
-5. Each packet sets `ack_required` and waits up to 500 ms for an Acknowledgement (type 45) with the same sequence, trying three times. The bulb "answered" when the last packet of the send was acknowledged.
+5. Each packet sets `ack_required` and waits up to 500 ms for an Acknowledgement (type 45) with the same sequence, trying three times. The bulb "answered" when the last packet of the send was acknowledged. Replies are matched by type and sequence on the client's own port, not by the source field, so a bulb that does not echo the source still counts as answering.
 6. One socket is opened per send and closed afterwards.
 7. Once a bulb's serial number is known (13.2), packets to it are sent untagged (`0x1400`) with the serial as the target. Before that, or for a bulb given only by IP, they are sent tagged with a zero target.
 
 ### 13.2 Finding the bulb
 
-1. Discovery: bind a UDP socket with broadcast enabled, send GetService (type 2, tagged, zero target) to `255.255.255.255` and to the broadcast address of every non-internal IPv4 interface, three times 500 ms apart, and collect StateService replies (type 3) for 2 seconds. Each reply's header target is the bulb's serial number (the first 6 bytes, written as 12 hex digits) and its sender address is the bulb's IP. Then ask each bulb found for its name with GetLabel (type 23) and read StateLabel (type 25, 32 bytes, UTF-8, zero padded).
+1. Discovery: bind a UDP socket with broadcast enabled, send GetService (type 2, tagged, zero target) to `255.255.255.255` and to the broadcast address of every non-internal IPv4 interface, three times 500 ms apart, and collect StateService replies (type 3) for 2 seconds. Each reply's header target is the bulb's serial number (the first 6 bytes, written as 12 hex digits) and its sender address is the bulb's IP. Then ask each bulb found for its name with GetLabel (type 23) and read StateLabel (type 25, 32 bytes, UTF-8, zero padded). Only StateService replies for service 1 (UDP) count. A serial in `lifx.bulb` may be written with colons or in upper case.
 2. Choosing, at startup when `lifx.enabled` is on:
    1. `lifx.host` set: use that address, no discovery. This is the fallback for networks where broadcast does not reach the bulbs.
    2. Otherwise discover. With `lifx.bulb` set, use the bulb whose name matches without regard to case, or whose serial matches. With `lifx.bulb` empty and exactly one bulb found, use it. With several found and no `lifx.bulb`, use none and write the "several bulbs" line. With none found, write the "no bulb" line.
-3. The chosen bulb's serial, name and last IP are kept in `busy-light/light.json`, and that IP is tried first at the next start so a restart does not wait on discovery.
-4. Discovery runs again, at most once every 5 minutes, while no bulb is chosen or the chosen bulb has not answered three sends in a row. This is what lets the bulb change IP address without any reserved address in the router.
+3. The chosen bulb's serial, name and last IP are kept in `busy-light/light.json` (`{ "serial", "label", "host" }`, mode 600), and that IP is tried first at the next start so a restart does not wait on discovery: the remembered bulb is used at startup when it fits `lifx.bulb`, and if its first send is not acknowledged, discovery runs at once. The CLI reads `light.json` but never writes it.
+4. Discovery runs again, at most once every 5 minutes, while no bulb is chosen or the chosen bulb has not answered three sends in a row. This is what lets the bulb change IP address without any reserved address in the router. When discovery finds the chosen bulb at a new address, the color is sent there at once. When it finds no bulbs at all, the chosen bulb is kept (it may be switched off at the wall); when it finds others but not the chosen one, the choosing rules of item 2 apply afresh.
 5. The "bulbs found" line is written when the set of bulbs or the chosen bulb changes, not on every discovery.
 
 ## 14. Assets and branding
@@ -479,10 +550,13 @@ All tests use `node:test`, run from `build-test/`, and never open a socket.
 8. Config: every rule of 9.1, including the derived id and the fall-back-with-warning behaviour.
 9. Redaction: a failing URL source's log line and state file error contain the host and never the path or query; no log line in any test contains an event title from the fixtures.
 10. CLI: `check` and `status` against a temporary storage directory with `fetch` replaced.
+11. Settings form: `config.schema.json` is valid JSON, every title and description matches the table of 9.2 and the `headerDisplay` above (read from this file), every field of the section 9 example is present, defaults match the plugin's, and each source type shows only its own fields.
+
+Test helpers (`test/helpers.ts`) provide a fake `fetch` that throws on any address it was not given, a simulated network of LIFX bulbs on a fake socket, a fake clock, and a logger that records every line. Fixtures under `test/fixtures/` are synthetic; every event title in them starts with "Synthetic", and the redaction tests check that no log line contains one.
 
 ## 16. Release plan
 
-1. Build 1 (overnight, October 7 to 8, 2026): everything in sections 3 to 10.2 and 12 to 15, the standard settings form, README, CHANGELOG, SECURITY.md, NOTICE, version `0.1.0-beta.1`, one pull request against `latest`. `reference/` is deleted in the last commit.
+1. Build 1 (overnight, October 7 to 8, 2026): everything in sections 3 to 10.2 and 12 to 15, the standard settings form, README, CHANGELOG, SECURITY.md, NOTICE, version `0.1.0-beta.1`, one pull request against `latest`. `reference/` is deleted in the last commit. Built October 8, 2026; every network path and the bulb were exercised with fixtures only.
 2. Morning test on the Pi: merge, then clone and build under the Homebridge storage directory and link it (as Generac build 1), or publish the pre-release. `homebridge-busy-light check` first, then the Home app sensors, then the bulb.
 3. Build 2: the settings page from the Design prototype, the UI server, `customUi`, sign-in from the page.
 4. Build 3: README with masked screenshots, first npm publish as `v0.1.0-beta.1` pre-release (one-time token, then trusted publishing), reinstall from npm through the Homebridge UI.
@@ -498,8 +572,32 @@ All tests use `node:test`, run from `build-test/`, and never open a socket.
 - 2026-10-07: Icon direction 2C "Lit day" on slate `#36434F`.
 - 2026-10-07: LIFX bulbs are discovered automatically; an IP address is only a fallback. A discovered bulb is addressed untagged by serial number.
 - 2026-10-07: Microsoft 365 is complete in build 1, including plain-language handling of refused sign-ins with a link to the administrator instructions.
+- 2026-10-08: Counts in log lines use the singular when the count is 1 (`1 calendar`, `Trying again in 1 minute.`). Written as first specified, the first "Source failed" line would always read `1 minutes`.
+- 2026-10-08: The startup line says `light on` while the bulb is still being found, since its address is not known yet.
+- 2026-10-08: A new warn line, "Bulb not named", for a `lifx.bulb` that matches none of the bulbs found. The "no bulb" and "several bulbs" lines did not fit that case.
+- 2026-10-08: Rule 10 of 6.3 reads "no fresh presence", so a stale Teams status contributes nothing (6.5 item 3) and calendar-only resolution applies, as in the proof of concept.
+- 2026-10-08: The override switch gives Do not disturb even with no fresh data; it has no source and no `until`.
+- 2026-10-08: `until` is worked out by trying the rules at each later event boundary (6.3 item 2). When presence and an event both satisfy a rule, the event names the source.
+- 2026-10-08: Owner addresses for declined invitations are pooled across all sources (one person).
+- 2026-10-08: When ical.js rejects a whole file for one bad event, each event is parsed on its own (5.4 item 5).
+- 2026-10-08: A 304 reuses parsed events for up to 6 hours, then the calendar is downloaded in full, so the window keeps moving without keeping the body in memory.
+- 2026-10-08: Graph `workingElsewhere` is free and an unrecognised `showAs` is busy.
+- 2026-10-08: Microsoft refresh errors other than `invalid_grant` and `interaction_required` are a refusal (4.3.1 reason) or, for 5xx and `temporarily_unavailable`, Not reachable. Network failures during sign-in are retried and do not use up a code.
+- 2026-10-08: The token file is checked on every token use, and a waiting device code flow ends when a token appears, so a CLI sign-in shows within one tick.
+- 2026-10-08: A source without a Microsoft token is checked every tick (only the token file is read); Retry-After wins over a shorter retry step.
+- 2026-10-08: The remembered bulb is used at startup without discovery; if its first send is not answered, discovery runs at once. A bulb found at a new address is sent the color straight away. With no bulbs found at all, the chosen bulb is kept.
+- 2026-10-08: LIFX replies are matched by type and sequence on the client's own port, not by the source field.
+- 2026-10-08: The CLI reads `light.json` but never writes it, so running it as another user cannot leave a file Homebridge cannot replace. `check` never starts a sign-in and does not print the plugin's retry lines.
+- 2026-10-08: Validation details and messages are listed in 9.1 items 9 to 11 and the message table. The second Microsoft source with Teams status on is skipped.
+- 2026-10-08: The settings form's Colors and LIFX groups are titled "Colors" and "LIFX bulb", and the sensor checkboxes use the accessory name endings of section 7; SPEC 9.2 gave no titles for these. The form was rendered in Homebridge UI 5.29.0 before release (9.2, build 1 item 6).
+- 2026-10-08: The override switch's Accessory Information uses Model "Override switch" and Serial Number `override`. `ConfiguredName` is set only where the HAP definition lists it, which today is neither service.
+- 2026-10-08: The `debug` option writes debug lines at info level.
+- 2026-10-08: `pollSeconds` is capped at 240 and `calendarSeconds` at 600 (9.1 item 12). With longer intervals, presence or events would go stale between checks and the status would flip or turn Unknown. `lifx.refreshSeconds` is capped at a day.
+- 2026-10-08: From a review before the pull request: the device code flow ends cleanly when another caller notices a CLI sign-in first (it used to stop Homebridge), and a token file that cannot be written keeps the sign-in in memory; a Graph 403 refusal clears only when the refused read works again; `invalid_grant` after a refusal still starts a new sign-in; `check` never starts one; one warning per Microsoft source; the override switch answers HomeKit at once; an unnamed iCloud calendar is never named by its path.
+- 2026-10-08: CLI output wording, beyond the log lines it shares with the plugin, is recorded in 10.2. `@homebridge/hap-nodejs` is a development dependency only, for the platform tests.
 - Open: confirm on the Pi that broadcast discovery finds the bulb, and that a bulb given only by IP acknowledges a tagged packet with a zero target.
 - Open: confirm `outOfOfficeSettings` is present on `/me/presence` in the user's tenant.
 - Open: Google can take hours to reflect a change in the secret address feed. Measure it and say so in the README.
 - Open: iCloud calendars shared from another person, and subscribed calendars inside iCloud, have not been checked against discovery.
 - Open: the settings page prototype from Design (section 11).
+- Open: confirm that LIFX bulbs acknowledge with the request's sequence and reply to the sender's port, as the LAN protocol documents, on the user's bulb.
