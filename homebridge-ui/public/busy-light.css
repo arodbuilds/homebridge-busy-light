@@ -1,0 +1,95 @@
+/* What this page adds to the shell (SPEC 11.1 and 11.2 additions): the affiliation line, the state pills and badges,
+   and the pieces of each section. Every colour is a host variable with the host's light value as the fallback; the dark
+   values are re-declared in index.css under the host's dark marker. The status swatches are the one place the page
+   shows the user's own colours (SPEC 11.2 addition 1). */
+
+/* The affiliation line: muted, directly under the intro paragraphs, never in the footer. */
+.bl-affiliation {
+  margin: 0 0 0.5rem;
+  color: var(--bs-secondary-color, currentColor);
+}
+
+/* Badges beyond the shell's type badge (SPEC 11.2 addition 2): the host's subtle success (Connected), secondary
+   (Checking, Not saved yet), warning (Sign-in needed) and danger (Not reachable) variables; a secondary outline for
+   Teams only, Default and Shared with you; the link colour for New. */
+.busy-light-ui .bl-badge {
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.busy-light-ui .bl-badge-connected {
+  color: var(--bs-success-text-emphasis, #0a3622);
+  background-color: var(--bs-success-bg-subtle, #d1e7dd);
+  border-color: var(--bs-success-border-subtle, #a3cfbb);
+}
+
+.busy-light-ui .bl-badge-checking {
+  color: var(--bs-secondary-color, currentColor);
+  background-color: var(--bs-secondary-bg, rgba(128, 128, 128, 0.12));
+  border-color: var(--bs-border-color, rgba(128, 128, 128, 0.35));
+}
+
+.busy-light-ui .bl-badge-warning {
+  color: var(--bs-warning-text-emphasis, #664d03);
+  background-color: var(--bs-warning-bg-subtle, #fff3cd);
+  border-color: #ffecb5;
+}
+
+.busy-light-ui .bl-badge-danger {
+  color: var(--bs-danger-text-emphasis, #58151c);
+  background-color: var(--bs-danger-bg-subtle, #f8d7da);
+  border-color: var(--bs-danger-border-subtle, #f1aeb5);
+}
+
+.busy-light-ui .bl-badge-muted {
+  color: var(--bs-secondary-color, currentColor);
+  background-color: transparent;
+  border-color: var(--bs-secondary, #6c757d);
+}
+
+.busy-light-ui .bl-badge-new {
+  color: var(--bs-link-color, #0d6efd);
+  background-color: transparent;
+  border-color: var(--bs-link-color, #0d6efd);
+}
+
+/* A section's empty line ("No calendars yet."). */
+.bl-empty {
+  color: var(--bs-secondary-color, currentColor);
+  margin: 0 0 0.75rem;
+}
+
+/* A row of buttons under a body or a section: a primary button and its text Cancel. */
+.bl-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 0 0 16px;
+}
+
+/* The inline Reset dialog (SPEC 11.2), in the page flow directly below the Reset link, never a fixed overlay. It carries
+   Bootstrap's `card` class, so its fill, border and text are the host's card surface in both themes; this rule sets
+   none of them (the host's dark theme leaves `--bs-body-bg` white and paints `.card` itself). */
+.busy-light-ui .ns-inline-dialog {
+  margin-top: 0.75rem;
+  max-width: 28rem;
+}
+
+.busy-light-ui .ns-inline-dialog-title {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.35));
+}
+
+.busy-light-ui .ns-inline-dialog-body {
+  padding: 1rem;
+}
+
+.busy-light-ui .ns-inline-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.35));
+}
