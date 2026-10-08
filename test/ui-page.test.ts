@@ -1116,3 +1116,282 @@ describe('settings page: the draft (shell rule M1)', () => {
     assert.equal(dom.storage.getItem('homebridge-busy-light:draft'), null);
   });
 });
+
+// SPEC 15 item 19: the Status from other apps section (11.3 I).
+
+describe('settings page: Status from other apps (SPEC 11.3 I)', () => {
+  const ID = 'q3Lr8vT0cXw2mN5a';
+  const INFO = { hostname: 'homebridge.local', addresses: ['192.168.4.10'], port: 8582, id: ID };
+  const section = (root: FakeElement): FakeElement => root.querySelector('#section-statusInput')!;
+  const addressLines = (root: FakeElement): string[] =>
+    section(root).querySelectorAll('.bl-input-addresses .bl-readonly-line').map((l) => text(l));
+  const codeLine = (root: FakeElement): string => text(section(root).querySelector('.bl-setup-code .bl-readonly-line'));
+  const KEY = /^[A-Za-z0-9_-]{43}$/;
+
+  it('off by default, as the Pi\'s block opens it: the help with its link, the checkbox, the On a Call switch, and no /input/info', async () => {
+    answers.set('/version', { version: '0.1.0-beta.3' });
+    answers.set('/status', state());
+    const { root, page } = mount({ platform: 'BusyLight', calendars: [ICLOUD_SOURCE], lifx: { enabled: true } });
+    page.startPolling();
+    await flush();
+    const node = section(root);
+    assert.equal(text(node.querySelector('h2')), copy.STATUS_INPUT.heading);
+    assert.equal(text(node.querySelector('.section-copy')), `${copy.STATUS_INPUT.help} ${copy.STATUS_INPUT.howAppsConnect}`);
+    const link = node.querySelector('.section-copy a')!;
+    assert.deepEqual([link.getAttribute('href'), link.getAttribute('target'), link.getAttribute('rel')],
+      [copy.STATUS_INPUT.docsUrl, '_blank', 'noopener noreferrer']);
+    assert.equal(field(root, 'statusInput.enabled').checked, false);
+    assert.equal(node.querySelector('.bl-input-body'), null, 'nothing more while it is off');
+    assert.equal(text(node.querySelector('.bl-senders-heading')), copy.STATUS_INPUT.reporting);
+    assert.equal(text(node.querySelector('.bl-senders')), copy.STATUS_INPUT.noneReporting);
+    assert.equal(field(root, 'callSwitch.enabled').checked, false);
+    assert.equal(node.querySelector('[data-path="callSwitch.hours"]'), null);
+    assert.deepEqual(requests.map((r) => r.path), ['/version', '/status'], 'opening the page with the input off calls nothing more');
+    assert.deepEqual(page.issues(), []);
+  });
+
+  it('ticking the box makes a key of 43 base64url characters, asks /input/info, and shows the addresses, the key and the setup code', async () => {
+    answers.set('/input/info', INFO);
+    const { root, page } = mount();
+    tick(field(root, 'statusInput.enabled'), true);
+    await settle();
+    const key = page.config.statusInput.key;
+    assert.match(key, KEY);
+    assert.deepEqual(lastBlock().statusInput, { enabled: true, port: 8582, key, allowPlainKey: true });
+    assert.deepEqual(requests.filter((r) => r.path === '/input/info').map((r) => r.payload), [{}], 'asked once, with nothing');
+    assert.deepEqual(addressLines(root), ['http://homebridge.local:8582', 'http://192.168.4.10:8582']);
+    assert.equal(section(root).querySelector('.bl-reserve-help'), null, 'no reserve help with a host name');
+    const keyInput = section(root).querySelector('.bl-input-key input')!;
+    assert.equal(keyInput.getAttribute('type'), 'password');
+    assert.equal(keyInput.value, key);
+    assert.ok(keyInput.hasAttribute('readonly'));
+    buttonNamed(section(root).querySelector('.bl-input-key')!, copy.SHELL.show).click();
+    assert.equal(keyInput.getAttribute('type'), 'text');
+    assert.equal(codeLine(root), `busylight://homebridge.local:8582/?key=${key}&id=${ID}`);
+    const copiesBefore = dom.document.copies;
+    buttonNamed(section(root), copy.STATUS_INPUT.copyKey).click();
+    await flush();
+    buttonNamed(section(root), copy.STATUS_INPUT.copySetupCode).click();
+    await flush();
+    assert.equal(dom.document.copies, copiesBefore + 2);
+    assert.equal(buttons(section(root)).filter((b) => b === copy.STATUS_INPUT.copied).length, 2);
+    const another = mount();
+    tick(field(another.root, 'statusInput.enabled'), true);
+    assert.notEqual(another.page.config.statusInput.key, key, 'a new key each time');
+    tick(field(root, 'statusInput.enabled'), false);
+    tick(field(root, 'statusInput.enabled'), true);
+    assert.equal(page.config.statusInput.key, key, 'ticking again keeps the key it has');
+  });
+
+  it('without a host name: the IP addresses, the reserve help, and the setup code with the first address; a new port shows at once', async () => {
+    answers.set('/input/info', { hostname: null, addresses: ['192.168.4.10', '10.0.0.7'], port: 8582, id: ID });
+    const key = 'k'.repeat(43);
+    const { root } = mount({ platform: 'BusyLight', statusInput: { enabled: true, key } });
+    await settle();
+    assert.deepEqual(requests.map((r) => r.path), ['/input/info'], 'opening the page with the input on asks for the addresses');
+    assert.deepEqual(addressLines(root), ['http://192.168.4.10:8582', 'http://10.0.0.7:8582']);
+    assert.equal(text(section(root).querySelector('.bl-reserve-help')), copy.STATUS_INPUT.reserveHelp);
+    assert.equal(codeLine(root), `busylight://192.168.4.10:8582/?key=${key}&id=${ID}`);
+    fill(root, 'statusInput.port', '9000');
+    await settle();
+    assert.equal((lastBlock().statusInput as Record<string, unknown>).port, 9000);
+  });
+
+  it('Replace key asks first; Replace makes a new key and Cancel keeps the old one', async () => {
+    answers.set('/input/info', INFO);
+    const key = 'r'.repeat(43);
+    const { root, page } = mount({ platform: 'BusyLight', statusInput: { enabled: true, key } });
+    await settle();
+    buttonNamed(section(root), copy.STATUS_INPUT.replaceKey).click();
+    assert.equal(text(section(root).querySelector('.ns-confirm-question')), copy.STATUS_INPUT.replaceQuestion);
+    buttonNamed(section(root), copy.STATUS_INPUT.cancel).click();
+    assert.equal(page.config.statusInput.key, key);
+    buttonNamed(section(root), copy.STATUS_INPUT.replaceKey).click();
+    const replace = buttonNamed(section(root), copy.STATUS_INPUT.replace);
+    assert.ok(replace.className.includes('btn-danger'));
+    replace.click();
+    await settle();
+    assert.match(page.config.statusInput.key, KEY);
+    assert.notEqual(page.config.statusInput.key, key);
+    assert.equal(codeLine(root), `busylight://homebridge.local:8582/?key=${page.config.statusInput.key}&id=${ID}`, 'the setup code follows');
+  });
+
+  it('Test sends the port and key on the page and shows each result', async () => {
+    answers.set('/input/info', INFO);
+    const key = 't'.repeat(43);
+    const { root } = mount({ platform: 'BusyLight', statusInput: { enabled: true, key, port: 9000 } });
+    await settle();
+    const result = (): string => text(section(root).querySelector('.bl-input-result'));
+    assert.equal(text(section(root).querySelector('.bl-test-help')), copy.STATUS_INPUT.testHelp);
+    for (const [answer, shown] of [
+      [{ ok: true }, copy.STATUS_INPUT.received],
+      [{ error: 'notListening', message: 'Nothing is listening on port 9000.' }, copy.STATUS_INPUT.notListening],
+      [{ error: 'unauthorized', message: 'Missing or wrong key.' }, copy.STATUS_INPUT.unauthorized],
+      [{ error: 'other', message: 'More than 60 requests in a minute from this address.' }, 'More than 60 requests in a minute from this address.'],
+    ] as const) {
+      answers.set('/input/test', answer);
+      buttonNamed(section(root), copy.STATUS_INPUT.test).click();
+      assert.ok(buttons(section(root)).includes(copy.STATUS_INPUT.testing), 'busy while it runs');
+      await settle();
+      assert.equal(result(), shown);
+    }
+    assert.deepEqual(requests.filter((r) => r.path === '/input/test').map((r) => r.payload).at(-1), { port: 9000, key });
+  });
+
+  it('the port, the hours and Allow the plain key; the state file\'s port error', async () => {
+    answers.set('/version', { version: '0.1.0-beta.3' });
+    answers.set('/status', state({ statusInput: { enabled: true, port: 8582, listening: false, error: 'port 8582 is already in use', id: ID } }));
+    answers.set('/input/info', INFO);
+    const { root, page } = mount({ platform: 'BusyLight', calendars: [ICLOUD_SOURCE], statusInput: { enabled: true, key: 'p'.repeat(43) } });
+    page.startPolling();
+    await settle();
+    assert.equal(text(section(root).querySelector('.bl-input-error')), copy.STATUS_INPUT.portError(8582));
+    const plain = field(root, 'statusInput.allowPlainKey');
+    assert.equal(plain.checked, true, 'ticked by default');
+    assert.equal(text(section(root).querySelector('[data-path="statusInput.allowPlainKey"] .ns-help')), copy.STATUS_INPUT.allowPlainKeyHelp);
+    tick(plain, false);
+    await settle();
+    assert.equal((lastBlock().statusInput as Record<string, unknown>).allowPlainKey, false);
+    const advanced = section(root).querySelector('.bl-input-advanced')!;
+    assert.equal(text(advanced.querySelector('summary')), copy.SHELL.advanced);
+    assert.equal(text(advanced.querySelector('.ns-help')), copy.STATUS_INPUT.portHelp(8582));
+    fill(root, 'statusInput.port', '80');
+    assert.equal(feedback(root, 'statusInput.port'), 'Enter a whole number from 1024 to 65535.');
+    assert.deepEqual(root.querySelectorAll('.ns-issue-link').map((b) => text(b)), ['Status from other apps: Enter a whole number from 1024 to 65535.']);
+    fill(root, 'statusInput.port', '8583');
+    tick(field(root, 'callSwitch.enabled'), true);
+    fill(root, 'callSwitch.hours', '13');
+    assert.equal(feedback(root, 'callSwitch.hours'), 'Enter a whole number from 1 to 12.');
+    assert.equal(text(root.querySelector('[data-path="callSwitch.hours"] label')), copy.STATUS_INPUT.callSwitchHours);
+    fill(root, 'callSwitch.hours', '2');
+    await settle();
+    assert.deepEqual(lastBlock().callSwitch, { enabled: true, hours: 2 });
+    assert.equal(text(root.querySelector('[data-path="callSwitch.enabled"] .ns-help')), copy.STATUS_INPUT.callSwitchHelp);
+  });
+
+  it('Apps reporting now: each sender\'s status, app, last heard, Active or Expired, and Signed or Plain key; the Home app has no auth badge', async () => {
+    answers.set('/version', { version: '0.1.0-beta.3' });
+    const now = dom.clock.now;
+    const inputs = [
+      { sender: 'CallWatch on Alex’s iMac', status: 'inCall', app: 'Microsoft Teams', via: 'api', auth: 'signed',
+        lastHeard: new Date(now - 30_000).toISOString(), expiresAt: new Date(now + 150_000).toISOString(), active: true },
+      { sender: 'Test on my laptop', status: 'busy', app: null, via: 'api', auth: 'plain', lastHeard: new Date(now - 5 * 60_000).toISOString(),
+        expiresAt: new Date(now - 60_000).toISOString(), active: false },
+      { sender: 'Home app', status: 'inCall', app: null, via: 'switch', auth: null, lastHeard: new Date(now - 2 * 3_600_000).toISOString(),
+        expiresAt: null, active: true },
+    ];
+    answers.set('/status', state({ inputs }));
+    const { root, page } = mount({ platform: 'BusyLight', calendars: [ICLOUD_SOURCE] });
+    page.startPolling();
+    await flush();
+    const rows = section(root).querySelectorAll('.bl-sender-row').map((r) => [
+      text(r.querySelector('.bl-sender-name')), text(r.querySelector('.bl-sender-status')), text(r.querySelector('.bl-sender-meta')),
+      r.querySelectorAll('.badge').map((b) => `${text(b)} ${b.className.replace(/.*bl-badge-/, '')}`),
+    ]);
+    assert.deepEqual(rows, [
+      ['CallWatch on Alex’s iMac', 'In a call from Microsoft Teams', 'Last heard just now', ['Active connected', 'Signed checking']],
+      ['Test on my laptop', 'Busy', 'Last heard 5 minutes ago', ['Expired checking', 'Plain key warning']],
+      ['Home app', 'In a call', 'Last heard 2 hours ago', ['Active connected']],
+    ]);
+    answers.set('/status', state({ inputs: [] }));
+    const port = field(root, 'callSwitch.enabled');
+    port.focus();
+    await dom.clock.advance(15_000);
+    await flush();
+    assert.equal(text(section(root).querySelector('.bl-senders')), copy.STATUS_INPUT.noneReporting, 'redrawn in place at the next /status');
+    assert.equal(dom.document.activeElement, port as unknown, 'without taking focus from the page');
+  });
+
+  it('the draft never holds the key; Restore puts the saved key back', async () => {
+    answers.set('/input/info', INFO);
+    const key = 's'.repeat(43);
+    const saved = { platform: 'BusyLight', statusInput: { enabled: true, key } };
+    const first = mount(saved);
+    await settle();
+    tick(field(first.root, 'statusInput.allowPlainKey'), false);
+    const draft = JSON.parse(dom.storage.getItem('homebridge-busy-light:draft')!) as { config: Record<string, Record<string, unknown>> };
+    assert.equal(draft.config.statusInput.key, '', 'no key in the draft');
+    assert.ok(!JSON.stringify(draft).includes(key));
+    for (const node of dom.document.body.children) {
+      node.remove();
+    }
+    const second = mount(saved);
+    buttonNamed(second.root, copy.SHELL.restore).click();
+    assert.equal(second.page.config.statusInput.key, key, 'the saved key is put back');
+    assert.equal(second.page.config.statusInput.allowPlainKey, false);
+  });
+
+  it('Right now names the sender and its app, and shows the status with no calendars when the input is on', async () => {
+    const node = await rightNow(state({ status: 'inCall', reason: { source: 'CallWatch on Alex’s iMac', until: null, app: 'Microsoft Teams' } }),
+      { platform: 'BusyLight', statusInput: { enabled: true, key: 'n'.repeat(43) } });
+    assert.equal(text(node.querySelector('.bl-now-name')), 'In a call');
+    assert.equal(text(node.querySelector('.bl-now-line')), copy.RIGHT_NOW.fromApp('CallWatch on Alex’s iMac', 'Microsoft Teams'));
+  });
+});
+
+describe('settings page: a calendar card\'s own check interval (SPEC 11.3 C, 9.1 item 19)', () => {
+  it('every card type has it under Advanced: empty by default with the platform value as placeholder, validated, written as calendarSeconds', async () => {
+    const { root, page } = mount({ platform: 'BusyLight', calendarSeconds: 240, calendars: [
+      ICLOUD_SOURCE,
+      { type: 'google', id: 'g', name: 'G', url: 'https://calendar.example.com/x.ics' },
+      { type: 'url', id: 'u', name: 'U', url: 'https://rota.example.net/a.ics', calendarSeconds: 600 },
+      { type: 'microsoft', id: 'm', name: 'M', tenantId: '11111111-2222-3333-4444-555555555555', clientId: '66666666-7777-8888-9999-000000000000' },
+    ] });
+    for (const id of ['icloud', 'g', 'u', 'm']) {
+      const card = openCard(root, id);
+      const advanced = card.querySelector('.bl-source-advanced')!;
+      assert.equal(text(advanced.querySelector('summary')), copy.SHELL.advanced, id);
+      const input = field(root, `calendars.${id}.calendarSeconds`);
+      assert.equal(text(card.querySelector(`[data-path="calendars.${id}.calendarSeconds"] label`)), copy.CALENDARS.checkEvery);
+      assert.equal(input.getAttribute('placeholder'), 'e.g. 240', 'the platform value');
+      assert.equal(text(card.querySelector(`[data-path="calendars.${id}.calendarSeconds"] .ns-help`)), copy.CALENDARS.checkEveryHelp);
+      assert.equal(input.value, id === 'u' ? '600' : '');
+      assert.equal(advanced.open, id === 'u', 'open when it holds a value');
+    }
+    fill(root, 'calendars.g.calendarSeconds', '30');
+    assert.equal(feedback(root, 'calendars.g.calendarSeconds'), 'Enter a whole number from 60 to 600.');
+    fill(root, 'calendars.g.calendarSeconds', '90');
+    fill(root, 'calendars.u.calendarSeconds', '');
+    await settle();
+    const blocks = lastBlock().calendars as Array<Record<string, unknown>>;
+    assert.deepEqual(blocks.map((c) => c.calendarSeconds), [undefined, 90, undefined, undefined], 'emptied means the platform interval');
+    assert.deepEqual(page.issues(), []);
+  });
+});
+
+describe('settings page: the bulb in use when the page opens (SPEC 11.3 E)', () => {
+  const linesOf = (root: FakeElement): string[] => root.querySelectorAll('#section-lights .bl-lifx-results .bl-lifx-line').map((l) => text(l));
+
+  async function open(light: unknown): Promise<FakeElement> {
+    answers.set('/version', { version: '0.1.0-beta.3' });
+    answers.set('/status', light === undefined ? { status: null } : state({ light }));
+    const { root, page } = mount({ platform: 'BusyLight', calendars: [ICLOUD_SOURCE], lifx: { enabled: true } });
+    assert.deepEqual(linesOf(root), [], 'nothing until /status answers');
+    page.startPolling();
+    await flush();
+    assert.equal(requests.some((r) => r.path === '/lifx/discover'), false, 'no search on open');
+    return root;
+  }
+
+  it('answered: the bulb by name and address', async () => {
+    const root = await open({ enabled: true, label: 'Floor', host: '192.168.4.50', found: 'discovered', answered: true });
+    assert.deepEqual(linesOf(root), [copy.LIGHTS.usingBulb('Floor', '192.168.4.50')]);
+    assert.ok(buttons(root.querySelector('#section-lights')).includes(copy.LIGHTS.searchAgain), 'Search again stays below');
+  });
+
+  it('not answered last time', async () => {
+    const root = await open({ enabled: true, label: 'Floor', host: '192.168.4.50', found: 'remembered', answered: false });
+    assert.deepEqual(linesOf(root), [copy.LIGHTS.usingBulbSilent('Floor', '192.168.4.50')]);
+  });
+
+  it('no bulb in the state file, or no state file', async () => {
+    let root = await open({ enabled: true, label: null, host: null, found: null, answered: null });
+    assert.deepEqual(linesOf(root), [copy.LIGHTS.noBulbYet]);
+    for (const node of dom.document.body.children) {
+      node.remove();
+    }
+    requests.length = 0;
+    root = await open(undefined);
+    assert.deepEqual(linesOf(root), [copy.LIGHTS.noBulbYet]);
+  });
+});
