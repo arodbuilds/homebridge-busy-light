@@ -1,5 +1,8 @@
-# blank_issues_enabled: false
-# contact_links:
-#   - name: Homebridge Discord Community
-#     url: https://discord.gg/kqNCe2D
-#     about: Ask your questions in the #YOUR_CHANNEL_HERE channel
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security problem
+    url: https://github.com/arodbuilds/homebridge-busy-light/security/advisories/new
+    about: Report vulnerabilities privately. Please do not open a public issue.
+  - name: Microsoft 365 administrator request
+    url: https://github.com/arodbuilds/homebridge-busy-light/blob/latest/docs/microsoft-365-admin-request.md
+    about: What to send your administrator when Microsoft refuses the sign-in.

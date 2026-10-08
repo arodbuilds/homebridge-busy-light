@@ -1,22 +1,17 @@
 ---
-name: Feature Request
-about: Suggest an idea for this project
+name: Feature request
+about: Suggest something Busy Light could do
 title: ''
 labels: enhancement
 assignees: ''
 
 ---
 
-**Is your feature request related to a problem? Please describe:**
-<!-- A clear and concise description of what the problem is. Ex. I'm always frustrated when [...] -->
+**What would you like Busy Light to do?**
 
-**Describe the solution you'd like:**
-<!-- A clear and concise description of what you want to happen. -->
+**What problem does it solve for you?**
 
-**Describe alternatives you've considered:**
-<!-- A clear and concise description of any alternative solutions or features you've considered. -->
+**What do you do today instead?**
 
-**Additional context:**
-<!-- Add any other context or screenshots about the feature request here. -->
-
-<!-- Click the "Preview" tab before you submit to ensure the formatting is correct. -->
+**Anything else:**
+<!-- Calendar services, lights or automations involved, or a sketch of how it could look. -->

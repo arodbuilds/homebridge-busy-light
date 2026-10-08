@@ -53,7 +53,7 @@ test('valid JSON for the standard form', () => {
   assert.equal(schema.pluginAlias, 'BusyLight');
   assert.equal(schema.pluginType, 'platform');
   assert.equal(schema.singular, true);
-  assert.ok(!/—|–/.test(raw), 'no dashes');
+  assert.ok(!/[\u2013\u2014]/.test(raw), 'no dashes');
 });
 
 test('headerDisplay is verbatim', () => {
