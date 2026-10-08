@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MSG, header, parseHeader } from '../src/lifx.js';
 import type { UdpSocket } from '../src/lifx.js';
+import type { MdnsSocket } from '../src/addresses.js';
 import type { Log } from '../src/log.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -273,4 +274,89 @@ export function icsOf(events: [string, number, number, string[]?][]): string {
   }
   lines.push('END:VCALENDAR');
   return lines.join('\r\n');
+}
+
+// ---------------------------------------------------------------------------
+// Multicast DNS (SPEC 18.11): a fake socket, so no test sends UDP, and answers built byte by byte
+// ---------------------------------------------------------------------------
+
+/** One A record of an answer: the name and an IPv4 address. */
+export interface ARecord {
+  name: string;
+  address: string;
+}
+
+function encodeName(name: string): Buffer {
+  return Buffer.concat([...name.split('.').flatMap((l) => [Buffer.from([Buffer.byteLength(l)]), Buffer.from(l)]), Buffer.from([0])]);
+}
+
+/**
+ * A multicast DNS answer to the query `id` for `question`, echoing the question as a legacy unicast answer does. With
+ * `compress`, each record's name is a pointer to the question's name at offset 12.
+ */
+export function mdnsAnswer(id: number, question: string, records: ARecord[], opts: { compress?: boolean } = {}): Buffer {
+  const header = Buffer.alloc(12);
+  header.writeUInt16BE(id, 0);
+  header.writeUInt16BE(0x8400, 2); // a response, authoritative
+  header.writeUInt16BE(1, 4);
+  header.writeUInt16BE(records.length, 6);
+  const q = Buffer.concat([encodeName(question), Buffer.from([0, 1, 0, 1])]);
+  const answers = records.map((r) => {
+    const name = opts.compress && r.name === question ? Buffer.from([0xc0, 12]) : encodeName(r.name);
+    const fixed = Buffer.alloc(10);
+    fixed.writeUInt16BE(1, 0); // A
+    fixed.writeUInt16BE(0x8001, 2); // IN, with the cache-flush bit
+    fixed.writeUInt32BE(120, 4);
+    fixed.writeUInt16BE(4, 8);
+    return Buffer.concat([name, fixed, Buffer.from(r.address.split('.').map(Number))]);
+  });
+  return Buffer.concat([header, q, ...answers]);
+}
+
+/** The query id of a multicast DNS query, and the name it asks for. */
+export function mdnsQueryOf(msg: Buffer): { id: number; name: string } {
+  const labels: string[] = [];
+  let at = 12;
+  while (msg[at] !== 0) {
+    labels.push(msg.toString('utf8', at + 1, at + 1 + msg[at]));
+    at += 1 + msg[at];
+  }
+  return { id: msg.readUInt16BE(0), name: labels.join('.') };
+}
+
+/**
+ * A stand-in for the `dgram` socket of the host name check. `answer` turns each query into the packets that come back
+ * (none by default); `error` makes the socket fail instead. Every query sent and every socket closed is recorded.
+ */
+export class FakeMdns {
+  sent: Array<{ msg: Buffer; port: number; address: string }> = [];
+  closed = 0;
+  answer: (query: Buffer) => Buffer[] = () => [];
+  error: Error | null = null;
+
+  readonly factory = (): MdnsSocket => {
+    const listeners: { message: Array<(msg: Buffer) => void>; error: Array<(err: Error) => void> } = { message: [], error: [] };
+    return {
+      on: (event: 'message' | 'error', listener: (arg: never) => void) => {
+        (listeners[event] as Array<(arg: never) => void>).push(listener);
+        return undefined;
+      },
+      send: (msg: Buffer, port: number, address: string, callback?: (err: Error | null) => void) => {
+        this.sent.push({ msg, port, address });
+        setImmediate(() => {
+          if (this.error) {
+            listeners.error.forEach((l) => l(this.error!));
+            return;
+          }
+          callback?.(null);
+          for (const packet of this.answer(msg)) {
+            listeners.message.forEach((l) => l(packet));
+          }
+        });
+      },
+      close: () => {
+        this.closed++;
+      },
+    };
+  };
 }

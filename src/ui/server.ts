@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { HomebridgePluginUiServer } from '@homebridge/plugin-ui-utils';
 import type { MicrosoftSourceConfig } from '../config.js';
-import { inputAddresses } from '../addresses.js';
+import { AddressCache } from '../addresses.js';
 import type { AddressDeps } from '../addresses.js';
 import {
   DEFAULT_INPUT_PORT, DEFAULT_OUT_OF_OFFICE_WORDS, MAX_INPUT_PORT, MIN_INPUT_PORT, isGuid, isHost, isInputKey, isSourceId, normalizeCalendarUrl,
@@ -145,9 +145,12 @@ export class BusyLightUiHandlers {
   private readonly lifx: LifxClient;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly pending = new Map<string, PendingSignIn>();
+  /** The host name check of /input/info, kept for 10 minutes (SPEC 18.11 item 4). */
+  private readonly addressCache: AddressCache;
 
   constructor(private readonly opts: UiServerOptions) {
     this.now = opts.now ?? Date.now;
+    this.addressCache = new AddressCache(opts.addresses, this.now);
     this.version = opts.version ?? packageVersion();
     this.lifx = opts.lifx ?? new LifxClient();
     this.sleep = opts.sleep ?? realSleep;
@@ -178,9 +181,9 @@ export class BusyLightUiHandlers {
   // ---------------------------------------------------------------------------
 
   /**
-   * The host name when the host's `.local` name resolves to one of its own addresses, its non-internal IPv4
-   * addresses, the saved port (or the default), and the instance id, created in `instance.json` when missing. The page
-   * builds the addresses and the setup code from these. No key is read or returned.
+   * The host name when the network confirms the host's `.local` name (SPEC 18.11, kept for 10 minutes), its
+   * non-internal IPv4 addresses, the saved port (or the default), and the instance id, created in `instance.json` when
+   * missing. The page builds the addresses and the setup code from these. No key is read or returned.
    */
   async inputInfo(): Promise<InputInfoResponse> {
     let id: string;
@@ -189,7 +192,7 @@ export class BusyLightUiHandlers {
     } catch {
       return { error: 'other', message: 'The busy-light folder could not be written.' };
     }
-    const found = await inputAddresses(this.opts.addresses);
+    const found = await this.addressCache.get();
     const input = this.savedBlock()?.statusInput as Record<string, unknown> | undefined;
     const saved = input?.port;
     const port = typeof saved === 'number' && Number.isInteger(saved) && saved >= MIN_INPUT_PORT && saved <= MAX_INPUT_PORT ? saved : DEFAULT_INPUT_PORT;

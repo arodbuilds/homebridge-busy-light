@@ -16,7 +16,9 @@ import { BusyLightUiHandlers, PENDING_SIGN_IN_MS, countToday, todayBounds } from
 import type { UiServerOptions } from '../src/ui/server.js';
 import type { AddressDeps } from '../src/addresses.js';
 import { signature } from '../src/status-api.js';
-import { FakeFetch, FakeNetwork, fakeLog, fixture, fixtureTitles, json, networkError, redirect, text, tmpDir } from './helpers.js';
+import {
+  FakeFetch, FakeMdns, FakeNetwork, fakeLog, fixture, fixtureTitles, json, mdnsAnswer, mdnsQueryOf, networkError, redirect, text, tmpDir,
+} from './helpers.js';
 
 // Today is the host's local day; the fixture counts below are for UTC.
 process.env.TZ = 'UTC';
@@ -504,11 +506,14 @@ test('the routes are the endpoints of SPEC 10.3', () => {
 // SPEC 15 item 20: /input/info and /input/test, with os.networkInterfaces, dns.lookup and fetch replaced.
 
 const INPUT_KEY = 'uiServerTestKey-0123456789abcdefghijklmnop';
+const silentMdns = new FakeMdns();
 const NETWORK: AddressDeps = {
   hostname: () => 'homebridge',
   interfaces: () => ({
     eth0: [{ address: '192.168.4.10', family: 'IPv4', internal: false, netmask: '255.255.255.0', mac: '', cidr: null }],
   }),
+  createSocket: silentMdns.factory,
+  mdnsWaitMs: 10,
   lookup: async () => [{ address: '192.168.4.10', family: 4 }],
 };
 
@@ -530,6 +535,23 @@ test('/input/info: the host name when it resolves to the host, the IPv4 addresse
   const slow = await call(inputHandlers({ addresses: { ...NETWORK, lookup: () => new Promise(() => undefined), timeoutMs: 20 } }), '/input/info');
   assert.equal(slow.hostname, null, 'a name that times out');
   assert.ok(!JSON.stringify(responses).includes(INPUT_KEY), 'no key is read into an answer');
+});
+
+test('/input/info on the Pi: multicast DNS confirms the name that /etc/hosts sends to 127.0.0.1, and the check is kept for 10 minutes', async () => {
+  const mdns = new FakeMdns();
+  mdns.answer = (query) => {
+    const { id, name } = mdnsQueryOf(query);
+    return [mdnsAnswer(id, name, [{ name, address: '192.168.4.10' }])];
+  };
+  const handlers = inputHandlers({ addresses: { ...NETWORK, createSocket: mdns.factory, lookup: async () => [{ address: '127.0.0.1', family: 4 }] } });
+  assert.equal((await call(handlers, '/input/info')).hostname, 'homebridge.local');
+  mdns.answer = () => [];
+  clock += 9 * 60_000;
+  assert.equal((await call(handlers, '/input/info')).hostname, 'homebridge.local', 'kept');
+  assert.equal(mdns.sent.length, 1, 'one query in 10 minutes');
+  clock += 60_000;
+  assert.equal((await call(handlers, '/input/info')).hostname, null, 'asked again after 10 minutes');
+  assert.equal(mdns.sent.length, 2);
 });
 
 test('/input/test: a signed In a call for 30 seconds from Busy Light test to 127.0.0.1, and each result', async () => {
