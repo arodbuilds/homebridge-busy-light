@@ -2,12 +2,14 @@ import { afterEach, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import type { AddressDeps } from '../src/addresses.js';
 import { USAGE, defaultStoragePath, main } from '../src/commands.js';
 import { BusyLightEngine } from '../src/engine.js';
 import { LifxClient, MSG, hexToHsb, parseHeader } from '../src/lifx.js';
 import { parseConfig } from '../src/config.js';
 import { ADMIN_HELP_URL, formatTime } from '../src/messages.js';
-import { FakeFetch, FakeNetwork, icsOf, json, text, tmpDir } from './helpers.js';
+import { signature } from '../src/status-api.js';
+import { FakeFetch, FakeNetwork, icsOf, json, networkError, text, tmpDir } from './helpers.js';
 
 const MIN = 60_000;
 const T0 = Date.UTC(2026, 9, 8, 15);
@@ -39,6 +41,9 @@ function writeConfig(block: Record<string, unknown>): void {
   }));
 }
 
+/** The host's network as the `input` command sees it, replaced in tests (SPEC 15 item 20). */
+let addresses: AddressDeps = {};
+
 async function run(...argv: string[]): Promise<{ code: number; out: string[]; err: string[] }> {
   const out: string[] = [];
   const err: string[] = [];
@@ -48,6 +53,7 @@ async function run(...argv: string[]): Promise<{ code: number; out: string[]; er
     now: () => T0,
     sleep: async () => undefined,
     lifx: new LifxClient({ socket: net.factory, timings: { replyMs: 40, collectMs: 100 }, interfaces: () => ({}) }),
+    addresses,
   });
   for (const line of [...out, ...err]) {
     assert.ok(!line.includes('synthetic-secret-path') && !line.includes('synthetic-query'), line);
@@ -285,4 +291,123 @@ test('review: check never starts a sign-in, even when the stored sign-in has exp
     '  Run "homebridge-busy-light login Work" to sign in.',
     'Status unknown: none of your calendars could be read.',
   ]);
+});
+
+// SPEC 15 item 20: input, input --setup-code and input test.
+
+/** A synthetic status input key (43 characters, as the settings page makes them). */
+const KEY = 'cliTestKey-0123456789abcdefghijklmnopqrstuv';
+const ID = 'q3Lr8vT0cXw2mN5a';
+const PI_NETWORK: AddressDeps = {
+  hostname: () => 'homebridge',
+  interfaces: () => ({
+    lo: [{ address: '127.0.0.1', family: 'IPv4', internal: true, netmask: '255.0.0.0', mac: '00:00:00:00:00:00', cidr: '127.0.0.1/8' }],
+    eth0: [{ address: '192.168.4.10', family: 'IPv4', internal: false, netmask: '255.255.255.0', mac: '02:00:00:00:00:01', cidr: '192.168.4.10/24' }],
+  }),
+  lookup: async (name) => (name === 'homebridge.local' ? [{ address: '192.168.4.10', family: 4 }] : []),
+};
+
+function writeInputs(): void {
+  fs.mkdirSync(path.join(storage, 'busy-light'), { recursive: true });
+  fs.writeFileSync(path.join(storage, 'busy-light', 'instance.json'), JSON.stringify({ id: ID }));
+  fs.writeFileSync(path.join(storage, 'busy-light', 'state.json'), JSON.stringify({
+    version: 1, updatedAt: new Date(T0).toISOString(), status: 'inCall', reason: { source: 'Mac', until: null }, override: false, sources: [],
+    signIn: null, light: { enabled: false, label: null, host: null, found: null, lastSent: null, lastSentAt: null, answered: null },
+    statusInput: { enabled: true, port: 8582, listening: true, error: null, id: ID },
+    inputs: [
+      { sender: 'CallWatch on Alex’s iMac', status: 'inCall', app: 'Microsoft Teams', via: 'api', auth: 'signed',
+        lastHeard: new Date(T0).toISOString(), expiresAt: new Date(T0 + 180_000).toISOString(), active: true },
+      { sender: 'Home app', status: 'inCall', app: null, via: 'switch', auth: null, lastHeard: new Date(T0 - 3_600_000).toISOString(),
+        expiresAt: new Date(T0 - 60_000).toISOString(), active: false },
+      { sender: 'Test on my laptop', status: 'busy', app: null, via: 'api', auth: 'plain', lastHeard: new Date(T0 - 60_000).toISOString(),
+        expiresAt: new Date(T0 + 120_000).toISOString(), active: true },
+    ],
+  }));
+}
+
+test('input: on or off, the port, the id, the addresses by host name and IP, and the senders from the state file', async () => {
+  addresses = PI_NETWORK;
+  writeConfig({ statusInput: { enabled: true, key: KEY }, callSwitch: { enabled: true, hours: 1 } });
+  writeInputs();
+  const { code, out, err } = await run('input');
+  assert.equal(code, 0);
+  assert.deepEqual(err, []);
+  assert.deepEqual(out, [
+    'Status input: on, port 8582.',
+    'On a Call switch: on, turns itself off after 1 hour.',
+    `Instance id: ${ID}.`,
+    'Address: http://homebridge.local:8582',
+    'Address: http://192.168.4.10:8582',
+    'Apps reporting now:',
+    `  CallWatch on Alex’s iMac: In a call from Microsoft Teams, signed, last heard ${formatTime(T0)}, active.`,
+    `  Home app: In a call, last heard ${formatTime(T0 - 3_600_000)}, expired.`,
+    `  Test on my laptop: Busy, plain key, last heard ${formatTime(T0 - 60_000)}, active.`,
+  ]);
+  assert.ok(!out.join('\n').includes(KEY), 'no key without --setup-code');
+});
+
+test('input with the status input off and nothing reported yet', async () => {
+  addresses = { ...PI_NETWORK, lookup: async () => [{ address: '192.168.4.99', family: 4 }] };
+  writeConfig({});
+  const { code, out } = await run('input');
+  assert.equal(code, 0);
+  assert.deepEqual(out, [
+    'Status input: off (port 8582 when on).',
+    'On a Call switch: off.',
+    'Instance id: none yet (it is created when the status input first starts).',
+    'Address: http://192.168.4.10:8582',
+    'Apps reporting now:',
+    '  No app has reported in the last 12 hours.',
+  ], 'a name that resolves elsewhere is not the host name');
+});
+
+test('input --setup-code prints the warning line, then the code with the host name, or the first address', async () => {
+  addresses = PI_NETWORK;
+  writeConfig({ statusInput: { enabled: true, key: KEY, port: 9000 } });
+  writeInputs();
+  const first = await run('input', '--setup-code');
+  assert.equal(first.code, 0);
+  let { out } = first;
+  assert.deepEqual(out.slice(-2), [
+    'The setup code contains your key. Treat it like a password.',
+    `busylight://homebridge.local:9000/?key=${KEY}&id=${ID}`,
+  ]);
+  assert.equal(out.filter((l) => l.includes(KEY)).length, 1, 'the key is only in the setup code');
+  addresses = { ...PI_NETWORK, lookup: () => new Promise(() => undefined), timeoutMs: 20 };
+  ({ out } = await run('input', '--setup-code'));
+  assert.equal(out.at(-1), `busylight://192.168.4.10:9000/?key=${KEY}&id=${ID}`, 'a name that times out: the first address');
+  writeConfig({});
+  const off = await run('input', '--setup-code');
+  assert.equal(off.code, 1);
+  assert.deepEqual(off.err, ['There is no setup code yet: turn on the status input in the plugin settings, save, and restart Homebridge.']);
+  assert.equal((await run('input', '--nonsense')).code, 1);
+});
+
+test('input test sends a signed In a call for 30 seconds from Busy Light test to 127.0.0.1, and prints the answer', async () => {
+  writeConfig({ statusInput: { enabled: true, key: KEY } });
+  fake.on('http://127.0.0.1:8582/v1/status', (call) => {
+    assert.equal(call.method, 'POST');
+    assert.deepEqual(JSON.parse(call.body!), { sender: 'Busy Light test', status: 'inCall', ttlSeconds: 30 });
+    assert.equal(call.headers['content-type'], 'application/json');
+    assert.equal(call.headers.authorization, `BusyLight-HMAC-SHA256 ts=${T0}, sig=${signature(KEY, 'POST', '/v1/status', String(T0), call.body!)}`);
+    assert.ok(!JSON.stringify(call).includes(KEY), 'the key never crosses the wire');
+    return json({ accepted: true, expiresAt: new Date(T0 + 30_000).toISOString(), status: 'inCall' });
+  });
+  const ok = await run('input', 'test');
+  assert.equal(ok.code, 0);
+  assert.deepEqual(ok.out, [`Busy Light received the test: {"accepted":true,"expiresAt":"${new Date(T0 + 30_000).toISOString()}","status":"inCall"}`]);
+
+  fake.on('http://127.0.0.1:8582/v1/status', () => json({ error: 'unauthorized', message: 'Missing or wrong key.' }, 401));
+  const wrong = await run('input', 'test');
+  assert.equal(wrong.code, 1);
+  assert.deepEqual(wrong.err, ['The test failed (unauthorized, HTTP 401): Missing or wrong key.']);
+
+  fake.on('http://127.0.0.1:8582/v1/status', () => networkError('ECONNREFUSED'));
+  const down = await run('input', 'test');
+  assert.deepEqual(down.err, ['The test failed (notListening): Nothing is listening on port 8582.']);
+
+  writeConfig({});
+  const off = await run('input', 'test');
+  assert.equal(off.code, 1);
+  assert.deepEqual(off.err, ['The status input is off. Turn it on in the plugin settings, save, and restart Homebridge.']);
 });

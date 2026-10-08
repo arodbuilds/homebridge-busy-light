@@ -117,7 +117,9 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
         now: this.deps.clock?.now,
         createServer: this.deps.createServer,
       });
-      void this.inputServer.start();
+      const server = this.inputServer;
+      this.engine.inputServerStatus = () => ({ ...server.state, id: server.id });
+      void server.start().then(() => this.engine?.writeState());
     }
   }
 

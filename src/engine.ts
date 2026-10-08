@@ -13,6 +13,7 @@ import { noCalendars, senderCleared, senderExpired, senderReports, startup, stat
 import { STATUS_NAMES } from './model.js';
 import type { Status } from './model.js';
 import { SourceRunner } from './sources.js';
+import { readInstanceId } from './status-api.js';
 import { writeState } from './state.js';
 import type { StateFile } from './state.js';
 import { freshData, nextBoundary, resolve } from './status.js';
@@ -55,6 +56,13 @@ export interface EngineOptions {
   onStatus?: (status: Status) => void;
 }
 
+/** The status input server's part of the state file (SPEC 10.1); the platform supplies it while the server runs. */
+export interface InputServerStatus {
+  listening: boolean;
+  error: string | null;
+  id: string | null;
+}
+
 /** What a report through the status API or the switch led to (SPEC 18.4). */
 export type ReportResult = { ok: true; expiresAt: number | null; status: Status } | { ok: false; error: 'tooManySenders' };
 
@@ -80,6 +88,8 @@ export class BusyLightEngine {
   private lastTickAt = 0;
   private lastSendAt: number | null = null;
   private stopped = false;
+  /** The status input server's state, set by the platform; without a server the input is not listening. */
+  inputServerStatus: () => InputServerStatus;
 
   constructor(private readonly options: EngineOptions) {
     this.config = options.config;
@@ -92,6 +102,8 @@ export class BusyLightEngine {
       config, storageDir: options.storageDir, ics, log: this.log, now, sleep: options.sleep, onChange: () => this.writeState(),
     }));
     this.inputs = new SenderStore(inputsFile(options.storageDir), (err) => this.log.debug(`Could not write inputs.json: ${err.message}`));
+    const id = readInstanceId(options.storageDir);
+    this.inputServerStatus = () => ({ listening: false, error: null, id });
     this.light = new LightController({
       config: this.config.lifx,
       client: options.lifx ?? new LifxClient(),
@@ -314,7 +326,11 @@ export class BusyLightEngine {
       updatedAt: new Date(this.clock.now()).toISOString(),
       status,
       reason: status !== 'unknown' && this.reason
-        ? { source: this.reason.source, until: this.reason.until === null ? null : new Date(this.reason.until).toISOString() }
+        ? {
+          source: this.reason.source,
+          until: this.reason.until === null ? null : new Date(this.reason.until).toISOString(),
+          ...(this.reason.app ? { app: this.reason.app } : {}),
+        }
         : null,
       override: this.override,
       sources: this.sources.map((s) => s.stateEntry()),
@@ -322,6 +338,17 @@ export class BusyLightEngine {
         ? { id: waiting.config.id, verificationUri: code.verificationUri, userCode: code.userCode, expiresAt: new Date(code.expiresAt).toISOString() }
         : null,
       light: this.light.state(),
+      statusInput: { enabled: this.config.statusInput.enabled, port: this.config.statusInput.port, ...this.inputServerStatus() },
+      inputs: this.inputs.list(this.clock.now()).map((e) => ({
+        sender: e.sender,
+        status: e.status,
+        app: e.app,
+        via: e.via,
+        auth: e.auth,
+        lastHeard: new Date(e.lastHeard).toISOString(),
+        expiresAt: e.expiresAt === null ? null : new Date(e.expiresAt).toISOString(),
+        active: e.active,
+      })),
     };
   }
 

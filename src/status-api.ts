@@ -569,6 +569,8 @@ export interface InputServerOptions extends Omit<ApiOptions, 'id'> {
 export class StatusInputServer {
   readonly state: InputServerState = { listening: false, error: null };
   api: StatusApi | null = null;
+  /** The instance id, once the server has started. */
+  id: string | null = null;
   private server: ServerLike | null = null;
 
   constructor(private readonly opts: InputServerOptions) {}
@@ -586,6 +588,7 @@ export class StatusInputServer {
       this.fail(config.port, err as NodeJS.ErrnoException);
       return;
     }
+    this.id = id;
     const api = new StatusApi({ ...this.opts, id });
     this.api = api;
     const make = this.opts.createServer

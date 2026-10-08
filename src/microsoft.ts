@@ -98,13 +98,18 @@ export interface StoredToken {
 
 /** The token file, with its modification time remembered so a sign-in by the CLI is noticed (SPEC 4.4 item 6). */
 export class TokenStore {
-  private seenMtime: number | null = null;
+  private seenMtime: string | null = null;
 
   constructor(readonly file: string) {}
 
-  private mtime(): number | null {
+  /**
+   * The file's modification time and inode. File times come from the kernel's coarse clock, so two writes a few
+   * milliseconds apart can share one; every write renames a new file into place, so the inode tells them apart.
+   */
+  private mtime(): string | null {
     try {
-      return fs.statSync(this.file).mtimeMs;
+      const stat = fs.statSync(this.file);
+      return `${stat.mtimeMs}:${stat.ino}`;
     } catch {
       return null;
     }

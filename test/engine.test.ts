@@ -481,3 +481,25 @@ test('two calendars with different intervals reload on their own schedules (SPEC
   assert.equal(fake.callsTo(OTHER).length, 7, 'every 60 seconds: at 0 and each of the 6 minutes');
   assert.equal(fake.callsTo(FEED.split('?')[0]).length, 3, 'every 180 seconds, the platform interval: at 0, 3 and 6 minutes');
 });
+
+test('the state file carries the status input, the senders with how they authenticated, and the deciding app; never the key', async () => {
+  make(inputOn);
+  engine!.start();
+  await settle();
+  await engine!.report(call());
+  await engine!.report(call({ sender: 'Test on my laptop', status: 'away', app: null, auth: 'plain' }));
+  const state = readState(dir)!;
+  assert.deepEqual(state.statusInput, { enabled: true, port: 8582, listening: false, error: null, id: null });
+  assert.deepEqual(state.reason, { source: MAC, until: null, app: 'Microsoft Teams' });
+  assert.deepEqual(state.inputs, [
+    { sender: MAC, status: 'inCall', app: 'Microsoft Teams', via: 'api', auth: 'signed', lastHeard: new Date(T0).toISOString(),
+      expiresAt: new Date(T0 + 60_000).toISOString(), active: true },
+    { sender: 'Test on my laptop', status: 'away', app: null, via: 'api', auth: 'plain', lastHeard: new Date(T0).toISOString(),
+      expiresAt: new Date(T0 + 60_000).toISOString(), active: true },
+  ]);
+  const raw = fs.readFileSync(`${dir}/state.json`, 'utf8');
+  assert.ok(!raw.includes(INPUT_KEY), 'the key is never in the state file');
+  engine!.inputServerStatus = () => ({ listening: true, error: null, id: 'q3Lr8vT0cXw2mN5a' });
+  engine!.writeState();
+  assert.deepEqual(readState(dir)!.statusInput, { enabled: true, port: 8582, listening: true, error: null, id: 'q3Lr8vT0cXw2mN5a' });
+});
