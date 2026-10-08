@@ -39,6 +39,7 @@ export class UrlSource implements CalendarSource {
     const reuse = this.parsed !== null && this.etag !== null && now - this.parsedAt < REUSE_PARSED_MS;
     let url = this.config.url;
     let res: Response | null = null;
+    let redirectStatus = 0;
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
       const headers: Record<string, string> = {};
       if (reuse && this.etag) {
@@ -51,17 +52,18 @@ export class UrlSource implements CalendarSource {
       const location = res.headers.get('location');
       await res.body?.cancel().catch(() => undefined);
       if (!location) {
-        throw new SourceError('notReachable', `${hostOf(url)} answered HTTP ${res.status}`);
+        throw new SourceError('notReachable', `${hostOf(url)} answered HTTP ${res.status}`, { kind: 'http', status: res.status });
       }
       const next = new URL(location, url);
       if (next.protocol !== 'https:') {
-        throw new SourceError('notReachable', `${hostOf(url)} redirected to an address that is not https://`);
+        throw new SourceError('notReachable', `${hostOf(url)} redirected to an address that is not https://`, { kind: 'insecure' });
       }
       url = next.toString();
+      redirectStatus = res.status;
       res = null;
     }
     if (!res) {
-      throw new SourceError('notReachable', `too many redirects from ${this.host}`);
+      throw new SourceError('notReachable', `too many redirects from ${this.host}`, { kind: 'http', status: redirectStatus });
     }
     const host = hostOf(url);
     if (res.status === 304 && reuse && this.parsed) {
@@ -70,16 +72,16 @@ export class UrlSource implements CalendarSource {
     }
     if (!res.ok) {
       await res.body?.cancel().catch(() => undefined);
-      throw new SourceError('notReachable', `${host} answered HTTP ${res.status}`);
+      throw new SourceError('notReachable', `${host} answered HTTP ${res.status}`, { kind: 'http', status: res.status });
     }
     let text: string;
     try {
       text = await readLimited(res, MAX_BODY_BYTES, `the calendar from ${host} is larger than 10 MB`);
     } catch (err) {
-      throw err instanceof SourceError ? err : new SourceError('notReachable', describeNetworkError(err, host));
+      throw err instanceof SourceError ? err : new SourceError('notReachable', describeNetworkError(err, host), { kind: 'network' });
     }
     if (!/BEGIN:VCALENDAR/i.test(text)) {
-      throw new SourceError('notReachable', `the data from ${host} is not a calendar`);
+      throw new SourceError('notReachable', `the data from ${host} is not a calendar`, { kind: 'notCalendar' });
     }
     let events: CalEvent[];
     try {
@@ -89,7 +91,7 @@ export class UrlSource implements CalendarSource {
         ownerAddresses: this.ics.ownerAddresses,
       });
     } catch {
-      throw new SourceError('notReachable', `the data from ${host} is not a calendar`);
+      throw new SourceError('notReachable', `the data from ${host} is not a calendar`, { kind: 'notCalendar' });
     }
     this.etag = res.headers.get('etag');
     this.parsed = events;

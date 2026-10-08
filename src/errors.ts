@@ -19,6 +19,10 @@ export interface SourceErrorOptions {
   unauthorized?: boolean;
   /** The server answered 404 (a listed Microsoft calendar that was deleted or unshared). */
   notFound?: boolean;
+  /** What went wrong, for the settings page's Test and Connect results (SPEC 10.3). */
+  kind?: 'network' | 'http' | 'insecure' | 'notCalendar' | 'tooLarge';
+  /** The HTTP status, with `kind` `http`. */
+  status?: number;
 }
 
 export class SourceError extends Error {

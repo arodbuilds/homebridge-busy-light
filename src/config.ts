@@ -139,6 +139,16 @@ const COLOR = /^#[0-9a-f]{6}$/i;
 const EXPLICIT_ID = /^[a-z0-9-]{1,64}$/;
 const HOST_NAME = /^(?=.{1,253}\.?$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.?$/i;
 
+/** A Microsoft tenant or client ID. */
+export function isGuid(value: string): boolean {
+  return GUID.test(value);
+}
+
+/** An explicit source id: 1 to 64 lower case letters, digits and hyphens (SPEC 9.1 item 9). It names the token file. */
+export function isSourceId(value: string): boolean {
+  return EXPLICIT_ID.test(value);
+}
+
 /** The id derived from a name: lower case, every run of characters outside a-z0-9 replaced by a hyphen. */
 export function deriveId(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-');

@@ -167,9 +167,62 @@ export interface MicrosoftAuthOptions {
   autoSignIn?: boolean;
 }
 
-interface FormAnswer {
+/** An answer from Microsoft's sign-in endpoints: the status and the JSON body, or null when it was not JSON. */
+export interface FormAnswer {
   status: number;
   body: (OAuthError & Record<string, unknown>) | null;
+}
+
+/** POSTs a form to `https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/{endpoint}`. A network failure throws a SourceError. */
+export async function postForm(tenantId: string, endpoint: 'devicecode' | 'token', form: Record<string, string>): Promise<FormAnswer> {
+  const res = await send(`${LOGIN_HOST}/${encodeURIComponent(tenantId)}/oauth2/v2.0/${endpoint}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+    body: new URLSearchParams(form).toString(),
+  });
+  let body: FormAnswer['body'] = null;
+  try {
+    const parsed = (await res.json()) as unknown;
+    body = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as FormAnswer['body'] : null;
+  } catch {
+    // not JSON
+  }
+  return { status: res.status, body };
+}
+
+/** A device code answer (SPEC 4.3 items 1 to 4), or null when it is not one. Intervals and lifetimes in milliseconds. */
+export interface DeviceCode {
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  expiresInMs: number;
+  intervalMs: number;
+}
+
+export function readDeviceCode(answer: FormAnswer): DeviceCode | null {
+  const body = answer.body;
+  if (answer.status !== 200 || !body) {
+    return null;
+  }
+  const deviceCode = typeof body.device_code === 'string' ? body.device_code : '';
+  const userCode = typeof body.user_code === 'string' ? body.user_code : '';
+  const verificationUri = typeof body.verification_uri === 'string' ? body.verification_uri
+    : typeof body.verification_url === 'string' ? body.verification_url : '';
+  if (!deviceCode || !userCode || !verificationUri) {
+    return null;
+  }
+  return {
+    deviceCode, userCode, verificationUri,
+    expiresInMs: (Number(body.expires_in) > 0 ? Number(body.expires_in) : 900) * 1000,
+    intervalMs: (Number(body.interval) > 0 ? Number(body.interval) : 5) * 1000,
+  };
+}
+
+/** The token file's content from a token answer (SPEC 4.4 item 5). Without a new refresh token, `fallbackRefresh` is kept. */
+export function storedToken(body: Record<string, unknown>, now: number, fallbackRefresh = ''): StoredToken {
+  const refreshToken = typeof body.refresh_token === 'string' && body.refresh_token ? body.refresh_token : fallbackRefresh;
+  const expiresIn = Number(body.expires_in) > 0 ? Number(body.expires_in) : 3600;
+  return { refreshToken, accessToken: String(body.access_token), expiresAt: new Date(now + expiresIn * 1000).toISOString() };
 }
 
 function realSleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -217,10 +270,6 @@ export class MicrosoftAuth {
 
   private get name(): string {
     return this.options.source.name;
-  }
-
-  private get base(): string {
-    return `${LOGIN_HOST}/${encodeURIComponent(this.options.source.tenantId)}/oauth2/v2.0`;
   }
 
   private changed(): void {
@@ -315,31 +364,13 @@ export class MicrosoftAuth {
     return this.refreshing;
   }
 
-  private async postForm(endpoint: string, form: Record<string, string>): Promise<FormAnswer> {
-    const res = await send(`${this.base}/${endpoint}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
-      body: new URLSearchParams(form).toString(),
-    });
-    let body: FormAnswer['body'] = null;
-    try {
-      const parsed = (await res.json()) as unknown;
-      body = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as FormAnswer['body'] : null;
-    } catch {
-      // not JSON
-    }
-    return { status: res.status, body };
+  private postForm(endpoint: 'devicecode' | 'token', form: Record<string, string>): Promise<FormAnswer> {
+    return postForm(this.options.source.tenantId, endpoint, form);
   }
 
   /** Keeps the new tokens, and writes them to the token file. A file that cannot be written keeps them in memory. */
   private save(body: Record<string, unknown>): void {
-    const refreshToken = typeof body.refresh_token === 'string' && body.refresh_token ? body.refresh_token : this.token?.refreshToken ?? '';
-    const expiresIn = Number(body.expires_in) > 0 ? Number(body.expires_in) : 3600;
-    this.token = {
-      refreshToken,
-      accessToken: String(body.access_token),
-      expiresAt: new Date(this.now() + expiresIn * 1000).toISOString(),
-    };
+    this.token = storedToken(body, this.now(), this.token?.refreshToken ?? '');
     try {
       this.options.store.write(this.token);
     } catch (err) {
@@ -452,20 +483,16 @@ export class MicrosoftAuth {
         await this.sleep(delay, signal);
         continue;
       }
-      const body = start.body;
-      const deviceCode = typeof body.device_code === 'string' ? body.device_code : '';
-      const userCode = typeof body.user_code === 'string' ? body.user_code : '';
-      const verificationUri = typeof body.verification_uri === 'string' ? body.verification_uri
-        : typeof body.verification_url === 'string' ? body.verification_url : '';
-      if (start.status !== 200 || !deviceCode || !userCode || !verificationUri) {
+      const code = readDeviceCode(start);
+      if (!code) {
         this.code = null;
-        this.refuse(refusalReason(body));
+        this.refuse(refusalReason(start.body ?? {}));
         return this.endFlow('refused');
       }
+      const { deviceCode, userCode, verificationUri } = code;
       codes++;
-      const expiresIn = Number(body.expires_in) > 0 ? Number(body.expires_in) : 900;
-      let interval = (Number(body.interval) > 0 ? Number(body.interval) : 5) * 1000;
-      const expiresAt = this.now() + expiresIn * 1000;
+      let interval = code.intervalMs;
+      const expiresAt = this.now() + code.expiresInMs;
       this.code = { verificationUri, userCode, expiresAt };
       this.options.log.warn(microsoftCode(this.name, verificationUri, userCode));
       this.changed();

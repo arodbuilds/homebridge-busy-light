@@ -164,7 +164,7 @@ export class ICloudSource implements CalendarSource {
     }
     if (!res.ok) {
       await res.body?.cancel().catch(() => undefined);
-      throw new SourceError('notReachable', `${hostOf(url)} answered HTTP ${res.status}`);
+      throw new SourceError('notReachable', `${hostOf(url)} answered HTTP ${res.status}`, { kind: 'http', status: res.status });
     }
     return res.text();
   }

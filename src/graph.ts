@@ -76,6 +76,15 @@ export function parseGraphEvent(e: GraphEvent, source: string): CalEvent | null 
   return { showAs: mapShowAs(e.showAs), start, end, isAllDay, isCancelled: e.isCancelled === true, source };
 }
 
+/** A calendar from `/me/calendars`: nothing but what the settings page shows. */
+export interface GraphCalendar {
+  id: string;
+  name: string;
+  isDefault: boolean;
+  /** Lower case; empty when Graph did not say. */
+  ownerAddress: string;
+}
+
 export interface GraphCalendarOptions {
   /** The listed calendars (SPEC 9.1 item 14). Empty reads the default calendar. */
   calendars?: CalendarChoice[];
@@ -127,7 +136,7 @@ export class GraphClient implements CalendarSource {
       }
       if (!res.ok) {
         await res.body?.cancel().catch(() => undefined);
-        throw new SourceError('notReachable', `${GRAPH_HOST} answered HTTP ${res.status}`);
+        throw new SourceError('notReachable', `${GRAPH_HOST} answered HTTP ${res.status}`, { kind: 'http', status: res.status });
       }
       let body: unknown;
       try {
@@ -141,6 +150,34 @@ export class GraphClient implements CalendarSource {
       this.auth.accepted(part);
       return body as Record<string, unknown>;
     }
+  }
+
+  /**
+   * The user's Outlook calendars (SPEC 10.3 item 4), selecting only the id, name, default flag and owner, following
+   * `@odata.nextLink` on graph.microsoft.com up to five pages.
+   */
+  async listCalendars(): Promise<GraphCalendar[]> {
+    let url: string | null = `${GRAPH}/me/calendars?$select=id,name,isDefaultCalendar,owner`;
+    const out: GraphCalendar[] = [];
+    for (let page = 0; page < MAX_PAGES && url; page++) {
+      const body = await this.get(url, 'calendar');
+      const value = Array.isArray(body.value) ? body.value as Record<string, unknown>[] : [];
+      for (const c of value) {
+        if (!c || typeof c !== 'object' || typeof c.id !== 'string' || !c.id) {
+          continue;
+        }
+        const owner = c.owner as { address?: unknown } | null | undefined;
+        out.push({
+          id: c.id,
+          name: typeof c.name === 'string' && c.name.trim() ? c.name.trim() : 'Unnamed calendar',
+          isDefault: c.isDefaultCalendar === true,
+          ownerAddress: typeof owner?.address === 'string' ? owner.address.toLowerCase() : '',
+        });
+      }
+      const next = body['@odata.nextLink'];
+      url = typeof next === 'string' && next.startsWith(`https://${GRAPH_HOST}/`) ? next : null;
+    }
+    return out;
   }
 
   /** `/me/presence`. A missing `outOfOfficeSettings` means not out of office. */
