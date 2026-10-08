@@ -1,0 +1,220 @@
+# Build 3 SPEC additions
+
+Written October 8, 2026, while build 2 was running, as a separate file so the two could not collide. Build 3 folds this into `SPEC.md` in its first commit (item 1 of the build 3 prompt) and then deletes this file. Section numbers refer to `SPEC.md` as build 2 leaves it.
+
+The public, app-independent description of the status API and the On a Call switch is `docs/status-input.md`. Where this file and that document disagree, fix the document, not this file: this file goes into `SPEC.md`, which wins.
+
+Build 3 has three parts:
+
+- **A. Status input**: any app on the local network can report a status (a new SPEC section 18, plus changes to sections 2, 6, 7, 9, 10, 11, 12, 15, 16, 17).
+- **B. Per-calendar check interval**.
+- **C. Color presets** in place of hex codes on the settings page.
+
+Version: `0.1.0-beta.3`.
+
+---
+
+## A. Status input
+
+### A.1 New SPEC section 18, "Status input"
+
+#### 18.1 Purpose
+
+Calendars say when a meeting is scheduled. Other apps can know more: that a call is live in Teams, Zoom or FaceTime, that the user is presenting, or has stepped away. The status input lets any app tell Busy Light, through either of two channels, without depending on any particular app:
+
+1. **The status API**: HTTP on the local network (18.2 to 18.8).
+2. **The On a Call switch**: a HomeKit switch (18.9), for senders that should make no network requests, such as Apple Shortcuts.
+
+Busy Light treats every report as a presence signal alongside Teams presence (6.3).
+
+#### 18.2 Statuses a sender may report
+
+`outOfOffice`, `doNotDisturb`, `inCall`, `inMeeting`, `busy`, `away`, `available`, `offline`, and `clear` (withdraws that sender's report). `tentative` and `unknown` are not accepted.
+
+#### 18.3 Server
+
+1. Off unless `statusInput.enabled` is on (9.1 item 17). When on, the platform starts a Node `http` server at `didFinishLaunching` on `statusInput.port` (default 8582), on all IPv4 and IPv6 addresses, and closes it on Homebridge `shutdown`.
+2. A port that cannot be opened is logged once ("Status input could not start") and leaves the input off until the next restart; the state file records the error (10.1).
+3. Node built-ins only. No new dependency.
+
+#### 18.4 Requests
+
+| Method and path | Key | Body | Response |
+| --- | --- | --- | --- |
+| `GET /v1/ping` | no | none | `200 { "service": "busy-light", "apiVersion": 1, "version" }` |
+| `POST /v1/status` | yes | `{ "sender", "status", "app"?, "ttlSeconds"? }` | `200 { "accepted": true, "expiresAt", "status" }` (`status` is the resulting overall status) |
+| `GET /v1/status` | yes | none | `200 { "status", "reason", "senders": [{ "sender", "status", "app", "expiresAt" }] }` |
+
+1. The key is `Authorization: Bearer <statusInput.key>`, compared in constant time.
+2. Bodies are `application/json` (parameters allowed after a semicolon), at most 2048 bytes, an object with only the four fields above.
+3. `sender`: 1 to 64 printable characters (the display name rule of 9.1 item 2). `app`: the same rule, optional. `ttlSeconds`: an integer from 30 to 43200, default 180.
+4. Errors are `{ "error", "message" }` with the codes and keys of `docs/status-input.md` section 2.5: `invalid_json`, `unknown_field`, `invalid_sender`, `invalid_status`, `invalid_app`, `invalid_ttl` (400), `unauthorized` (401), `not_local` (403), `not_found` (404), `method_not_allowed` (405, with `Allow`), `too_many_senders` (409), `too_large` (413), `unsupported_media_type` (415), `rate_limited` (429, with `Retry-After` in seconds).
+5. No CORS headers on any response, and `OPTIONS` answers 405.
+6. Checks run in this order: local address (403), rate limit (429), path and method (404, 405), key (401, except `/v1/ping`), size (413), media type (415), JSON (400), fields (400), sender count (409).
+
+#### 18.5 Local network only
+
+A request whose remote address (after unwrapping an IPv4-mapped IPv6 address) is not in 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8, 169.254.0.0/16, ::1, fc00::/7 or fe80::/10 is refused with 403 before anything else is read. `X-Forwarded-For` and similar headers are ignored.
+
+#### 18.6 Rate limit
+
+60 requests per rolling minute per remote address, counting every request including refused ones. The 61st and later get 429 with `Retry-After`.
+
+#### 18.7 Senders and expiry
+
+1. The latest report from a sender (matched by `sender`, case-sensitive) replaces its earlier one. `clear` removes it.
+2. A report expires `ttlSeconds` after it arrives. At most 20 unexpired senders; a report from a 21st gets 409.
+3. Expiry is checked on every tick and by a timer set to the next expiry (as the event boundary timer of 8.1 item 3), so a status changes the moment its report expires.
+4. Unexpired reports are kept in `busy-light/inputs.json` (mode 600, written atomically on every change) and reloaded at startup, so a long report (for example two hours of Do not disturb) survives a Homebridge restart. Expired entries are dropped on load.
+5. The last 20 senders seen in the past 12 hours, expired or not, are kept for display (10.1, 11.3 I) with their last status, app and time.
+
+#### 18.8 Key
+
+1. `statusInput.key`: 32 to 128 characters from `A-Z a-z 0-9 - _`. The settings page generates 32 random bytes with `crypto.getRandomValues` and writes them base64url without padding (43 characters).
+2. The key is never logged, never written to the state file, and never returned by the API.
+3. A wrong or missing key is logged once per remote address per hour (12).
+
+#### 18.9 The On a Call switch
+
+1. With `callSwitch.enabled` on, a Switch accessory `{name} On a Call`, UUID from `busy-light:call-switch`, Accessory Information as the override switch (7 item 5) with Model "Call switch" and Serial Number `call-switch`.
+2. While it is on, the sender `Home app` reports `inCall` with no app; turning it off removes that report. HomeKit's write is answered at once.
+3. It turns itself off `callSwitch.hours` (1 to 12, default 3) after it was turned on. The time it was turned on is kept in the accessory context, so after a restart the switch is restored with the time remaining, or turned off if the time has passed.
+4. Turned off when the configuration no longer enables it; the accessory is removed then (7 item 6).
+
+#### 18.10 What a sender can and cannot do
+
+1. A report enters the precedence of 6.3 like Teams presence; it cannot lower a higher status (a sender's `available` does not hide a calendar meeting).
+2. The override switch (rule 1) still wins over everything.
+3. A sender learns the overall status (`GET /v1/status`) and the names, statuses and apps of the active senders, nothing about calendars or events.
+
+### A.2 Changes to existing sections
+
+**2.1** add: "9. A status input that lets any app on the local network report a status (section 18), and an On a Call switch in the Home app."
+
+**6.3 Precedence**: a *presence signal* is Teams presence or an unexpired status input report. Rules 2 to 9 apply to every presence signal:
+
+- Rule 2 adds: or a report says `outOfOffice`.
+- Rule 3 adds: or a report says `doNotDisturb`.
+- Rule 4 adds: or a report says `inCall`.
+- Rule 5 adds: or a report says `inMeeting`.
+- Rule 6 adds: or a report says `busy`.
+- Rule 8 adds: or a report says `away`.
+- Rule 9 adds: or a report says `available`.
+- Rule 10 becomes: "There is no fresh Teams presence and no report says `offline`: `available`."
+- Rule 11 is unchanged ("Otherwise: `offline`").
+
+The reason's `source` is the sender's name, and with an `app`, the line in Right now reads `From {sender} ({app}).` (11.3 B). `until` is null for a report.
+
+**6.5 Freshness and Unknown**: reports are fresh until they expire (18.7). Item 4 counts a report as fresh data. Item 5 becomes: "With no calendars configured and both the status input and the On a Call switch off, the status is `unknown`."
+
+**7 HomeKit model**: add item 8 pointing to 18.9.
+
+**9 Configuration**: add to the example and the rules:
+
+```json
+"statusInput": { "enabled": false, "port": 8582, "key": "" },
+"callSwitch": { "enabled": false, "hours": 3 }
+```
+
+- Rule 17: `statusInput.enabled` is a boolean; `port` an integer from 1024 to 65535 (default 8582); `key` as 18.8. With `enabled` on and a missing or invalid key, the status input stays off with the error `statusInput.key: must be 32 to 128 letters, digits, hyphens or underscores`.
+- Rule 18: `callSwitch.enabled` a boolean; `hours` an integer from 1 to 12 (default 3), falling back with a warning.
+- `config.schema.json` gains both blocks (the standard form is no longer shown, but Homebridge checks the block against it).
+
+**10.1 State file**: add
+
+```json
+"statusInput": { "enabled": true, "port": 8582, "listening": true, "error": null },
+"inputs": [ { "sender": "CallWatch on Alex's iMac", "status": "inCall", "app": "Microsoft Teams", "via": "api", "lastHeard": "...", "expiresAt": "...", "active": true } ]
+```
+
+`via` is `api` or `switch`. `inputs` holds the senders of 18.7 item 5. The key is never in the state file.
+
+**10.2 CLI**: add `input`:
+
+| Command | Does |
+| --- | --- |
+| `input` | Prints whether the status input and the On a Call switch are on, the port, the addresses of the Homebridge host (`http://{ip}:{port}`, one per non-internal IPv4 address), and the senders from the state file. |
+| `input --setup-code` | Also prints the setup code, after the line `The setup code contains your key. Treat it like a password.` |
+| `input test` | Sends `inCall` for 30 seconds from the sender `Busy Light test` to the running plugin on `127.0.0.1`, using the configured key, and prints the response or the error. |
+
+**10.3 UI server**: add
+
+| Endpoint | Request | Response |
+| --- | --- | --- |
+| `/input/info` | none | `{ "addresses": ["192.168.4.10"], "port" }` (non-internal IPv4 addresses of the host; the page builds the address and setup code) |
+| `/input/test` | `{ "port", "key" }` | `{ "ok": true }` or `{ "error": "notListening" \| "unauthorized" \| "other", "message" }`: sends `inCall` for 30 seconds from `Busy Light test` to `127.0.0.1:{port}` |
+
+**11.1 Anatomy**: a new section between Calendars and Colors: **Status from other apps** (11.3 I).
+
+**12 Logging**: add, verbatim:
+
+| When | Level | Line |
+| --- | --- | --- |
+| Input started | info | `Status input is listening on port {port}.` |
+| Input failed | error | `Status input could not start: port {port} is already in use.` (or `: {short reason}.` for any other failure) |
+| Input key invalid | error | `statusInput.key: must be 32 to 128 letters, digits, hyphens or underscores` |
+| Sender changed | info | `{sender} reports {Display name}.` or `{sender} reports {Display name} from {app}.` |
+| Sender cleared | info | `{sender} cleared its status.` |
+| Sender expired | info | `{sender}'s status expired.` |
+| Wrong key | warn | `Status input: refused a request with a wrong key from {ip}.` (once per address per hour) |
+| Not local | warn | `Status input: refused a request from {ip}, which is not on the local network.` (once per address per hour) |
+| Call switch timeout | info | `{name} On a Call turned itself off after {n} hours.` |
+
+Sender and app names are labels chosen by the sender and may be logged; nothing else from a request is.
+
+**15 Testing**: add
+
+16. Status API with a real `http` server on an ephemeral port bound to 127.0.0.1 inside the test (the one exception to "never open a socket" in this file: loopback only, closed after each test): every row of 18.4, every error key, the check order of 18.4 item 6, constant-time key comparison used, 403 for a non-local address (by injecting the remote address into the handler), rate limit and `Retry-After`, the 20-sender limit, `clear`, expiry with a fake clock and the expiry timer, `inputs.json` reload with expired entries dropped, no CORS headers, `OPTIONS` 405, and that no log line or response contains the key.
+17. Precedence with inputs: each status at its rule, combined with Teams presence and calendar events, rule 10 with and without an `offline` report, the reason naming the sender and app.
+18. On a Call switch: on, off, the safety timeout, restore after restart with the time remaining and after the time has passed.
+19. Settings page: the Status from other apps section (11.3 I), key generation format, Replace key, the setup code built from `/input/info`, Test, the sender list; the per-calendar interval (part B); the color presets (part C).
+20. CLI `input`, `input --setup-code` and `input test`.
+
+**16 Release plan**: build 3 is this file; build 4 is the README screenshots and the first npm release (the former build 3).
+
+**17 Decisions**: add, dated 2026-10-08: the status input is generic and independent of any sender app; two channels (HTTP API on the local network, HomeKit On a Call switch); statuses enter the existing precedence as presence signals; reports expire (default 180 s, at most 12 h); local addresses and a key only, no TLS; `docs/status-input.md` is the public description for app builders.
+
+### A.3 Settings page copy, 11.3 I "Status from other apps" (verbatim)
+
+- Heading: `Status from other apps`
+- Help: `Let other apps on your network tell Busy Light you are on a call or busy, for example a call helper on your Mac or a Stream Deck button.` and the link `How apps connect` (`https://github.com/arodbuilds/homebridge-busy-light/blob/latest/docs/status-input.md`, new tab)
+- Checkbox: `Let other apps set your status`
+- When ticked:
+  - `Address`: read-only, monospace, `http://{ip}:{port}`, one line per address from `/input/info`
+  - `Key`: read-only password field with `Show` and `Hide`, and the button `Copy key` (then `Copied`)
+  - `Setup code`: read-only, monospace, `busylight://{ip}:{port}/?key={key}` (first address), the button `Copy setup code` (then `Copied`), and the help `Paste this into the app that will report your status. It contains your key, so treat it like a password.`
+  - Text button `Replace key`, inline question `Replace the key? Every app using the current key stops working until you give it the new one.` with `Replace` (danger) and `Cancel`
+  - Button `Test` (busy `Testing…`), help `Reports a call for 30 seconds, so the light should turn red.`; results `Busy Light received the test.`, and for `notListening` `Busy Light is not listening yet. Save, restart Homebridge, then test again.`, for `unauthorized` `The running Busy Light has a different key. Save and restart Homebridge, then test again.`
+  - State-file error: `Busy Light could not open port {port}. Another program may be using it. Choose another port under Advanced.`
+  - Advanced disclosure: `Port` (1024 to 65535, default 8582), help `Change it only if another program on this computer already uses {port}.`
+- Subheading: `Apps reporting now`
+  - Empty: `No app has reported in the last 12 hours.`
+  - Row: the sender name; the status display name, and ` from {app}` when there is one; the meta `Last heard {relative time}`; the badge `Active` (success tone) or `Expired` (secondary tone). The Home app switch appears as the sender `Home app`.
+- Checkbox: `Add an On a Call switch to the Home app`, help `Turn it on from a shortcut, Siri or a Home tile while you are on a call. Useful for apps that should not make network requests themselves.`
+  - When ticked: `Turn it off by itself after (hours)` (1 to 12, default 3)
+- Validation (11.3 H style): port `Enter a whole number from 1024 to 65535.`; hours `Enter a whole number from 1 to 12.`
+
+The page generates the key when the checkbox is first ticked and no key exists. Changes apply after Save and a Homebridge restart, as everywhere on the page.
+
+---
+
+## B. Per-calendar check interval
+
+1. **9.1 rule 19**: any source may have `calendarSeconds`, an integer from 60 to 600. Missing means the platform `calendarSeconds`. Invalid falls back with a warning.
+2. **8.1 item 2** becomes: reload any calendar source whose last check is older than its own `calendarSeconds`, or the platform's when it has none.
+3. **11.3 C**, every card: an Advanced disclosure at the bottom of the card body with `Check for changes every (seconds)` (60 to 600), empty by default, placeholder `e.g. {platform value}`, help `Leave empty to use Reload calendars every, under Settings.` Validation `Enter a whole number from 60 to 600.`
+4. **15**: a test that two sources with different intervals reload on their own schedules.
+
+---
+
+## C. Color presets
+
+Replaces the row described in **11.3 D** (the configuration format does not change: colors stay `#RRGGBB` or `off`).
+
+1. Each status row shows its display name and a group of preset swatches, as a radio group: `Red` `#FF0000`, `Orange` `#FF6A00`, `Yellow` `#FFD000`, `Green` `#00FF00`, `Blue` `#0050FF`, `Purple` `#B400FF`, `White` `#FFFFFF`, `Off`, and `Custom`.
+2. Each swatch is a button showing its color (Off as an outlined circle with a line through it, Custom as a swatch of the current custom color with the label), with the name as its accessible label and `aria-checked` for the chosen one. Arrow keys move between them; the names appear as tooltips and, below 600 px, as text under each swatch.
+3. A saved color equal to a preset (without regard to case) selects that preset. Any other `#RRGGBB` selects Custom.
+4. Choosing Custom shows the browser's color picker and the hex field (monospace) beside it, with the validation `Enter a color as #RRGGBB, for example #FF0000.` They are hidden otherwise.
+5. The defaults of 6.2 are presets: Out of office Purple, Do not disturb, In a call and In a meeting Red, Busy Orange, Tentative and Away Yellow, Available Green, Offline Off. `Reset colors` restores them.
+6. The `Teams only` badges and the line `When more than one applies, the one highest in this list wins.` stay.
+7. **17**, open item: check each preset on a real LIFX bulb and adjust the hex values where the bulb renders them poorly (orange and yellow especially). The configuration keeps whatever hex the user saved.
