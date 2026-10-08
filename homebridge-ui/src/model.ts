@@ -40,6 +40,8 @@ export interface UiSource {
   clientId: string;
   useTeamsStatus: boolean;
   useCalendar: boolean;
+  /** This card's own check interval (SPEC 9.1 item 19), or null for the platform's. */
+  calendarSeconds: number | null;
 }
 
 export interface UiLifx {
@@ -142,7 +144,7 @@ function readUse(value: unknown): Use {
 export function emptySource(type: SourceType, id: string): UiSource {
   return {
     type, id, name: '', appleId: '', appPassword: '', calendars: [], url: '', email: '', use: 'all', tenantId: '', clientId: '',
-    useTeamsStatus: true, useCalendar: true,
+    useTeamsStatus: true, useCalendar: true, calendarSeconds: null,
   };
 }
 
@@ -175,6 +177,7 @@ function readSource(raw: Record<string, unknown>, taken: Set<string>): UiSource 
   taken.add(id);
   const s = emptySource(type, id);
   s.name = name;
+  s.calendarSeconds = typeof raw.calendarSeconds === 'number' && Number.isFinite(raw.calendarSeconds) ? raw.calendarSeconds : null;
   if (type === 'icloud') {
     s.appleId = str(raw.appleId);
     s.appPassword = typeof raw.appPassword === 'string' ? raw.appPassword : '';
@@ -281,7 +284,7 @@ function exportChoice(c: UiChoice): unknown {
   return c.id === null ? { name: c.name, use: c.use } : { id: c.id, name: c.name, use: c.use };
 }
 
-export function exportSource(s: UiSource): Record<string, unknown> {
+function exportSourceFields(s: UiSource): Record<string, unknown> {
   const base = { type: s.type, id: s.id, name: s.name.trim() };
   switch (s.type) {
   case 'icloud':
@@ -301,6 +304,14 @@ export function exportSource(s: UiSource): Record<string, unknown> {
     return block;
   }
   }
+}
+
+export function exportSource(s: UiSource): Record<string, unknown> {
+  const block = exportSourceFields(s);
+  if (s.calendarSeconds !== null) {
+    block.calendarSeconds = s.calendarSeconds;
+  }
+  return block;
 }
 
 /** The block for `updatePluginConfig`. Every field is written, so the file reads as the page shows. */

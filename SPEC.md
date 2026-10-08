@@ -296,7 +296,7 @@ Each source is in one of four states, shown in the state file and, from build 2,
     { "type": "google", "id": "cal-mgx3k5b7c2d", "name": "Personal", "url": "", "email": "", "use": "all" },
     { "type": "microsoft", "id": "cal-mgx3k8e4f6g", "name": "Work", "tenantId": "", "clientId": "", "useTeamsStatus": true, "useCalendar": true,
       "calendars": [ { "id": "AAMkAGSyntheticCalendarId=", "name": "Calendar", "use": "all" } ] },
-    { "type": "url", "id": "cal-mgx3kb9h1j4", "name": "Team rota", "url": "", "use": "outOfOffice" }
+    { "type": "url", "id": "cal-mgx3kb9h1j4", "name": "Team rota", "url": "", "use": "outOfOffice", "calendarSeconds": 600 }
   ],
   "colors": { "available": "#00FF00", "offline": "off" },
   "lifx": { "enabled": false, "bulb": "", "host": "", "brightness": 100, "refreshSeconds": 300 },
@@ -306,11 +306,13 @@ Each source is in one of four states, shown in the state file and, from build 2,
   "calendarSeconds": 180,
   "ignoreAllDayBusy": true,
   "outOfOfficeWords": ["Out of office", "OOO", "Vacation", "PTO"],
-  "debug": false
+  "debug": false,
+  "statusInput": { "enabled": false, "port": 8582, "key": "", "allowPlainKey": true },
+  "callSwitch": { "enabled": false, "hours": 3 }
 }
 ```
 
-This is the build 2 shape, as the settings page writes it: every source has an explicit `id` (11.2 item 3), the iCloud and Microsoft 365 sources list the calendars to read with their ids and `use` (9.1 items 13 to 15), and a Google or URL source carries its own `use`. A block written by build 1 (no ids, an iCloud `calendars` list of names such as `["Alex"]`, no `use`) reads the same as it always did.
+This is the build 2 shape, as the settings page writes it: every source has an explicit `id` (11.2 item 3), the iCloud and Microsoft 365 sources list the calendars to read with their ids and `use` (9.1 items 13 to 15), and a Google or URL source carries its own `use`. A block written by build 1 (no ids, an iCloud `calendars` list of names such as `["Alex"]`, no `use`) reads the same as it always did. Build 3 adds `statusInput`, `callSwitch` and a source's own `calendarSeconds` (9.1 items 17 to 19); a block without them reads with the status input and the On a Call switch off and every source on the platform's interval.
 
 ### 9.1 Rules
 
@@ -359,12 +361,15 @@ The validation messages, after `{path}: `:
 | `must be an IPv4 address or host name` | warn | `lifx.host` |
 | `must be a whole number from 1 to 100` | warn | `lifx.brightness` |
 | `must be a whole number from 0 to 86400` | warn | `lifx.refreshSeconds` |
-| `must be a whole number from 15 to 240` / `from 60 to 600` | warn | `pollSeconds`, `calendarSeconds` |
+| `must be a whole number from 15 to 240` / `from 60 to 600` | warn | `pollSeconds`, `calendarSeconds`, `calendars[].calendarSeconds` |
 | `is not a sensor, ignored` | warn | An unknown key in `sensors` |
 | `must be all or outOfOffice` | warn | A `use` value (rule 15) |
 | `must be a calendar name or entry, ignored` | warn | A `calendars[].calendars` item that is neither text nor an object, or has neither `id` nor name (rule 16) |
 | `repeats an earlier calendar, ignored` | warn | A repeated `id` in a `calendars[].calendars` list (rule 16) |
 | `must be 32 to 128 letters, digits, hyphens or underscores` | error | `statusInput.key` with the status input on (rule 17) |
+| `must be a whole number from 1024 to 65535` | warn | `statusInput.port` |
+| `must be a whole number from 1 to 12` | warn | `callSwitch.hours` |
+| `must be a set of status input settings` / `must be a set of call switch settings` | warn | `statusInput` or `callSwitch` is not an object |
 
 ### 9.2 Standard settings form (build 1)
 
@@ -403,12 +408,19 @@ Titles and descriptions, verbatim (the build 2 field `use` takes its title and c
 | `ignoreAllDayBusy` | Ignore all-day events marked busy | All-day out of office events always count. |
 | `outOfOfficeWords` | Out of office words | iCloud, Google and URL calendar events with one of these words in the title count as out of office. |
 | `debug` | Debug logging | |
+| `calendars[].calendarSeconds` | Check for changes every (seconds) | |
+| `statusInput.enabled` | Let other apps set your status | |
+| `statusInput.port` | Port | |
+| `statusInput.key` | Key | |
+| `statusInput.allowPlainKey` | Allow the plain key | |
+| `callSwitch.enabled` | Add an On a Call switch to the Home app | Turn it on from a shortcut, Siri or a Home tile while you are on a call. Useful for apps that should not make network requests themselves. |
+| `callSwitch.hours` | Turn it off by itself after (hours) | |
 
 `headerDisplay`: "Busy Light shows whether you are free on a light. Add at least one calendar, then choose how the light is controlled. Not affiliated with or endorsed by Apple, Google, Microsoft or LIFX."
 
 Build 1 form details not in the table above:
 
-1. The colors and LIFX settings are fieldsets titled "Colors" and "LIFX bulb". The LIFX fields after the checkbox show only while it is ticked.
+1. The colors and LIFX settings are fieldsets titled "Colors" and "LIFX bulb". The LIFX fields after the checkbox show only while it is ticked. From build 3, the status input and the On a Call switch are fieldsets titled "Status from other apps" and "On a Call switch" after the calendars, with their other fields shown only while the checkbox is ticked, and every calendar entry ends with its own `calendarSeconds`.
 2. `calendars[].url` is one property shown twice in the layout, with the Google title and description or the URL title and description, by a `condition` on the type (evaluated by the Homebridge UI as `new Function('model', 'arrayIndices', body)`).
 3. The sensors are a checkbox list named with the accessory name endings of section 7 ("Available", "Busy", "Out of Office", and so on).
 4. `calendars[].id` is in the schema but not shown. Patterns flag colors that are not `#RRGGBB` or `off`, IDs that are not GUIDs, and addresses that do not start with `https://` or `webcal://`.

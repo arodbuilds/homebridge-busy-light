@@ -65,6 +65,10 @@ test('the example block of SPEC section 9 (the build 2 shape) reads cleanly', ()
   assert.deepEqual(microsoft.type === 'microsoft' && microsoft.calendars, [{ id: 'AAMkAGSyntheticCalendarId=', name: 'Calendar', use: 'all' }]);
   assert.equal(url.type === 'url' && url.url, 'https://rota.example.net/team.ics');
   assert.equal(url.type === 'url' && url.use, 'outOfOffice');
+  assert.equal(url.calendarSeconds, 600, 'its own interval (rule 19)');
+  assert.deepEqual(config.calendars.slice(0, 3).map((c) => c.calendarSeconds), [undefined, undefined, undefined], 'the others use the platform interval');
+  assert.deepEqual(config.statusInput, { enabled: false, port: 8582, key: '', allowPlainKey: true });
+  assert.deepEqual(config.callSwitch, { enabled: false, hours: 3 });
   assert.deepEqual(ownerAddresses(config), ['person@example.com', 'person@example.org']);
 });
 
@@ -401,4 +405,91 @@ test('rules 13 to 16: warnings never carry a calendar id, which can hold the iCl
   for (const line of lines(issues)) {
     assert.ok(!line.includes('123456789'), line);
   }
+});
+
+/** A synthetic status input key of 43 characters, as the settings page generates them (SPEC 18.8 item 1). */
+const KEY = 'Synthetic-config-key-0000000000000000000000';
+
+test('rule 17: the status input, off by default; on only with a valid key, else one error and it stays off', () => {
+  assert.equal(KEY.length, 43);
+  assert.deepEqual(parseConfig({}).config.statusInput, { enabled: false, port: 8582, key: '', allowPlainKey: true });
+  let parsed = parseConfig({ statusInput: { enabled: true, port: 9000, key: KEY } });
+  assert.deepEqual(parsed.issues, []);
+  assert.deepEqual(parsed.config.statusInput, { enabled: true, port: 9000, key: KEY, allowPlainKey: true });
+  parsed = parseConfig({ statusInput: { enabled: true, key: KEY, allowPlainKey: false } });
+  assert.deepEqual(parsed.issues, []);
+  assert.equal(parsed.config.statusInput.allowPlainKey, false, 'the plain key can be turned off (SPEC 18.8 item 9)');
+  assert.deepEqual(lines(parseConfig({ statusInput: { allowPlainKey: 'no' } }).issues), ['warn statusInput.allowPlainKey: must be true or false']);
+  assert.equal(parseConfig({ statusInput: { allowPlainKey: 'no' } }).config.statusInput.allowPlainKey, true, 'falls back to on');
+  for (const key of ['a'.repeat(32), `${'Z'.repeat(64)}-_${'9'.repeat(62)}`]) {
+    parsed = parseConfig({ statusInput: { enabled: true, key } });
+    assert.deepEqual(parsed.issues, [], `${key.length} characters`);
+    assert.equal(parsed.config.statusInput.enabled, true);
+  }
+  for (const key of [undefined, '', 'a'.repeat(31), 'a'.repeat(129), `${KEY.slice(0, 42)}+`, `${KEY.slice(0, 40)} ab`, 42]) {
+    parsed = parseConfig({ statusInput: { enabled: true, key } });
+    assert.deepEqual(lines(parsed.issues), ['error statusInput.key: must be 32 to 128 letters, digits, hyphens or underscores'], String(key));
+    assert.equal(parsed.config.statusInput.enabled, false, 'stays off');
+    assert.equal(parsed.config.statusInput.key, '');
+  }
+  parsed = parseConfig({ statusInput: { enabled: false, key: 'too short' } });
+  assert.deepEqual(parsed.issues, [], 'a key that is not used is not checked');
+  assert.equal(parsed.config.statusInput.key, '');
+});
+
+test('rule 17: the port falls back to 8582 with a warning; a statusInput that is not an object is ignored with one', () => {
+  for (const port of [1023, 65536, 8582.5, '8582', -1]) {
+    const { config, issues } = parseConfig({ statusInput: { enabled: true, port, key: KEY } });
+    assert.deepEqual(lines(issues), ['warn statusInput.port: must be a whole number from 1024 to 65535'], String(port));
+    assert.equal(config.statusInput.port, 8582);
+    assert.equal(config.statusInput.enabled, true);
+  }
+  for (const port of [1024, 65535]) {
+    assert.equal(parseConfig({ statusInput: { port } }).config.statusInput.port, port);
+  }
+  assert.deepEqual(lines(parseConfig({ statusInput: true }).issues), ['warn statusInput: must be a set of status input settings']);
+  assert.deepEqual(lines(parseConfig({ statusInput: { enabled: 'yes', key: KEY } }).issues), ['warn statusInput.enabled: must be true or false']);
+});
+
+test('rule 17: no validation line ever carries the key', () => {
+  const { issues } = parseConfig({ statusInput: { enabled: true, port: 1, key: `${KEY}!` } });
+  assert.equal(issues.length, 2);
+  for (const line of lines(issues)) {
+    assert.ok(!line.includes(KEY.slice(0, 20)), line);
+  }
+});
+
+test('rule 18: the On a Call switch, off by default, with hours from 1 to 12 falling back to 3 with a warning', () => {
+  assert.deepEqual(parseConfig({}).config.callSwitch, { enabled: false, hours: 3 });
+  assert.deepEqual(parseConfig({ callSwitch: { enabled: true, hours: 12 } }).config.callSwitch, { enabled: true, hours: 12 });
+  assert.deepEqual(parseConfig({ callSwitch: { enabled: true, hours: 1 } }).issues, []);
+  for (const hours of [0, 13, 2.5, '3']) {
+    const { config, issues } = parseConfig({ callSwitch: { enabled: true, hours } });
+    assert.deepEqual(lines(issues), ['warn callSwitch.hours: must be a whole number from 1 to 12'], String(hours));
+    assert.deepEqual(config.callSwitch, { enabled: true, hours: 3 });
+  }
+  assert.deepEqual(lines(parseConfig({ callSwitch: [] }).issues), ['warn callSwitch: must be a set of call switch settings']);
+});
+
+test('rule 19: any source may have its own calendarSeconds from 60 to 600; invalid falls back to the platform with a warning', () => {
+  const { config, issues } = parseConfig({
+    calendarSeconds: 300,
+    calendars: [
+      { ...ICLOUD, calendarSeconds: 60 },
+      { type: 'google', name: 'G', url: FEED, calendarSeconds: 600 },
+      { ...MICROSOFT, calendarSeconds: 59 },
+      { type: 'url', name: 'U', url: FEED, calendarSeconds: 601 },
+      { type: 'url', name: 'V', url: FEED, calendarSeconds: '120' },
+      { type: 'url', name: 'W', url: FEED, calendarSeconds: 90.5 },
+      { type: 'url', name: 'X', url: FEED, calendarSeconds: null },
+    ],
+  });
+  assert.deepEqual(lines(issues), [
+    'warn calendars[2].calendarSeconds: must be a whole number from 60 to 600',
+    'warn calendars[3].calendarSeconds: must be a whole number from 60 to 600',
+    'warn calendars[4].calendarSeconds: must be a whole number from 60 to 600',
+    'warn calendars[5].calendarSeconds: must be a whole number from 60 to 600',
+  ]);
+  assert.deepEqual(config.calendars.map((c) => c.calendarSeconds), [60, 600, undefined, undefined, undefined, undefined, undefined]);
+  assert.equal(config.calendarSeconds, 300);
 });
