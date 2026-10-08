@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import { parseConfig } from '../src/config.js';
 import { BusyLightEngine } from '../src/engine.js';
 import { ensureStorageDir } from '../src/files.js';
+import type { NewReport } from '../src/inputs.js';
 import { LifxClient, MSG, parseHeader } from '../src/lifx.js';
 import { ADMIN_HELP_URL, formatTime } from '../src/messages.js';
 import type { Status } from '../src/model.js';
@@ -394,4 +395,75 @@ test('review: presence and calendar failing together write one warning', async (
     'Work: could not be read (graph.microsoft.com refused the connection). Trying again in 1 minute.',
     'Status unknown: none of your calendars could be read.',
   ]);
+});
+
+// Build 3: the sender store in the loop (SPEC 6.3, 6.5, 18.7).
+
+const INPUT_KEY = 'Synthetic-engine-key-000000000000000000000';
+const MAC = 'CallWatch on Alex’s iMac';
+const inputOn = { statusInput: { enabled: true, key: INPUT_KEY } };
+const call = (extra: Partial<NewReport> = {}): NewReport =>
+  ({ sender: MAC, status: 'inCall', app: 'Microsoft Teams', via: 'api', auth: 'signed', ttlMs: 60_000, ...extra });
+
+test('a report decides at once, logs once per change, and expires the moment its ttl ends', async () => {
+  const statuses: Status[] = [];
+  make(inputOn, statuses);
+  engine!.start();
+  await settle();
+  assert.equal(engine!.status, 'available', 'no calendars with the status input on: not unknown (SPEC 6.5 item 5)');
+  const result = await engine!.report(call());
+  assert.deepEqual(result, { ok: true, expiresAt: T0 + 60_000, status: 'inCall' });
+  await engine!.report(call({ ttlMs: 60_000 }));
+  assert.deepEqual(log.lines('info').filter((l) => l.startsWith(MAC)), [`${MAC} reports In a call from Microsoft Teams.`], 'a repeat is not logged');
+  assert.ok(log.lines('info').includes(`Status: In a call (${MAC}).`));
+  await clock.advance(59_999);
+  assert.equal(engine!.status, 'inCall');
+  await clock.advance(1);
+  assert.equal(engine!.status, 'available', 'the expiry timer changes the status at the moment the report expires');
+  assert.ok(log.lines('info').includes(`${MAC}'s status expired.`));
+  assert.deepEqual(statuses, ['available', 'inCall', 'available']);
+});
+
+test('clear withdraws a report with one line; a report through a channel that is off does not count', async () => {
+  make(inputOn);
+  engine!.start();
+  await settle();
+  await engine!.report(call({ status: 'busy', app: null }));
+  assert.equal(engine!.status, 'busy');
+  assert.equal(await engine!.clearInput(MAC, 'signed'), 'available');
+  assert.equal(await engine!.clearInput(MAC, 'signed'), 'available', 'clearing again is fine');
+  assert.deepEqual(log.lines('info').filter((l) => l.startsWith(MAC)), [`${MAC} reports Busy.`, `${MAC} cleared its status.`]);
+  engine!.stop();
+
+  log = fakeLog();
+  make({ callSwitch: { enabled: true } });
+  engine!.start();
+  await settle();
+  await engine!.report(call());
+  assert.equal(engine!.status, 'available', 'the status API is off, so its reports do not count');
+  await engine!.report({ sender: 'Home app', status: 'inCall', app: null, via: 'switch', auth: null, ttlMs: null });
+  assert.equal(engine!.status, 'inCall', 'the switch is on');
+});
+
+test('a long report survives a restart; with calendars and no fresh data and no report the status is unknown', async () => {
+  make(inputOn);
+  engine!.start();
+  await settle();
+  await engine!.report(call({ status: 'doNotDisturb', app: null, ttlMs: 2 * 3_600_000 }));
+  engine!.stop();
+  clock.t += 10 * MIN;
+  make(inputOn);
+  engine!.start();
+  await settle();
+  assert.equal(engine!.status, 'doNotDisturb', 'reloaded from inputs.json');
+  engine!.stop();
+
+  log = fakeLog();
+  make({ ...inputOn, calendars: [{ type: 'url', name: 'Rota', url: FEED }] });
+  fake.on('https://', () => networkError('ECONNREFUSED'));
+  engine!.start();
+  await settle();
+  assert.equal(engine!.status, 'doNotDisturb', 'the report is fresh data while calendars fail');
+  await clock.advance(2 * 3_600_000);
+  assert.equal(engine!.status, 'unknown', 'calendars configured, none fresh, no report');
 });

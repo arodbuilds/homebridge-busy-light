@@ -123,3 +123,16 @@ export function icloudRejected(name: string): string {
 export function validation(path: string, message: string): string {
   return `${path}: ${message}`;
 }
+
+/** SPEC 12 "Sender changed": a sender's report, when it is new or its status or app changed. */
+export function senderReports(sender: string, displayName: string, app: string | null): string {
+  return app ? `${sender} reports ${displayName} from ${app}.` : `${sender} reports ${displayName}.`;
+}
+
+export function senderCleared(sender: string): string {
+  return `${sender} cleared its status.`;
+}
+
+export function senderExpired(sender: string): string {
+  return `${sender}'s status expired.`;
+}

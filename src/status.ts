@@ -25,6 +25,20 @@ export interface Presence {
   outOfOffice: boolean;
 }
 
+/** The statuses a sender may report (SPEC 18.2); `clear` is not a status but a withdrawal. */
+export const INPUT_STATUSES = ['outOfOffice', 'doNotDisturb', 'inCall', 'inMeeting', 'busy', 'away', 'available', 'offline'] as const;
+
+export type InputStatus = (typeof INPUT_STATUSES)[number];
+
+/** An unexpired status input report (SPEC 18.7), a presence signal alongside Teams presence (6.3). */
+export interface InputReport {
+  sender: string;
+  status: InputStatus;
+  app: string | null;
+  /** When it arrived; among reports that satisfy the same rule, the latest names the source. */
+  receivedAt: number;
+}
+
 export interface ResolveOptions {
   /** All-day events marked busy or tentative are ignored in rules 5 and 7. All-day out of office always counts. */
   ignoreAllDayBusy: boolean;
@@ -32,10 +46,15 @@ export interface ResolveOptions {
 
 /** Why the status is what it is, for the state file, the log and the settings page. */
 export interface Reason {
-  /** The name of the source that decided it, `Teams` for presence, or null (the override, or nothing on any calendar). */
+  /**
+   * The name of the source that decided it, `Teams` for presence, a sender's name for a status input report, or null
+   * (the override, or nothing on any calendar).
+   */
   source: string | null;
-  /** When the status is next expected to change according to the cached events, or null. */
+  /** When the status is next expected to change according to the cached events, or null (always for a report). */
   until: number | null;
+  /** The app a deciding report named (SPEC 6.3 item 5); absent otherwise. */
+  app?: string;
 }
 
 export interface Resolution {
@@ -72,6 +91,8 @@ interface Decision {
   status: StatusKey;
   /** The deciding source, before `until` is worked out. */
   source: string | null;
+  /** The deciding report, when a report decided. */
+  report?: InputReport;
 }
 
 /** The event among several that keeps a status longest, so its source is the one named. */
@@ -79,11 +100,25 @@ function latest(events: CalEvent[]): CalEvent {
   return events.reduce((a, b) => (b.end > a.end ? b : a));
 }
 
-/** The precedence of SPEC 6.3 at one instant. Presence is null when there is no fresh presence. */
-function decide(override: boolean, presence: Presence | null, events: CalEvent[], now: number, opts: ResolveOptions): Decision {
+/** The latest report that says a status, if any. */
+function saying(reports: InputReport[], status: InputStatus): InputReport | undefined {
+  return reports.filter((r) => r.status === status).reduce<InputReport | undefined>((a, b) => (!a || b.receivedAt > a.receivedAt ? b : a), undefined);
+}
+
+function fromReport(status: StatusKey, report: InputReport): Decision {
+  return { status, source: report.sender, report };
+}
+
+/**
+ * The precedence of SPEC 6.3 at one instant. Presence is null when there is no fresh Teams presence. Within a rule,
+ * an event names the source first (it carries an end time), then Teams presence, then the latest report.
+ */
+function decide(override: boolean, presence: Presence | null, events: CalEvent[], now: number, opts: ResolveOptions,
+  reports: InputReport[] = []): Decision {
   if (override) {
     return { status: 'doNotDisturb', source: null };
   }
+  let report: InputReport | undefined;
   const active = events.filter((e) => isActive(e, now) && isCounting(e, opts));
   const oof = active.filter((e) => e.showAs === 'oof');
   const busy = active.filter((e) => e.showAs === 'busy');
@@ -97,11 +132,20 @@ function decide(override: boolean, presence: Presence | null, events: CalEvent[]
   if (presence?.outOfOffice || activity === 'OutOfOffice') {
     return { status: 'outOfOffice', source: TEAMS };
   }
+  if ((report = saying(reports, 'outOfOffice'))) {
+    return fromReport('outOfOffice', report);
+  }
   if (availability === 'DoNotDisturb' || activity === 'Presenting' || activity === 'Focusing' || activity === 'DoNotDisturb') {
     return { status: 'doNotDisturb', source: TEAMS };
   }
+  if ((report = saying(reports, 'doNotDisturb'))) {
+    return fromReport('doNotDisturb', report);
+  }
   if (activity === 'InACall' || activity === 'InAConferenceCall') {
     return { status: 'inCall', source: TEAMS };
+  }
+  if ((report = saying(reports, 'inCall'))) {
+    return fromReport('inCall', report);
   }
   if (busy.length) {
     return { status: 'inMeeting', source: latest(busy).source };
@@ -109,8 +153,14 @@ function decide(override: boolean, presence: Presence | null, events: CalEvent[]
   if (activity === 'InAMeeting') {
     return { status: 'inMeeting', source: TEAMS };
   }
+  if ((report = saying(reports, 'inMeeting'))) {
+    return fromReport('inMeeting', report);
+  }
   if (availability === 'Busy' || availability === 'BusyIdle') {
     return { status: 'busy', source: TEAMS };
+  }
+  if ((report = saying(reports, 'busy'))) {
+    return fromReport('busy', report);
   }
   if (tentative.length) {
     return { status: 'tentative', source: latest(tentative).source };
@@ -118,13 +168,20 @@ function decide(override: boolean, presence: Presence | null, events: CalEvent[]
   if (availability === 'Away' || availability === 'BeRightBack') {
     return { status: 'away', source: TEAMS };
   }
+  if ((report = saying(reports, 'away'))) {
+    return fromReport('away', report);
+  }
   if (availability === 'Available' || availability === 'AvailableIdle') {
     return { status: 'available', source: TEAMS };
   }
-  if (presence === null) {
+  if ((report = saying(reports, 'available'))) {
+    return fromReport('available', report);
+  }
+  const offline = saying(reports, 'offline');
+  if (presence === null && !offline) {
     return { status: 'available', source: null };
   }
-  return { status: 'offline', source: TEAMS };
+  return presence !== null ? { status: 'offline', source: TEAMS } : fromReport('offline', offline!);
 }
 
 /** The starts and ends of counting events after `now`, in order, without repeats. */
@@ -160,11 +217,20 @@ export function resolveStatus(
   events: CalEvent[],
   now: number,
   opts: ResolveOptions,
+  reports: InputReport[] = [],
 ): Resolution {
-  const decision = decide(override, presence, events, now, opts);
+  const decision = decide(override, presence, events, now, opts, reports);
+  if (decision.report) {
+    // A report has no end time (SPEC 6.3 item 5).
+    const reason: Reason = { source: decision.source, until: null };
+    if (decision.report.app) {
+      reason.app = decision.report.app;
+    }
+    return { status: decision.status, reason };
+  }
   let until: number | null = null;
   for (const t of boundariesAfter(events, now, opts)) {
-    if (decide(override, presence, events, t, opts).status !== decision.status) {
+    if (decide(override, presence, events, t, opts, reports).status !== decision.status) {
       until = t;
       break;
     }
@@ -207,14 +273,23 @@ export function freshData(sources: SourceData[], now: number): FreshData {
   return { events, presence, anyFresh };
 }
 
+/** The status input as the resolver sees it: whether either channel is on, and the unexpired reports. */
+export interface Inputs {
+  /** The status input or the On a Call switch is on (SPEC 6.5 item 5). */
+  on: boolean;
+  reports: InputReport[];
+}
+
 /**
- * The status from every source, applying freshness. With no fresh data at all (or no sources) the status is
- * `unknown`. The override switch wins even then, since it is the person's own choice and needs no data.
+ * The status from every source, applying freshness (SPEC 6.5). With sources configured and no fresh data and no
+ * report, or with no sources and both input channels off, the status is `unknown`. A report counts as fresh data.
+ * The override switch wins even then, since it is the person's own choice and needs no data.
  */
-export function resolve(sources: SourceData[], override: boolean, now: number, opts: ResolveOptions): Resolution {
+export function resolve(sources: SourceData[], override: boolean, now: number, opts: ResolveOptions,
+  inputs: Inputs = { on: false, reports: [] }): Resolution {
   const fresh = freshData(sources, now);
-  if (!override && !fresh.anyFresh) {
+  if (!override && !fresh.anyFresh && inputs.reports.length === 0 && (sources.length > 0 || !inputs.on)) {
     return { status: 'unknown', reason: null };
   }
-  return resolveStatus(override, fresh.presence, fresh.events, now, opts);
+  return resolveStatus(override, fresh.presence, fresh.events, now, opts, inputs.reports);
 }

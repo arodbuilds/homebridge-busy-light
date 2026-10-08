@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  EVENTS_FRESH_MS, PRESENCE_FRESH_MS, TEAMS, freshData, isActive, isCounting, nextBoundary, resolve, resolveStatus,
+  EVENTS_FRESH_MS, INPUT_STATUSES, PRESENCE_FRESH_MS, TEAMS, freshData, isActive, isCounting, nextBoundary, resolve, resolveStatus,
 } from '../src/status.js';
-import type { CalEvent, Presence, SourceData } from '../src/status.js';
+import type { CalEvent, InputReport, Presence, SourceData } from '../src/status.js';
 
 const opts = { ignoreAllDayBusy: true };
 const MIN = 60_000;
@@ -196,4 +196,73 @@ test('Unknown: sources configured but none fresh, or no sources at all', () => {
 test('the override wins even when no source has fresh data', () => {
   assert.deepEqual(resolve([source({})], true, now, opts), { status: 'doNotDisturb', reason: { source: null, until: null } });
   assert.equal(resolve([], true, now, opts).status, 'doNotDisturb');
+});
+
+// SPEC 15 item 17: precedence with status input reports (6.3, 18.10).
+
+const MAC = 'CallWatch on Alex’s iMac';
+const report = (status: InputReport['status'], sender = MAC, app: string | null = 'Microsoft Teams', receivedAt = now - MIN): InputReport =>
+  ({ sender, status, app, receivedAt });
+const withReports = (presence: Presence | null, events: CalEvent[], reports: InputReport[], override = false) =>
+  resolveStatus(override, presence, events, now, opts, reports);
+
+test('reports: each status a sender may send decides at its own rule', () => {
+  for (const s of INPUT_STATUSES) {
+    assert.equal(withReports(null, [], [report(s)]).status, s, s);
+  }
+  assert.deepEqual(INPUT_STATUSES, ['outOfOffice', 'doNotDisturb', 'inCall', 'inMeeting', 'busy', 'away', 'available', 'offline'],
+    'tentative and unknown are not accepted (SPEC 18.2)');
+  const order = [...INPUT_STATUSES];
+  for (let i = 0; i < order.length - 1; i++) {
+    assert.equal(withReports(null, [], [report(order[i + 1], 'Lower'), report(order[i], 'Higher')]).status, order[i]);
+  }
+});
+
+test('reports: combined with Teams presence and calendar events in the order of 6.3', () => {
+  assert.equal(withReports(pres('DoNotDisturb', 'DoNotDisturb'), [], [report('outOfOffice')]).status, 'outOfOffice', 'rule 2 beats Teams rule 3');
+  assert.equal(withReports(pres('Busy', 'InACall'), [], [report('doNotDisturb')]).status, 'doNotDisturb', 'rule 3 beats Teams in a call');
+  assert.equal(withReports(null, [ev('busy')], [report('inCall')]).status, 'inCall', 'a live call beats a calendar meeting');
+  assert.equal(withReports(pres('Busy', 'Busy'), [], [report('inMeeting')]).status, 'inMeeting', 'rule 5 beats Teams busy');
+  assert.equal(withReports(null, [ev('tentative')], [report('busy')]).status, 'busy', 'rule 6 beats a tentative event');
+  assert.equal(withReports(null, [ev('tentative')], [report('away')]).status, 'tentative', 'a tentative event beats away');
+  assert.equal(withReports(pres('Available', 'Available'), [], [report('away')]).status, 'away', 'rule 8 beats Teams available');
+  assert.equal(withReports(null, [ev('busy')], [report('available')]).status, 'inMeeting', 'available cannot hide a meeting (18.10)');
+  assert.equal(withReports(pres('Offline', 'Offline'), [], [report('available')]).status, 'available', 'rule 9 beats Teams offline');
+  assert.equal(withReports(pres('Busy', 'InACall'), [], [report('available')]).status, 'inCall', 'available cannot lower Teams');
+  assert.deepEqual(withReports(null, [], [report('doNotDisturb')], true), { status: 'doNotDisturb', reason: { source: null, until: null } },
+    'the override still wins over everything (18.10 item 2)');
+});
+
+test('reports: rule 10 with and without an offline report', () => {
+  assert.deepEqual(withReports(null, [], []), { status: 'available', reason: { source: null, until: null } });
+  assert.deepEqual(withReports(null, [], [report('offline', 'Laptop', null)]), { status: 'offline', reason: { source: 'Laptop', until: null } });
+  assert.deepEqual(withReports(pres('Offline'), [], [report('offline')]).reason, { source: TEAMS, until: null }, 'fresh Teams names it first');
+  assert.equal(withReports(pres('PresenceUnknown'), [], []).status, 'offline', 'rule 11 unchanged');
+});
+
+test('reports: the reason names the sender and the app, with no until', () => {
+  const later = [ev('busy', { start: now + 30 * MIN, end: now + 60 * MIN })];
+  assert.deepEqual(withReports(null, later, [report('inCall')]),
+    { status: 'inCall', reason: { source: MAC, until: null, app: 'Microsoft Teams' } });
+  assert.deepEqual(withReports(null, [], [report('busy', 'Test on my laptop', null)]),
+    { status: 'busy', reason: { source: 'Test on my laptop', until: null } }, 'no app, no app in the reason');
+  assert.equal(withReports(null, [], [report('inCall', 'Older', null, now - 5 * MIN), report('inCall', 'Newer', null, now - MIN)]).reason?.source,
+    'Newer', 'the latest of two reports that say the same names the source');
+  assert.equal(withReports(pres('Busy', 'InACall'), [], [report('inCall')]).reason?.source, TEAMS, 'Teams presence before a report');
+  assert.equal(withReports(null, [ev('oof')], [report('outOfOffice')]).reason?.source, 'Work', 'an event before a report');
+  assert.deepEqual(withReports(null, [ev('busy')], [report('away')]).reason, { source: 'Work', until: now + 10 * MIN },
+    'an event decides with its until; the report takes over when it ends');
+  assert.deepEqual(withReports(null, [ev('busy')], [report('inMeeting')]).reason, { source: 'Work', until: null },
+    'with a report holding the same status after the event, nothing changes at its end');
+});
+
+test('reports and Unknown (SPEC 6.5): a report counts as fresh data; no calendars and an input on is not unknown', () => {
+  const on = (reports: InputReport[]) => ({ on: true, reports });
+  assert.deepEqual(resolve([], false, now, opts, on([])), { status: 'available', reason: { source: null, until: null } });
+  assert.deepEqual(resolve([], false, now, opts, { on: false, reports: [] }), { status: 'unknown', reason: null });
+  assert.deepEqual(resolve([], false, now, opts), { status: 'unknown', reason: null });
+  const stale = source({ events: [ev('busy')], eventsCheckedAt: now - 16 * MIN });
+  assert.deepEqual(resolve([stale], false, now, opts, on([])), { status: 'unknown', reason: null }, 'calendars configured, none fresh');
+  assert.equal(resolve([stale], false, now, opts, on([report('inCall')])).status, 'inCall', 'a report is fresh data');
+  assert.equal(resolve([], false, now, opts, on([report('away')])).status, 'away');
 });
