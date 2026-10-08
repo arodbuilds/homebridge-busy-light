@@ -3,13 +3,13 @@
  * and the source log lines of SPEC 12. A Microsoft source has up to two parts (presence and calendar), each with
  * its own schedule; the source's state is the worse of the two.
  */
-import type { CalendarSource, IcsSettings } from './calendar.js';
-import type { SourceConfig, SourceType } from './config.js';
+import type { CalendarReport, CalendarSource, IcsSettings } from './calendar.js';
+import type { CalendarChoice, SourceConfig, SourceType } from './config.js';
 import { SourceError, toSourceError } from './errors.js';
 import { GraphClient } from './graph.js';
 import { ICloudSource } from './icloud.js';
 import type { Log } from './log.js';
-import { icloudDiscovery, icloudRejected, sourceFailed, sourceRecovered } from './messages.js';
+import { calendarsNotInUse, icloudDiscovery, icloudRejected, listedCalendarGone, sourceFailed, sourceRecovered } from './messages.js';
 import { MicrosoftAuth, TokenStore, tokenFile } from './microsoft.js';
 import type { CalEvent, Presence, SourceData } from './status.js';
 import { UrlSource } from './url-source.js';
@@ -100,6 +100,8 @@ export class SourceRunner {
   private presence: Presence | null = null;
   /** A failure warning was written and no recovery line yet. */
   private warned = false;
+  /** Listed calendars reported missing, so the "Listed calendar gone" line is written once until each is found again. */
+  private readonly gone = new Set<string>();
   private readonly log: Log;
   private readonly now: () => number;
 
@@ -109,7 +111,7 @@ export class SourceRunner {
     this.now = options.now ?? Date.now;
     const c = options.config;
     if (c.type === 'icloud') {
-      this.calendar = new ICloudSource(c, options.ics, (found, used) => this.log.info(icloudDiscovery(c.name, found, used)));
+      this.calendar = new ICloudSource(c, options.ics, this.report());
       this.calendarPart = new Part();
     } else if (c.type === 'google' || c.type === 'url') {
       this.calendar = new UrlSource(c, options.ics);
@@ -124,7 +126,7 @@ export class SourceRunner {
         autoSignIn: options.autoSignIn,
         onChange: () => options.onChange?.(),
       });
-      this.graph = new GraphClient(this.auth, c.name, this.now);
+      this.graph = new GraphClient(this.auth, c.name, this.now, { calendars: c.calendars, report: this.report() });
       if (c.useCalendar) {
         this.calendar = this.graph;
         this.calendarPart = new Part();
@@ -137,6 +139,28 @@ export class SourceRunner {
 
   get name(): string {
     return this.config.name;
+  }
+
+  /** The log lines about the calendars a source chose (SPEC 12): found and in use, not in use, and gone. */
+  private report(): CalendarReport {
+    return {
+      discovered: (found, used, notInUse) => {
+        this.log.info(icloudDiscovery(this.name, found, used));
+        if (notInUse.length) {
+          this.log.info(calendarsNotInUse(this.name, notInUse));
+        }
+      },
+      listed: (choice: CalendarChoice, present: boolean) => {
+        const key = choice.id ?? `name:${choice.name.toLowerCase()}`;
+        if (present) {
+          this.gone.delete(key);
+        } else if (!this.gone.has(key)) {
+          this.gone.add(key);
+          // The id can hold the iCloud account number, so only the name is ever shown.
+          this.log.warn(listedCalendarGone(this.name, choice.name || 'Unnamed calendar'));
+        }
+      },
+    };
   }
 
   /** True when this source reads Teams presence. */

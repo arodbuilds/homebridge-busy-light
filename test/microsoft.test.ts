@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { MicrosoftSourceConfig } from '../src/config.js';
 import { SourceError } from '../src/errors.js';
+import { SourceRunner } from '../src/sources.js';
 import { GraphClient, MAX_PAGES, mapShowAs, parseGraphEvent } from '../src/graph.js';
 import { ADMIN_HELP_URL } from '../src/messages.js';
 import { MicrosoftAuth, TokenStore, aadstsCodes, refusalReason, scopeFor, tokenFile } from '../src/microsoft.js';
@@ -566,4 +567,58 @@ test('review: a 403 on presence alone is logged once while the calendar keeps wo
   fake.on(`${GRAPH}/me/presence`, () => json({ availability: 'Available', activity: 'Available' }));
   await client.getPresence();
   assert.equal(a.refusedReason, null);
+});
+
+const event = (showAs: string, hour: number) => ({
+  showAs, isAllDay: false, isCancelled: false,
+  start: { dateTime: `2026-10-08T${hour}:00:00.0000000` }, end: { dateTime: `2026-10-08T${hour}:30:00.0000000` },
+});
+
+test('calendar: with a list, each listed calendar is read with its use, and one answering 404 is left out (SPEC 5.3 item 2)', async () => {
+  const { store } = auth();
+  writeToken(store, 3_600_000);
+  const log = fakeLog();
+  const a = new MicrosoftAuth({ source, store, log: log.log, now, sleep });
+  const listed: [string, boolean][] = [];
+  const client = new GraphClient(a, 'Work', now, {
+    calendars: [
+      { id: 'AAMkSynthetic+One=', name: 'Calendar', use: 'all' },
+      { id: 'AAMkSyntheticGone=', name: 'Deleted', use: 'all' },
+      { id: 'AAMkSyntheticHolidays=', name: 'Holidays', use: 'outOfOffice' },
+    ],
+    report: { listed: (choice, present) => listed.push([choice.name, present]) },
+  });
+  fake.on(`${GRAPH}/me/calendars/AAMkSynthetic%2BOne%3D/calendarView`, (call) => {
+    assert.equal(new URL(call.url).searchParams.get('$select'), 'showAs,start,end,isAllDay,isCancelled');
+    assert.equal(call.headers.prefer, 'outlook.timezone="UTC"');
+    return json({ value: [event('busy', 15)] });
+  });
+  fake.on(`${GRAPH}/me/calendars/AAMkSyntheticGone%3D/calendarView`, () => json({ error: { code: 'ErrorItemNotFound' } }, 404));
+  fake.on(`${GRAPH}/me/calendars/AAMkSyntheticHolidays%3D/calendarView`, () => json({ value: [event('busy', 16), event('oof', 17)] }));
+  const events = await client.fetchEvents(T0);
+  assert.deepEqual(events.map((e) => `${e.showAs} ${new Date(e.start).getUTCHours()}`), ['busy 15', 'free 16', 'oof 17']);
+  assert.deepEqual(listed, [['Calendar', true], ['Deleted', false], ['Holidays', true]]);
+  assert.equal(fake.callsTo(`${GRAPH}/me/calendarView`).length, 0, 'the default calendar is not read when there is a list');
+});
+
+test('calendar: the source runner warns once about a listed calendar that answers 404, until it is found again', async () => {
+  const { store } = auth();
+  writeToken(store, 3_600_000);
+  const log = fakeLog();
+  const runner = new SourceRunner({
+    config: { ...source, useTeamsStatus: false, calendars: [{ id: 'AAMkSyntheticGone=', name: 'Deleted', use: 'all' }] },
+    storageDir: dir, ics: { outOfOfficeWords: [], ownerAddresses: [] }, log: log.log, now, sleep,
+  });
+  let status = 404;
+  fake.on(`${GRAPH}/me/calendars/AAMkSyntheticGone%3D/calendarView`, () => (status === 404 ? json({}, 404) : json({ value: [] })));
+  await runner.runDue(clock, 0);
+  await runner.runDue(clock, 0);
+  assert.deepEqual(log.lines('warn'), ['Work: the calendar "Deleted" was not found. It may have been deleted or unshared.']);
+  assert.equal(runner.state, 'connected', 'a missing listed calendar does not fail the source');
+  status = 200;
+  await runner.runDue(clock, 0);
+  status = 404;
+  await runner.runDue(clock, 0);
+  assert.equal(log.lines('warn').length, 2, 'found again, then gone again');
+  assert.ok(log.all().every((l) => !l.includes('AAMk')), 'no line carries a calendar id');
 });

@@ -233,3 +233,18 @@ test('review: the override switch answers HomeKit at once, without waiting for t
   await platform.engine!.idle();
   assert.equal(platform.engine!.status, 'doNotDisturb');
 });
+
+test('a reset-pending marker unregisters every cached accessory at startup and is deleted (SPEC 7 item 6)', () => {
+  const first = launch({ overrideSwitch: true });
+  const cached = first.api.registered;
+  (cached.find((a) => a.UUID === hap.uuid.generate(OVERRIDE_UUID_SEED))!).context.override = true;
+  fs.writeFileSync(`${dir}/busy-light/reset-pending`, '2026-10-08T15:00:00.000Z\n');
+  const second = launch({}, cached);
+  assert.equal(second.api.unregistered.length, 4, 'every cached accessory, wanted or not');
+  assert.deepEqual(second.api.registered.map((a) => a.displayName), ['Busy Light Available', 'Busy Light Busy', 'Busy Light Out of Office']);
+  assert.ok(second.api.registered.every((a) => !cached.includes(a)), 'the sensors come back as new accessories');
+  assert.equal(fs.existsSync(`${dir}/busy-light/reset-pending`), false);
+  const third = launch({}, second.api.registered);
+  assert.deepEqual(third.api.unregistered, [], 'without the marker nothing is removed');
+  assert.deepEqual(third.api.registered, []);
+});

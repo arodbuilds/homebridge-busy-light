@@ -17,6 +17,8 @@ export interface SourceErrorOptions {
   retryAfterMs?: number;
   /** iCloud answered 401. */
   unauthorized?: boolean;
+  /** The server answered 404 (a listed Microsoft calendar that was deleted or unshared). */
+  notFound?: boolean;
 }
 
 export class SourceError extends Error {

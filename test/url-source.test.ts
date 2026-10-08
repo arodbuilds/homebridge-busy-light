@@ -163,3 +163,20 @@ test('Retry-After in seconds or as a date', () => {
   assert.equal(retryAfterMs(null, now), null);
   assert.equal(retryAfterMs('soon', now), null);
 });
+
+test('use outOfOffice keeps only the out of office events, on a Google source and a URL source alike (SPEC 5.2 item 6)', async () => {
+  fake.on('https://calendar.example.com/', () => text(fixture('calendar.ics'), 200, { etag: '"v1"' }));
+  for (const type of ['google', 'url'] as const) {
+    const all = await source(FEED, type).fetchEvents(now);
+    const { config } = parseConfig({ calendars: [{ type, name: 'Rota', url: FEED, email: 'person@example.com', use: 'outOfOffice' }] });
+    const src = new UrlSource(config.calendars[0] as UrlSourceConfig | GoogleSourceConfig, ics);
+    const ooo = await src.fetchEvents(now);
+    assert.equal(ooo.length, all.length, 'every event is kept, so the window and times are unchanged');
+    assert.deepEqual(ooo.filter((e) => e.showAs !== 'free').map((e) => e.showAs), ['oof']);
+    assert.deepEqual(ooo.filter((e) => e.showAs === 'oof'), all.filter((e) => e.showAs === 'oof'));
+    // A 304 reuses the parsed events; the use still applies.
+    fake.on('https://calendar.example.com/', () => new Response(null, { status: 304 }));
+    assert.deepEqual((await src.fetchEvents(now + 60_000)).filter((e) => e.showAs !== 'free').map((e) => e.showAs), ['oof']);
+    fake.on('https://calendar.example.com/', () => text(fixture('calendar.ics'), 200, { etag: '"v1"' }));
+  }
+});

@@ -2,7 +2,7 @@
  * Google Calendar (secret iCal address) and calendar URL sources (SPEC 5.2). The address is the credential, so it
  * is never logged or written anywhere: errors name the host only.
  */
-import { WINDOW_MS } from './calendar.js';
+import { WINDOW_MS, applyUse } from './calendar.js';
 import type { CalendarSource, IcsSettings } from './calendar.js';
 import type { GoogleSourceConfig, UrlSourceConfig } from './config.js';
 import { SourceError } from './errors.js';
@@ -30,7 +30,12 @@ export class UrlSource implements CalendarSource {
     return hostOf(this.config.url);
   }
 
+  /** The window's events, with the source's `use` applied (SPEC 5.2 item 6). */
   async fetchEvents(now: number): Promise<CalEvent[]> {
+    return applyUse(await this.read(now), this.config.use);
+  }
+
+  private async read(now: number): Promise<CalEvent[]> {
     const reuse = this.parsed !== null && this.etag !== null && now - this.parsedAt < REUSE_PARSED_MS;
     let url = this.config.url;
     let res: Response | null = null;

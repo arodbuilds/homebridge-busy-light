@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { ICloudSourceConfig } from '../src/config.js';
+import type { CalendarReport } from '../src/calendar.js';
+import type { CalendarChoice, ICloudSourceConfig } from '../src/config.js';
 import { SourceError } from '../src/errors.js';
-import { ICLOUD_REJECTED, ICloudSource, REDISCOVER_MS, davStamp, parseCalendarList } from '../src/icloud.js';
+import { parseConfig } from '../src/config.js';
+import { ICLOUD_REJECTED, ICloudSource, REDISCOVER_MS, chooseCalendars, davStamp, parseCalendarList, samePath } from '../src/icloud.js';
+import { SourceRunner } from '../src/sources.js';
 import { xmlBlocks, xmlText } from '../src/xml.js';
-import { FakeFetch, fixture, fixtureTitles, text } from './helpers.js';
+import { FakeFetch, fakeLog, fixture, fixtureTitles, text, tmpDir } from './helpers.js';
 import type { Call } from './helpers.js';
 
 const now = Date.UTC(2026, 9, 8, 15);
@@ -32,12 +35,13 @@ function serve(style: 'prefixed' | 'default-ns'): void {
   fake.on(`${HOME}work/`, () => xml(fixture('caldav/prefixed-report-work.xml')));
 }
 
-function source(calendars: string[] = [], onCalendars?: (found: string[], used: string[]) => void): ICloudSource {
+function source(calendars: (string | CalendarChoice)[] = [], onCalendars?: (found: string[], used: string[], notInUse: string[]) => void,
+  listed?: CalendarReport['listed']): ICloudSource {
   const config: ICloudSourceConfig = {
     type: 'icloud', id: 'family', name: 'Family', appleId: 'person@example.com', appPassword: PASSWORD,
-    calendars: calendars.map((name) => ({ id: null, name, use: 'all' as const })),
+    calendars: calendars.map((c) => (typeof c === 'string' ? { id: null, name: c, use: 'all' as const } : c)),
   };
-  return new ICloudSource(config, ics, onCalendars);
+  return new ICloudSource(config, ics, { discovered: onCalendars, listed });
 }
 
 async function failure(p: Promise<unknown>): Promise<SourceError> {
@@ -135,8 +139,8 @@ test('a missing principal is a short failure', async () => {
 test('calendar list parsing resolves relative hrefs against the home', () => {
   const list = parseCalendarList(fixture('caldav/prefixed-list.xml'), HOME);
   assert.deepEqual(list, [
-    { name: 'Home', url: `${HOME}home/` },
-    { name: 'Work & Projects', url: `${HOME}work/` },
+    { name: 'Home', url: `${HOME}home/`, path: '/10000001/calendars/home/', shared: false, subscribed: false, readable: true },
+    { name: 'Work & Projects', url: `${HOME}work/`, path: '/10000001/calendars/work/', shared: false, subscribed: false, readable: true },
   ]);
 });
 
@@ -157,5 +161,98 @@ test('fixture titles in XML are synthetic', () => {
 test('review: a calendar without a display name is never named by its path', () => {
   const doc = '<multistatus xmlns="DAV:"><response><href>/10000001/calendars/0F1E2D3C-synthetic/</href><propstat><prop>' +
     '<displayname/><resourcetype><collection/><calendar xmlns="urn:ietf:params:xml:ns:caldav"/></resourcetype></prop></propstat></response></multistatus>';
-  assert.deepEqual(parseCalendarList(doc, HOME), [{ name: 'Unnamed calendar', url: `${HOME}0F1E2D3C-synthetic/` }]);
+  assert.deepEqual(parseCalendarList(doc, HOME).map((c) => [c.name, c.url]), [['Unnamed calendar', `${HOME}0F1E2D3C-synthetic/`]]);
+});
+
+const summary = (events: { showAs: string; isAllDay: boolean; start: number }[]) =>
+  events.map((e) => `${e.showAs} ${e.isAllDay ? 'all-day' : new Date(e.start).toISOString().slice(11, 16)}`).sort();
+
+test('calendars listed as entries are matched by id and carry their use (SPEC 5.1 step 4, 6.1)', async () => {
+  serve('prefixed');
+  const seen: string[][][] = [];
+  const events = await source([
+    { id: '/10000001/calendars/home/', name: 'Home (renamed since)', use: 'outOfOffice' },
+    { id: '/10000001/calendars/work/', name: 'Work & Projects', use: 'all' },
+  ], (found, used, notInUse) => seen.push([found, used, notInUse])).fetchEvents(now);
+  assert.deepEqual(seen, [[['Home', 'Work & Projects'], ['Home', 'Work & Projects'], []]]);
+  assert.deepEqual(summary(events), ['busy 17:00', 'free 15:00', 'oof all-day', 'tentative 19:00'],
+    'Home counts for out of office only: its busy event is free and its out of office event stays');
+});
+
+test('an id that no longer matches falls back to the name; a calendar is taken once', async () => {
+  serve('default-ns');
+  const listed: [string, boolean][] = [];
+  const events = await source([
+    { id: '/10000001/calendars/old-work-id/', name: 'work & projects', use: 'all' },
+    { id: null, name: 'Work & Projects', use: 'outOfOffice' },
+  ], undefined, (choice, present) => listed.push([choice.name, present])).fetchEvents(now);
+  assert.deepEqual(summary(events), ['busy 17:00', 'tentative 19:00']);
+  assert.equal(fake.callsTo(`${HOME}home/`).length, 0);
+  assert.deepEqual(listed, [['work & projects', true], ['Work & Projects', false]], 'the second entry finds Work already taken');
+});
+
+test('calendars found but not listed are reported only when the list is not empty', async () => {
+  serve('prefixed');
+  const seen: string[][] = [];
+  await source([{ id: '/10000001/calendars/work/', name: 'Work & Projects', use: 'all' }], (_f, _u, notInUse) => seen.push(notInUse)).fetchEvents(now);
+  await source([], (_f, _u, notInUse) => seen.push(notInUse)).fetchEvents(now);
+  assert.deepEqual(seen, [['Home'], []]);
+});
+
+test('shared, shared-owner and subscribed collections are flagged; a subscribed calendar is never read', async () => {
+  const doc = '<multistatus xmlns="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:CS="http://calendarserver.org/ns/">' +
+    '<response><href>/10000001/calendars/mine/</href><propstat><prop><displayname>Mine</displayname>' +
+    '<resourcetype><collection/><C:calendar/><CS:shared-owner/></resourcetype></prop></propstat></response>' +
+    '<response><href>/10000001/calendars/theirs/</href><propstat><prop><displayname>Theirs</displayname>' +
+    '<resourcetype><collection/><C:calendar/><CS:shared/></resourcetype></prop></propstat></response>' +
+    '<response><href>/10000001/calendars/holidays/</href><propstat><prop><displayname>Holidays</displayname>' +
+    '<resourcetype><collection/><CS:subscribed/></resourcetype></prop></propstat></response></multistatus>';
+  const list = parseCalendarList(doc, HOME);
+  assert.deepEqual(list.map((c) => [c.name, c.shared, c.subscribed, c.readable]), [
+    ['Mine', false, false, true],
+    ['Theirs', true, false, true],
+    ['Holidays', false, true, false],
+  ]);
+  assert.deepEqual(chooseCalendars(list, []).used.map((u) => u.calendar.name), ['Mine', 'Theirs']);
+  assert.deepEqual(chooseCalendars(list, [{ id: null, name: 'Holidays', use: 'all' }]).missing.map((c) => c.name), ['Holidays']);
+});
+
+test('a name keeps every calendar of that name, as build 1 did; an id is never taken by a name', () => {
+  const cal = (path: string, name: string) => ({ url: `https://p01-caldav.icloud.com${path}`, path, name, shared: false, subscribed: false, readable: true });
+  const found = [cal('/1/calendars/a/', 'Calendar'), cal('/1/calendars/b/', 'Calendar'), cal('/1/calendars/c/', 'Work')];
+  const names = (choices: CalendarChoice[]) => chooseCalendars(found, choices).used.map((u) => `${u.calendar.path} ${u.use}`);
+  assert.deepEqual(names([{ id: null, name: 'calendar', use: 'all' }]), ['/1/calendars/a/ all', '/1/calendars/b/ all']);
+  assert.deepEqual(names([{ id: null, name: 'Calendar', use: 'all' }, { id: '/1/calendars/b/', name: 'Calendar', use: 'outOfOffice' }]),
+    ['/1/calendars/b/ outOfOffice', '/1/calendars/a/ all'], 'the id entry keeps its calendar and its use');
+  assert.deepEqual(names([{ id: '/1/calendars/gone/', name: 'Work', use: 'outOfOffice' }]), ['/1/calendars/c/ outOfOffice'],
+    'an id that matches nothing falls back to the name');
+});
+
+test('paths compare decoded and without regard to a trailing slash', () => {
+  assert.ok(samePath('/1/calendars/a%20b/', '/1/calendars/a b'));
+  assert.ok(!samePath('/1/calendars/a/', '/1/calendars/b/'));
+});
+
+test('the source runner writes "New calendars" once per discovery and "Listed calendar gone" once until found again', async () => {
+  serve('prefixed');
+  const log = fakeLog();
+  const { config } = parseConfig({
+    calendars: [{
+      type: 'icloud', name: 'Family', appleId: 'person@example.com', appPassword: PASSWORD,
+      calendars: [{ id: '/10000001/calendars/work/', name: 'Work & Projects' }, { id: '/10000001/calendars/gone/', name: 'Old family' }],
+    }],
+  });
+  const runner = new SourceRunner({ config: config.calendars[0], storageDir: tmpDir('busy-light-icloud'), ics, log: log.log, now: () => now });
+  await runner.runDue(now, 180_000);
+  await runner.runDue(now + 180_000, 180_000);
+  assert.deepEqual(log.lines('info'), [
+    'Family: calendars found: Home, Work & Projects. In use: Work & Projects.',
+    'Family: calendars not in use: Home. Tick them in the plugin settings to use them.',
+  ], 'discovery is cached, so each line once');
+  assert.deepEqual(log.lines('warn'), ['Family: the calendar "Old family" was not found. It may have been deleted or unshared.']);
+
+  await runner.runDue(now + REDISCOVER_MS, 180_000);
+  assert.equal(log.lines('info').filter((l) => l.includes('not in use')).length, 2, 'again after the next discovery');
+  assert.equal(log.lines('warn').length, 1, 'the missing calendar is not reported again until it is found');
+  assert.ok(log.all().every((l) => !l.includes('10000001')), 'no line carries a calendar path');
 });
