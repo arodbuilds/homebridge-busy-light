@@ -126,6 +126,9 @@ function sourceIssues(s: UiSource, all: UiSource[], ctx: ValidationContext, issu
     }
     break;
   }
+  if (s.calendarSeconds !== null && !wholeNumber(s.calendarSeconds, LIMITS.sourceCalendarSeconds)) {
+    add('calendarSeconds', VALIDATION.wholeNumber(LIMITS.sourceCalendarSeconds[0], LIMITS.sourceCalendarSeconds[1]));
+  }
   const listed = s.type === 'icloud' || (s.type === 'microsoft' && s.useCalendar);
   if (listed && ctx.listsShown?.has(s.id) && s.calendars.length === 0) {
     add('calendars', VALIDATION.chooseCalendar);
