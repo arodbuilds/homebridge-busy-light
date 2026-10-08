@@ -129,6 +129,10 @@ function enabledBody(app: App): HTMLElement {
   const error = app.status?.statusInput?.error ? statusBox('danger', STATUS_INPUT.portError(app.status.statusInput.port)) : null;
   body.appendChild(el('div', { class: 'bl-input-error' }, error));
   if (info) {
+    if (info.addressChange) {
+      const { from, to } = info.addressChange;
+      body.appendChild(el('div', { class: 'bl-address-change' }, statusBox('warning', STATUS_INPUT.addressChanged(from, to))));
+    }
     const lines = [...(info.hostname ? [inputUrl(info.hostname, input.port)] : []), ...info.addresses.map((a) => inputUrl(a, input.port))];
     body.appendChild(readOnlyLines(STATUS_INPUT.address, lines, 'bl-input-addresses'));
     if (!info.hostname) {

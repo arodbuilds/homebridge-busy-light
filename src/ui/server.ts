@@ -68,7 +68,9 @@ export type UrlTestResponse =
   | { error: 'insecure' | 'notCalendar' | 'http' | 'network' | 'tooLarge'; host: string; code?: number };
 export type MicrosoftStartResponse = { verificationUri: string; userCode: string; expiresAt: string } | Refused | { error: 'network' };
 export type MicrosoftPollResponse = { state: 'waiting' | 'done' | 'expired' } | { state: 'refused'; reason: string; help: string };
-export type InputInfoResponse = { hostname: string | null; addresses: string[]; port: number; id: string } | { error: 'other'; message: string };
+export type InputInfoResponse =
+  | { hostname: string | null; addresses: string[]; port: number; id: string; addressChange: { from: string; to: string } | null }
+  | { error: 'other'; message: string };
 export type InputTestResponse = { ok: true } | { error: 'notListening' | 'unauthorized' | 'other'; message: string };
 export type MicrosoftCalendarsResponse = { calendars: MicrosoftCalendarEntry[] } | { error: 'notSignedIn' | 'network' } | Refused;
 
@@ -196,7 +198,25 @@ export class BusyLightUiHandlers {
     const input = this.savedBlock()?.statusInput as Record<string, unknown> | undefined;
     const saved = input?.port;
     const port = typeof saved === 'number' && Number.isInteger(saved) && saved >= MIN_INPUT_PORT && saved <= MAX_INPUT_PORT ? saved : DEFAULT_INPUT_PORT;
-    return { hostname: found.hostname, addresses: found.addresses, port, id };
+    return { hostname: found.hostname, addresses: found.addresses, port, id, addressChange: this.addressChange() };
+  }
+
+  /**
+   * The state file's address change (SPEC 18.11 item 6, 10.3 item 10) while `config.json` is older than it: the host's
+   * Save writes `config.json`, so the notice stays until the page is saved.
+   */
+  private addressChange(): { from: string; to: string } | null {
+    const change = readState(this.storageDir)?.statusInput?.addressChange;
+    if (!change || typeof change.from !== 'string' || typeof change.to !== 'string' || !Number.isFinite(Date.parse(change.at))) {
+      return null;
+    }
+    let saved: number | null;
+    try {
+      saved = this.opts.configPath ? fs.statSync(this.opts.configPath).mtimeMs : null;
+    } catch {
+      saved = null;
+    }
+    return saved !== null && saved > Date.parse(change.at) ? null : { from: change.from, to: change.to };
   }
 
   /**

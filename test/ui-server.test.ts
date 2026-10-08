@@ -526,7 +526,7 @@ test('/input/info: the host name when it resolves to the host, the IPv4 addresse
   fs.writeFileSync(configPath, JSON.stringify({ platforms: [{ platform: 'BusyLight', statusInput: { enabled: true, port: 9000, key: INPUT_KEY } }] }));
   const info = await call(inputHandlers({ configPath }), '/input/info') as { id: string };
   assert.match(info.id, /^[A-Za-z0-9_-]{16}$/);
-  assert.deepEqual(info, { hostname: 'homebridge.local', addresses: ['192.168.4.10'], port: 9000, id: info.id });
+  assert.deepEqual(info, { hostname: 'homebridge.local', addresses: ['192.168.4.10'], port: 9000, id: info.id, addressChange: null });
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir(), 'instance.json'), 'utf8')).id, info.id, 'created in instance.json');
   assert.equal((await call(inputHandlers(), '/input/info') as { id: string }).id, info.id, 'and kept');
   const elsewhere = await call(inputHandlers({ addresses: { ...NETWORK, lookup: async () => [{ address: '192.168.4.99', family: 4 }] } }), '/input/info');
@@ -552,6 +552,25 @@ test('/input/info on the Pi: multicast DNS confirms the name that /etc/hosts sen
   clock += 60_000;
   assert.equal((await call(handlers, '/input/info')).hostname, null, 'asked again after 10 minutes');
   assert.equal(mdns.sent.length, 2);
+});
+
+test('/input/info: the address change of the state file, until config.json is saved after it (SPEC 18.11 item 6)', async () => {
+  const configPath = path.join(storage, 'config.json');
+  fs.writeFileSync(configPath, JSON.stringify({ platforms: [{ platform: 'BusyLight', statusInput: { enabled: true, key: INPUT_KEY } }] }));
+  const at = Date.now() + 60_000;
+  fs.utimesSync(configPath, new Date(at - 120_000), new Date(at - 120_000));
+  fs.mkdirSync(dir(), { recursive: true });
+  fs.writeFileSync(path.join(dir(), 'state.json'), JSON.stringify({
+    version: 1, updatedAt: new Date(at).toISOString(), status: 'available', reason: null, override: false, sources: [], signIn: null, light: null,
+    statusInput: { enabled: true, port: 8582, listening: true, error: null, id: null, advertised: '192.168.4.23',
+      addressChange: { from: '192.168.4.10', to: '192.168.4.23', at: new Date(at).toISOString() } },
+  }));
+  const before = await call(inputHandlers({ configPath }), '/input/info');
+  assert.deepEqual(before.addressChange, { from: '192.168.4.10', to: '192.168.4.23' }, 'config.json is older than the change');
+  fs.utimesSync(configPath, new Date(at + 60_000), new Date(at + 60_000));
+  assert.equal((await call(inputHandlers({ configPath }), '/input/info')).addressChange, null, 'saved since');
+  fs.rmSync(path.join(dir(), 'state.json'));
+  assert.equal((await call(inputHandlers({ configPath }), '/input/info')).addressChange, null, 'no state file');
 });
 
 test('/input/test: a signed In a call for 30 seconds from Busy Light test to 127.0.0.1, and each result', async () => {

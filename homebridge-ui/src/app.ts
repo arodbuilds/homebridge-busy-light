@@ -50,6 +50,8 @@ export interface InputInfo {
   addresses: string[];
   port: number;
   id: string;
+  /** The address senders were given changed, and the page has not been saved since (SPEC 18.11 item 6). */
+  addressChange?: { from: string; to: string } | null;
 }
 
 /** The status input section's own state (SPEC 11.3 I). */

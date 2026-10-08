@@ -1396,3 +1396,30 @@ describe('settings page: the bulb in use when the page opens (SPEC 11.3 E)', () 
     assert.deepEqual(linesOf(root), [copy.LIGHTS.noBulbYet]);
   });
 });
+
+// SPEC 18.11 item 6, 15 item 23: the address change notice on the page.
+
+describe('settings page: the address change notice (SPEC 18.11 item 6)', () => {
+  const ID = 'q3Lr8vT0cXw2mN5a';
+  const section = (root: FakeElement): FakeElement => root.querySelector('#section-statusInput')!;
+
+  it('shows above the Address line while /input/info reports a change, in the warning tone', async () => {
+    const addressChange = { from: '192.168.4.10', to: '192.168.4.23' };
+    answers.set('/input/info', { hostname: null, addresses: ['192.168.4.23'], port: 8582, id: ID, addressChange });
+    const { root } = mount({ platform: 'BusyLight', statusInput: { enabled: true, key: 'a'.repeat(43) } });
+    await settle();
+    const notice = section(root).querySelector('.bl-address-change')!;
+    assert.equal(text(notice), copy.STATUS_INPUT.addressChanged('192.168.4.10', '192.168.4.23'));
+    assert.equal(text(notice), 'Homebridge\'s address changed from 192.168.4.10 to 192.168.4.23. Apps that use the old address need the new setup code.');
+    assert.ok(notice.querySelector('.alert-warning'), 'the warning tone');
+    const order = section(root).querySelectorAll('.bl-address-change, .bl-input-addresses').map((n) => n.className.split(' ').find((c) => c.startsWith('bl-')));
+    assert.deepEqual(order, ['bl-address-change', 'bl-input-addresses'], 'above the Address line');
+  });
+
+  it('is absent with no change, or once the page has been saved since (/input/info reports none)', async () => {
+    answers.set('/input/info', { hostname: 'homebridge.local', addresses: ['192.168.4.10'], port: 8582, id: ID, addressChange: null });
+    const { root } = mount({ platform: 'BusyLight', statusInput: { enabled: true, key: 'b'.repeat(43) } });
+    await settle();
+    assert.equal(section(root).querySelector('.bl-address-change'), null);
+  });
+});

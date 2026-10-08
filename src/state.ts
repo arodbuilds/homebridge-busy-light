@@ -27,6 +27,17 @@ export interface StatusInputState {
   error: string | null;
   /** The instance id of 18.3 item 4, or null before the status input first starts. */
   id: string | null;
+  /** The address the plugin last gave senders, the host name or the first IPv4 address (18.11 item 6; from build 3.1). */
+  advertised?: string | null;
+  /** The last change from one IPv4 address to another (18.11 item 6; from build 3.1). */
+  addressChange?: AddressChange | null;
+}
+
+/** A change of the address senders were given (SPEC 18.11 item 6), `at` an ISO time. */
+export interface AddressChange {
+  from: string;
+  to: string;
+  at: string;
 }
 
 /** A sender of the display list (SPEC 18.7 item 5); the replay table stays in inputs.json. */

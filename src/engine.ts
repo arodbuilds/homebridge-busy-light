@@ -15,7 +15,7 @@ import type { Status } from './model.js';
 import { SourceRunner } from './sources.js';
 import { readInstanceId } from './status-api.js';
 import { writeState } from './state.js';
-import type { StateFile } from './state.js';
+import type { AddressChange, StateFile } from './state.js';
 import { freshData, nextBoundary, resolve } from './status.js';
 import type { InputReport, Reason } from './status.js';
 
@@ -61,6 +61,9 @@ export interface InputServerStatus {
   listening: boolean;
   error: string | null;
   id: string | null;
+  /** The address change notice's record (SPEC 18.11 item 6). */
+  advertised?: string | null;
+  addressChange?: AddressChange | null;
 }
 
 /** What a report through the status API or the switch led to (SPEC 18.4). */

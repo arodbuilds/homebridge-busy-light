@@ -162,6 +162,11 @@ export function inputNotLocal(ip: string): string {
   return `Status input: refused a request from ${ip}, which is not on the local network.`;
 }
 
+/** Address changed (SPEC 18.11 item 6): from one IPv4 address to another, once per change. */
+export function addressChanged(from: string, to: string): string {
+  return `Homebridge's address changed from ${from} to ${to}. Apps that use the old address need the new setup code.`;
+}
+
 /** SPEC 12 "Call switch timeout", with the singular noun for 1 (12 item 1). */
 export function callSwitchTimeout(name: string, hours: number): string {
   return `${name} On a Call turned itself off after ${count(hours, 'hour')}.`;

@@ -9,8 +9,12 @@ import { SENSOR_KEYS } from '../src/model.js';
 import type { SensorKey, Status } from '../src/model.js';
 import { packageVersion } from '../src/names.js';
 import { BusyLightPlatform, CALL_SWITCH_UUID_SEED, OVERRIDE_UUID_SEED, sensorOn, sensorUuidSeed } from '../src/platform.js';
+import type { PlatformDeps } from '../src/platform.js';
 import { readState } from '../src/state.js';
-import { FakeClock, FakeFetch, FakeNetwork, fakeLog, icsOf, settle, text, tmpDir } from './helpers.js';
+import type { AddressDeps } from '../src/addresses.js';
+import { addressChanged } from '../src/messages.js';
+import type { ServerLike } from '../src/status-api.js';
+import { FakeClock, FakeFetch, FakeMdns, FakeNetwork, fakeLog, icsOf, settle, text, tmpDir } from './helpers.js';
 
 const { Characteristic: C, Service: S } = hap;
 
@@ -73,13 +77,15 @@ beforeEach(() => {
 afterEach(() => {
   for (const p of platforms) {
     p.engine?.stop();
+    p.addressWatcher?.stop();
+    p.inputServer?.stop();
   }
   platforms = [];
   fake.restore();
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-function launch(config: Record<string, unknown>, cached: FakeAccessory[] = [], clock = new FakeClock(T0)): {
+function launch(config: Record<string, unknown>, cached: FakeAccessory[] = [], clock = new FakeClock(T0), extra: Partial<PlatformDeps> = {}): {
   platform: BusyLightPlatform; api: FakeApi; log: ReturnType<typeof fakeLog>;
 } {
   const api = new FakeApi(dir);
@@ -88,6 +94,7 @@ function launch(config: Record<string, unknown>, cached: FakeAccessory[] = [], c
     api as unknown as API, {
       clock,
       lifx: new LifxClient({ socket: new FakeNetwork().factory, timings: { replyMs: 5, collectMs: 10 }, interfaces: () => ({}) }),
+      ...extra,
     });
   for (const accessory of cached) {
     platform.configureAccessory(accessory as unknown as Parameters<BusyLightPlatform['configureAccessory']>[0]);
@@ -342,4 +349,63 @@ test('the switch is removed when the configuration no longer enables it', async 
   const second = launch({}, cached);
   assert.deepEqual(second.api.unregistered.map((a) => a.UUID), [callUuid]);
   assert.equal(second.platform.callSwitchAccessory(), null);
+});
+
+// SPEC 18.11 item 6, 15 item 23: the address change notice, from the previous state file to the warning.
+
+/** A server that listens without a socket (SPEC 15 item 16). */
+function quietServer(): ServerLike {
+  return {
+    listen: (_options, listener) => setImmediate(listener),
+    once: () => undefined,
+    removeAllListeners: () => undefined,
+    on: () => undefined,
+    close: () => undefined,
+  };
+}
+
+/** The host with `ip` as its only network address and no name the network confirms. */
+function hostAt(ip: string): AddressDeps {
+  return {
+    hostname: () => 'homebridge',
+    interfaces: () => ({ eth0: [{ address: ip, family: 'IPv4', internal: false, netmask: '255.255.255.0', mac: '', cidr: null }] }),
+    createSocket: new FakeMdns().factory, mdnsWaitMs: 5, lookup: async () => [],
+  };
+}
+
+const INPUT = { statusInput: { enabled: true, key: 'Synthetic-platform-key-000000000000000000000' } };
+
+test('address change: the address from the previous state file, a new one at startup, one warning, and the change in the state file', async () => {
+  fs.mkdirSync(`${dir}/busy-light`, { recursive: true });
+  fs.writeFileSync(`${dir}/busy-light/state.json`, JSON.stringify({
+    version: 1, updatedAt: new Date(T0 - 3_600_000).toISOString(), status: 'available', reason: null, override: false, sources: [], signIn: null, light: null,
+    statusInput: { enabled: true, port: 8582, listening: true, error: null, id: null, advertised: '192.168.4.10', addressChange: null },
+  }));
+  const { platform, log } = launch(INPUT, [], new FakeClock(T0), { createServer: quietServer, addresses: hostAt('192.168.4.23') });
+  await settle();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  await settle();
+  assert.deepEqual(log.lines('warn').filter((l) => l.startsWith('Homebridge')), [addressChanged('192.168.4.10', '192.168.4.23')]);
+  const state = readState(`${dir}/busy-light`)!.statusInput!;
+  assert.equal(state.advertised, '192.168.4.23');
+  assert.deepEqual(state.addressChange, { from: '192.168.4.10', to: '192.168.4.23', at: new Date(T0).toISOString() });
+  platform.addressWatcher!.stop();
+});
+
+test('address change: with the status input off, the record of the previous state file is kept and nothing is checked', async () => {
+  const change = { from: '192.168.4.9', to: '192.168.4.10', at: new Date(T0 - 86_400_000).toISOString() };
+  fs.mkdirSync(`${dir}/busy-light`, { recursive: true });
+  fs.writeFileSync(`${dir}/busy-light/state.json`, JSON.stringify({
+    version: 1, updatedAt: new Date(T0).toISOString(), status: 'available', reason: null, override: false, sources: [], signIn: null, light: null,
+    statusInput: { enabled: true, port: 8582, listening: true, error: null, id: null, advertised: '192.168.4.10', addressChange: change },
+  }));
+  const mdns = new FakeMdns();
+  const { platform } = launch({}, [], new FakeClock(T0), { addresses: { ...hostAt('192.168.4.23'), createSocket: mdns.factory } });
+  await settle();
+  platform.engine!.writeState();
+  const state = readState(`${dir}/busy-light`)!.statusInput!;
+  assert.equal(state.advertised, '192.168.4.10');
+  assert.deepEqual(state.addressChange, change);
+  assert.equal(platform.addressWatcher, null);
+  assert.equal(mdns.sent.length, 0);
 });
