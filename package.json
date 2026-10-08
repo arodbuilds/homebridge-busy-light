@@ -55,7 +55,8 @@
     "test": "npm run lint && npm run build && npm run test:unit",
     "test:unit": "rimraf ./build-test && tsc -p tsconfig.test.json && node --test build-test/test/*.test.js",
     "watch": "npm run build && npm link && nodemon",
-    "build:ui": "rimraf ./homebridge-ui/public/js && tsc -p homebridge-ui && node scripts/build-ui.mjs"
+    "build:ui": "rimraf ./homebridge-ui/public/js && tsc -p homebridge-ui && node scripts/build-ui.mjs",
+    "test:layout": "node test/layout/layout-check.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

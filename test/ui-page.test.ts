@@ -1,0 +1,1079 @@
+/**
+ * The settings page rendered under node:test on the fake DOM (test/fake-dom.ts), as in homebridge-generac: what the
+ * page draws from the platform block and from /status, and every path of SPEC 15 item 14.
+ */
+import assert from 'node:assert/strict';
+import { afterEach, describe, it } from 'node:test';
+import { FakeEvent, flush, installFakeDom, text, type, type FakeElement } from './fake-dom.js';
+
+process.env.TZ = 'UTC';
+const dom = installFakeDom();
+
+/** The host: the UI server answers from a script the test sets; every request is recorded. */
+const requests: Array<{ path: string; payload: unknown }> = [];
+const answers = new Map<string, unknown | ((payload: unknown) => unknown)>();
+const pushed: unknown[][] = [];
+const save = { enabled: undefined as boolean | undefined };
+const toasts: string[] = [];
+dom.window.homebridge = {
+  request: async (path: string, payload: unknown = {}) => {
+    requests.push({ path, payload });
+    const answer = answers.get(path);
+    if (answer === undefined) {
+      throw new Error(`No answer for ${path}`);
+    }
+    // A copy, as postMessage would hand the page. A function may answer later, with a promise.
+    return structuredClone(typeof answer === 'function' ? await (answer as (p: unknown) => unknown)(payload) : answer);
+  },
+  getPluginConfig: async () => [],
+  updatePluginConfig: async (blocks: unknown[]) => {
+    pushed.push(structuredClone(blocks));
+  },
+  toast: { error: (m: string) => toasts.push(`error: ${m}`), success: (m: string) => toasts.push(`success: ${m}`) },
+  enableSaveButton: () => {
+    save.enabled = true;
+  },
+  disableSaveButton: () => {
+    save.enabled = false;
+  },
+  showSpinner: () => undefined,
+  hideSpinner: () => undefined,
+};
+
+// The page modules read window and document at call time; they are imported once the fake DOM is in place.
+const { Page } = await import('../homebridge-ui/src/main.js');
+const { readConfig, exportConfig } = await import('../homebridge-ui/src/model.js');
+const copy = await import('../homebridge-ui/src/copy.js');
+const { INTRO, SHELL, VALIDATION } = copy;
+
+type PageT = InstanceType<typeof Page>;
+
+function mount(raw: Record<string, unknown> = { platform: 'BusyLight' }): { root: FakeElement; page: PageT } {
+  const root = dom.document.createElement('div');
+  root.setAttribute('id', 'app');
+  dom.document.body.appendChild(root);
+  const saved = readConfig(raw);
+  const page = new Page(readConfig(JSON.parse(JSON.stringify(exportConfig(saved)))), saved, root as unknown as HTMLElement);
+  page.setOtherBlocks([]);
+  page.renderAll();
+  page.offerDraft();
+  return { root, page };
+}
+
+function lastBlock(): Record<string, unknown> {
+  return pushed[pushed.length - 1][0] as Record<string, unknown>;
+}
+
+afterEach(() => {
+  dom.clock.clearAll();
+  for (const node of dom.document.body.children) {
+    node.remove();
+  }
+  dom.storage.clear();
+  requests.length = 0;
+  answers.clear();
+  pushed.length = 0;
+  toasts.length = 0;
+});
+
+describe('settings page: anatomy (SPEC 11.1)', () => {
+  it('draws the banner, the intro, the affiliation line, the five sections, the closing line and the footer, in order', () => {
+    const { root } = mount();
+    const kids = root.children.map((c) => `${c.tagName.toLowerCase()}${c.id ? `#${c.id}` : ''}.${c.className.split(' ').join('.')}`);
+    assert.deepEqual(kids, [
+      'img.ns-banner', 'div.ns-draft-holder', 'p.lead-copy', 'p.lead-copy', 'p.form-text.bl-affiliation',
+      'section#section-rightNow.ns-section', 'section#section-calendars.ns-section', 'section#section-colors.ns-section',
+      'section#section-lights.ns-section', 'section#section-settings.ns-section', 'div.alert.alert-warning.ns-issues', 'p.lead-copy.mt-3',
+      'footer.ns-footer.form-text',
+    ]);
+    assert.equal(root.children[0].getAttribute('alt'), copy.BANNER.alt);
+    assert.equal(root.children[0].getAttribute('src'), 'busy-light-banner.png');
+    assert.equal(text(root.children[4]), INTRO.affiliation);
+    assert.equal(text(root.children[11]), INTRO.closing);
+    assert.deepEqual(root.querySelectorAll('h2').map((h) => text(h)), ['Right now', 'Calendars', 'Colors', 'Lights', 'Settings']);
+    const footer = root.querySelector('footer')!;
+    assert.equal(text(footer), 'Busy Light · Made by Alex Rodriguez · alex-rodriguez.com · Report an issue');
+    assert.deepEqual(footer.querySelectorAll('a').map((a) => [a.getAttribute('href'), a.getAttribute('target'), a.getAttribute('rel')]), [
+      ['https://alex-rodriguez.com/?ref=busy-light#building', '_blank', 'noopener noreferrer'],
+      ['https://github.com/arodbuilds/homebridge-busy-light/issues', '_blank', 'noopener noreferrer'],
+    ]);
+    assert.ok(footer.querySelector('svg'), 'the mark is drawn inline');
+  });
+
+  it('opening the page calls only /version and /status, and the footer shows the version', async () => {
+    answers.set('/version', { version: '0.1.0-beta.2' });
+    answers.set('/status', { status: null });
+    const { root, page } = mount();
+    page.startPolling();
+    await flush();
+    assert.deepEqual(requests.map((r) => r.path), ['/version', '/status']);
+    assert.ok(text(root.querySelector('footer')).startsWith('Busy Light v0.1.0-beta.2 ·'));
+    await dom.clock.advance(15_000);
+    assert.deepEqual(requests.map((r) => r.path), ['/version', '/status', '/status'], '/status again every 15 seconds');
+  });
+});
+
+const T = Date.parse('2026-10-08T15:00:00Z');
+const ICLOUD_SOURCE = { type: 'icloud', id: 'icloud', name: 'iCloud', appleId: 'person@example.com', appPassword: 'abcd-efgh-ijkl-mnop', calendars: ['Alex'] };
+
+/** A state file as the plugin writes it (SPEC 10.1). */
+function state(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    version: 1, updatedAt: new Date(T - 20_000).toISOString(), status: 'inMeeting', reason: { source: 'Work', until: '2026-10-08T15:30:00.000Z' },
+    override: false, signIn: null,
+    sources: [{ id: 'icloud', name: 'iCloud', type: 'icloud', state: 'connected', lastChecked: new Date(T - 60_000).toISOString(), events: 4, error: null }],
+    light: { enabled: true, label: 'Floor', host: '192.168.4.50', found: 'discovered', lastSent: '#FF0000', lastSentAt: null, answered: true },
+    ...extra,
+  };
+}
+
+async function rightNow(status: unknown, raw: Record<string, unknown> = { platform: 'BusyLight', calendars: [ICLOUD_SOURCE] }): Promise<FakeElement> {
+  answers.set('/version', { version: '0.1.0-beta.2' });
+  answers.set('/status', status);
+  const { root, page } = mount(raw);
+  page.startPolling();
+  await flush();
+  return root.querySelector('#section-rightNow .section-body')!;
+}
+
+describe('settings page: Right now (SPEC 11.3 B)', () => {
+  it('shows the swatch in the saved color, the status name and where it comes from', async () => {
+    const row = await rightNow(state(), { platform: 'BusyLight', calendars: [ICLOUD_SOURCE], colors: { inMeeting: '#aa0000' } });
+    assert.equal(text(row.querySelector('.bl-now-name')), 'In a meeting');
+    assert.equal(text(row.querySelector('.bl-now-line')), 'Until 3:30 PM, from Work.');
+    assert.equal(row.querySelector('.bl-swatch')!.getAttribute('style'), 'background-color: #AA0000');
+    assert.equal(row.querySelector('.bl-now-stale'), null);
+  });
+
+  it('every reason line', async () => {
+    const line = async (extra: Record<string, unknown>) => text((await rightNow(state(extra))).querySelector('.bl-now-line'));
+    assert.equal(await line({ reason: { source: 'Work', until: null } }), 'From Work.');
+    assert.equal(await line({ status: 'inCall', reason: { source: 'Teams', until: null } }), 'From Teams.');
+    assert.equal(await line({ status: 'inCall', reason: { source: 'Teams', until: '2026-10-08T16:00:00.000Z' } }), 'Until 4:00 PM, from Teams.');
+    assert.equal(await line({ status: 'available', reason: { source: null, until: '2026-10-08T17:00:00.000Z' } }), 'Nothing on your calendars until 5:00 PM.');
+    assert.equal(await line({ status: 'available', reason: { source: null, until: null } }), 'Nothing on your calendars right now.');
+    assert.equal(await line({ status: 'doNotDisturb', override: true, reason: null }), 'The override switch is on.');
+  });
+
+  it('no calendars saved, no state file yet, and Unknown in the warning tone (no swatch)', async () => {
+    let row = await rightNow(state(), { platform: 'BusyLight' });
+    assert.equal(text(row), copy.RIGHT_NOW.noCalendars);
+    assert.equal(row.querySelector('.bl-swatch'), null);
+    row = await rightNow({ status: null });
+    assert.equal(text(row), copy.RIGHT_NOW.notStarted);
+    row = await rightNow(state({ status: 'unknown', reason: null }));
+    assert.equal(text(row.querySelector('.alert-warning')), copy.RIGHT_NOW.unknown);
+    assert.equal(row.querySelector('.bl-swatch'), null);
+  });
+
+  it('adds the stale line when the state file is older than 5 minutes, and follows /status every 15 seconds', async () => {
+    const row = await rightNow(state({ updatedAt: new Date(T - 7 * 60_000).toISOString() }));
+    assert.equal(text(row.querySelector('.bl-now-stale')), 'Last updated 7 minutes ago. Is Homebridge running?');
+    answers.set('/status', state({ status: 'available', reason: { source: null, until: null }, updatedAt: new Date(T + 10_000).toISOString() }));
+    await dom.clock.advance(15_000);
+    const now = dom.document.querySelector('#section-rightNow .section-body')!;
+    assert.equal(text(now.querySelector('.bl-now-name')), 'Available');
+    assert.equal(now.querySelector('.bl-now-stale'), null);
+  });
+});
+
+function buttons(node: FakeElement | null): string[] {
+  return (node?.querySelectorAll('button') ?? []).map((b) => text(b));
+}
+
+function buttonNamed(node: FakeElement, label: string): FakeElement {
+  const found = node.querySelectorAll('button').find((b) => text(b) === label);
+  assert.ok(found, `no button ${label} in ${buttons(node).join(', ')}`);
+  return found;
+}
+
+function field(root: FakeElement, path: string): FakeElement {
+  const input = root.querySelector(`[data-path="${path}"] input`) ?? root.querySelector(`[data-path="${path}"] select`);
+  assert.ok(input, `no field ${path}`);
+  return input;
+}
+
+function feedback(root: FakeElement, path: string): string {
+  return text(root.querySelector(`[data-path="${path}"] > .invalid-feedback`));
+}
+
+function cardOf(root: FakeElement, id: string): FakeElement {
+  const node = root.querySelector(`[data-card-id="${id}"]`);
+  assert.ok(node, `no card ${id}`);
+  return node;
+}
+
+function openCard(root: FakeElement, id: string): FakeElement {
+  const toggle = cardOf(root, id).querySelector('.ns-card-toggle')!;
+  if (toggle.getAttribute('aria-expanded') === 'false') {
+    toggle.click();
+  }
+  return cardOf(root, id);
+}
+
+/** Leaves a field the way a person does: focus, type, then move on. */
+function fill(root: FakeElement, path: string, value: string): void {
+  const input = field(root, path);
+  input.focus();
+  type(input, value);
+  input.blur();
+}
+
+function tick(box: FakeElement, checked: boolean): void {
+  box.checked = checked;
+  box.dispatchEvent(new FakeEvent('change', true));
+}
+
+function choose(select: FakeElement, value: string): void {
+  select.value = value;
+  select.dispatchEvent(new FakeEvent('change', true));
+}
+
+function rowNamed(node: FakeElement, name: string): FakeElement {
+  const row = node.querySelectorAll('.bl-cal-row').find((r) => text(r.querySelector('label')) === name);
+  assert.ok(row, `no row ${name}`);
+  return row;
+}
+
+function calendarsOf(id: string): unknown {
+  return ((lastBlock().calendars as Array<Record<string, unknown>>).find((c) => c.id === id) ?? {}).calendars;
+}
+
+/** Lets the page's requests answer, then its 150 ms push to the host run. */
+async function settle(): Promise<void> {
+  await flush();
+  await dom.clock.advance(200);
+}
+
+const LISTED = {
+  calendars: [
+    { id: '/123456789/calendars/home/', name: 'Alex', shared: false, subscribed: false, eventsToday: 3 },
+    { id: '/123456789/calendars/family-1/', name: 'Family', shared: true, subscribed: false, eventsToday: 1 },
+    { id: '/123456789/calendars/work/', name: 'Work', shared: false, subscribed: false, eventsToday: 0 },
+    { id: '/123456789/calendars/holidays/', name: 'Holidays', shared: false, subscribed: true, eventsToday: null },
+  ],
+};
+
+describe('settings page: the chooser and a new card (SPEC 11.1 item 4, 11.3 C)', () => {
+  it('opens four tiles in Add calendar\'s place; a tile adds an open card whose Name takes focus; Cancel closes it', async () => {
+    const { root, page } = mount();
+    const section = root.querySelector('#section-calendars')!;
+    assert.equal(text(section.querySelector('.bl-empty')), copy.CALENDARS.empty);
+    buttonNamed(section, copy.CALENDARS.add).click();
+    const tiles = section.querySelectorAll('.ns-chooser-tile');
+    assert.deepEqual(tiles.map((t) => [text(t.querySelector('.ns-tile-title')), text(t.querySelector('.ns-tile-help'))]), [
+      ['iCloud', 'Calendars in your Apple account.'],
+      ['Google Calendar', 'One Google calendar, by its secret address.'],
+      ['Microsoft 365', 'Outlook calendars and Teams status. Needs an app registration from your administrator.'],
+      ['Calendar URL', 'Any calendar link that starts with https:// or webcal://.'],
+    ]);
+    assert.equal(buttons(section).includes(copy.CALENDARS.add), false);
+    buttonNamed(section, copy.CALENDARS.cancel).click();
+    assert.equal(section.querySelector('.ns-chooser'), null);
+    buttonNamed(section, copy.CALENDARS.add).click();
+    section.querySelectorAll('.ns-chooser-tile')[3].click();
+    await settle();
+    const s = page.config.calendars[0];
+    assert.match(s.id, /^cal-[0-9a-z]{8,}$/);
+    const node = cardOf(root, s.id);
+    assert.equal(node.querySelector('.ns-card-toggle')!.getAttribute('aria-expanded'), 'true', 'a new card opens expanded');
+    assert.equal(text(node.querySelector('.ns-card-name')), copy.CALENDARS.newCalendar);
+    assert.deepEqual(node.querySelectorAll('.badge').map((b) => text(b)), ['Calendar URL', 'Not saved yet']);
+    assert.equal(dom.document.activeElement, field(root, `calendars.${s.id}.name`), 'its Name field has focus');
+    type(field(root, `calendars.${s.id}.name`), 'Team rota');
+    assert.equal(text(node.querySelector('.ns-card-name')), 'Team rota', 'the header follows the name as typed');
+    await settle();
+    assert.deepEqual((lastBlock().calendars as unknown[])[0], { type: 'url', id: s.id, name: 'Team rota', url: '', use: 'all' });
+  });
+
+  it('closes and opens a card from its header, and Remove asks first', async () => {
+    const { root, page } = mount({ platform: 'BusyLight', calendars: [{ type: 'url', id: 'rota', name: 'Rota', url: 'https://example.com/a.ics' }] });
+    let node = cardOf(root, 'rota');
+    assert.equal(node.querySelector('.card-body'), null, 'a saved card starts closed');
+    node = openCard(root, 'rota');
+    assert.ok(node.querySelector('.card-body'));
+    buttonNamed(node, copy.CALENDARS.remove).click();
+    node = cardOf(root, 'rota');
+    assert.ok(text(node).includes('Remove Rota?'));
+    buttonNamed(node, copy.CALENDARS.cancel).click();
+    assert.equal(page.config.calendars.length, 1);
+    buttonNamed(cardOf(root, 'rota'), copy.CALENDARS.remove).click();
+    cardOf(root, 'rota').querySelectorAll('button').find((b) => text(b) === copy.CALENDARS.remove && b.className.includes('btn-danger'))!.click();
+    await settle();
+    assert.equal(page.config.calendars.length, 0);
+    assert.deepEqual(lastBlock().calendars, []);
+    assert.equal(root.querySelector('[data-card-id="rota"]'), null);
+  });
+});
+
+describe('settings page: the iCloud card (SPEC 11.3 C)', () => {
+  const PI = { platform: 'BusyLight', calendars: [ICLOUD_SOURCE], lifx: { enabled: true }, sensors: ['available', 'busyAny', 'outOfOffice'] };
+
+  it('opens the build 1 configuration from the Pi: the name-only list shows its names, ticked, with the Connect line', async () => {
+    answers.set('/version', { version: '0.1.0-beta.2' });
+    answers.set('/status', state());
+    const { root } = mount(PI);
+    const node = openCard(root, 'icloud');
+    assert.equal(text(node.querySelector('.ns-card-name')), 'iCloud');
+    assert.equal(field(root, 'calendars.icloud.appPassword').getAttribute('type'), 'password');
+    assert.equal(field(root, 'calendars.icloud.appPassword').value, 'abcd-efgh-ijkl-mnop');
+    const rows = node.querySelectorAll('.bl-cal-row');
+    assert.deepEqual(rows.map((r) => [text(r.querySelector('label')), r.querySelector('input')!.checked]), [['Alex', true]]);
+    assert.equal(text(node.querySelector('.bl-connect-line')), copy.CALENDARS.connectToSee);
+    assert.deepEqual(buttons(node.querySelector('.ns-footer-right')), [copy.ICLOUD.connect]);
+    assert.equal(exportConfig(readConfig(PI)).calendars instanceof Array, true);
+    assert.deepEqual((exportConfig(readConfig(PI)).calendars as unknown[])[0], { ...ICLOUD_SOURCE, calendars: ['Alex'] }, 'unchanged when written back');
+  });
+
+  it('shows the state pill and Last checked from /status, and the error line in the pill\'s tone', async () => {
+    answers.set('/version', { version: '0.1.0-beta.2' });
+    answers.set('/status', state({ sources: [{ id: 'icloud', name: 'iCloud', type: 'icloud', state: 'signInNeeded',
+      lastChecked: new Date(T - 120_000).toISOString(), events: null, error: 'iCloud did not accept the Apple ID and app-specific password' }] }));
+    const { root, page } = mount(PI);
+    page.startPolling();
+    await flush();
+    const node = cardOf(root, 'icloud');
+    assert.deepEqual(node.querySelectorAll('.badge').map((b) => text(b)), ['iCloud', 'Sign-in needed']);
+    assert.ok(node.querySelector('.bl-badge-warning'));
+    assert.match(text(node.querySelector('.ns-card-meta')), /^Last checked \d+ minutes ago$/);
+    assert.equal(text(node.querySelector('.bl-card-error.bl-tone-warning')), 'iCloud did not accept the Apple ID and app-specific password');
+  });
+
+  it('Connect lists the calendars with counts and badges, ticks the saved one by its new id, and writes ids and Counts for', async () => {
+    const { root, page } = mount(PI);
+    answers.set('/icloud/calendars', LISTED);
+    let node = openCard(root, 'icloud');
+    buttonNamed(node, copy.ICLOUD.connect).click();
+    assert.deepEqual(buttons(cardOf(root, 'icloud').querySelector('.ns-footer-right')), [copy.ICLOUD.connecting]);
+    await settle();
+    assert.deepEqual(requests.find((r) => r.path === '/icloud/calendars')!.payload, { appleId: 'person@example.com', appPassword: 'abcd-efgh-ijkl-mnop' },
+      'only the two fields it needs');
+    node = cardOf(root, 'icloud');
+    const rows = node.querySelectorAll('.bl-cal-row').map((r) => [
+      text(r.querySelector('label')), r.querySelector('input')!.checked, r.querySelector('input')!.disabled, text(r.querySelector('.bl-cal-meta')),
+      r.querySelectorAll('.badge').map((b) => text(b)).join('+'),
+    ]);
+    assert.deepEqual(rows, [
+      ['Alex', true, false, '3 events today', ''],
+      ['Family', false, false, '1 event today', 'Shared with you+New'],
+      ['Work', false, false, 'No events today', 'New'],
+      ['Holidays', false, true, '', ''],
+    ]);
+    assert.equal(text(rowNamed(node, 'Holidays').querySelector('.bl-cal-line')), copy.ICLOUD.subscribed);
+    assert.equal(node.querySelector('.bl-connect-line'), null);
+    assert.deepEqual(buttons(node.querySelector('.ns-footer-right')), [copy.ICLOUD.refresh]);
+    assert.deepEqual(calendarsOf('icloud'), [{ id: '/123456789/calendars/home/', name: 'Alex', use: 'all' }], 'the build 1 name took its id');
+
+    tick(rowNamed(node, 'Family').querySelector('input')!, true);
+    node = cardOf(root, 'icloud');
+    assert.equal(rowNamed(node, 'Family').querySelectorAll('.badge').map((b) => text(b)).join('+'), 'Shared with you', 'New leaves once ticked');
+    choose(rowNamed(node, 'Family').querySelector('select')!, 'outOfOffice');
+    await settle();
+    assert.deepEqual(calendarsOf('icloud'), [
+      { id: '/123456789/calendars/home/', name: 'Alex', use: 'all' },
+      { id: '/123456789/calendars/family-1/', name: 'Family', use: 'outOfOffice' },
+    ]);
+    tick(rowNamed(node, 'Family').querySelector('input')!, false);
+    tick(rowNamed(cardOf(root, 'icloud'), 'Alex').querySelector('input')!, false);
+    await settle();
+    assert.deepEqual(page.issues().map((i) => i.message), [VALIDATION.chooseCalendar]);
+    assert.equal(feedback(root, 'calendars.icloud.calendars'), '', 'not while the checkbox has focus');
+    assert.equal(text(root.querySelector('.ns-issues-heading')), SHELL.issuesHeading, 'the summary box says it at once');
+    assert.deepEqual(root.querySelectorAll('.ns-issue-link').map((b) => text(b)), [`iCloud: ${VALIDATION.chooseCalendar}`]);
+    (dom.document.activeElement as unknown as FakeElement).blur();
+    assert.equal(feedback(root, 'calendars.icloud.calendars'), VALIDATION.chooseCalendar, 'and the list once the checkbox is left');
+    assert.equal(save.enabled, false);
+  });
+
+  it('a build 1 name that two calendars share keeps both ticked after Connect, as the plugin reads both', async () => {
+    const { root } = mount({ ...PI, calendars: [{ ...ICLOUD_SOURCE, calendars: ['Calendar'] }] });
+    answers.set('/icloud/calendars', { calendars: [
+      { id: '/123456789/calendars/home/', name: 'Calendar', shared: false, subscribed: false, eventsToday: 0 },
+      { id: '/123456789/calendars/other/', name: 'Calendar', shared: true, subscribed: false, eventsToday: 0 },
+    ] });
+    buttonNamed(openCard(root, 'icloud'), copy.ICLOUD.connect).click();
+    await settle();
+    const node = cardOf(root, 'icloud');
+    assert.deepEqual(node.querySelectorAll('.bl-cal-row').map((r) => r.querySelector('input')!.checked), [true, true]);
+    assert.deepEqual(calendarsOf('icloud'), [
+      { id: '/123456789/calendars/home/', name: 'Calendar', use: 'all' },
+      { id: '/123456789/calendars/other/', name: 'Calendar', use: 'all' },
+    ]);
+  });
+
+  it('Connect errors: rejected, network and unexpected, under the body', async () => {
+    const { root } = mount(PI);
+    openCard(root, 'icloud');
+    for (const [error, message] of [['rejected', copy.ICLOUD.rejected], ['network', copy.ICLOUD.network], ['unexpected', copy.ICLOUD.unexpected]]) {
+      answers.set('/icloud/calendars', { error });
+      buttonNamed(cardOf(root, 'icloud'), copy.ICLOUD.connect).click();
+      await settle();
+      assert.equal(text(cardOf(root, 'icloud').querySelector('.ns-card-results .alert-danger')), message);
+    }
+  });
+
+  it('Connect on a new card first asks for the Apple ID and password', async () => {
+    const { root, page } = mount();
+    buttonNamed(root, copy.CALENDARS.add).click();
+    root.querySelectorAll('.ns-chooser-tile')[0].click();
+    const id = page.config.calendars[0].id;
+    buttonNamed(cardOf(root, id), copy.ICLOUD.connect).click();
+    assert.equal(requests.length, 0);
+    assert.equal(feedback(root, `calendars.${id}.appleId`), 'Apple ID email is required.');
+    assert.equal(feedback(root, `calendars.${id}.appPassword`), 'App-specific password is required.');
+    fill(root, `calendars.${id}.appleId`, 'not-an-email');
+    assert.equal(feedback(root, `calendars.${id}.appleId`), VALIDATION.email);
+    assert.equal(text(cardOf(root, id).querySelector('.bl-connect-line')), copy.CALENDARS.connectToSee);
+    const help = cardOf(root, id).querySelector(`[data-path="calendars.${id}.appPassword"] .form-text`)!;
+    assert.equal(text(help), `${copy.ICLOUD.appPasswordHelp} ${copy.ICLOUD.howTo}`);
+    assert.deepEqual(help.querySelectorAll('a').map((a) => [text(a), a.getAttribute('href'), a.getAttribute('target')]), [
+      ['account.apple.com', 'https://account.apple.com', '_blank'], ['How to create one', 'https://support.apple.com/en-us/102654', '_blank'],
+    ]);
+  });
+});
+
+describe('settings page: Google Calendar and Calendar URL Test (SPEC 11.3 C)', () => {
+  const RAW = { platform: 'BusyLight', calendars: [
+    { type: 'google', id: 'personal', name: 'Personal', url: 'https://calendar.example.com/ical/private-synthetic/basic.ics', email: 'person@example.com' },
+    { type: 'url', id: 'rota', name: 'Rota', url: 'webcal://rota.example.net/team.ics', use: 'outOfOffice' },
+  ] };
+
+  it('tests the address and shows each result and error, with the Google-only sentence', async () => {
+    const { root } = mount(RAW);
+    openCard(root, 'personal');
+    openCard(root, 'rota');
+    assert.equal(field(root, 'calendars.personal.url').getAttribute('type'), 'password', 'the secret address is a password field');
+    assert.equal(field(root, 'calendars.rota.use').value, 'outOfOffice');
+    const cases: Array<[unknown, string, string]> = [
+      [{ eventsToday: 0 }, 'Read the calendar: no events today.', 'Read the calendar: no events today.'],
+      [{ eventsToday: 1 }, 'Read the calendar: 1 event today.', 'Read the calendar: 1 event today.'],
+      [{ eventsToday: 4 }, 'Read the calendar: 4 events today.', 'Read the calendar: 4 events today.'],
+      [{ error: 'insecure', host: 'h' }, copy.TEST.insecure, copy.TEST.insecure],
+      [{ error: 'notCalendar', host: 'h' }, `${copy.TEST.notCalendar} ${copy.TEST.notCalendarGoogle}`, copy.TEST.notCalendar],
+      [{ error: 'http', host: 'calendar.example.com', code: 404 }, 'calendar.example.com answered with an error (404).',
+        'calendar.example.com answered with an error (404).'],
+      [{ error: 'network', host: 'calendar.example.com' }, 'Could not reach calendar.example.com.', 'Could not reach calendar.example.com.'],
+      [{ error: 'tooLarge', host: 'h' }, copy.TEST.tooLarge, copy.TEST.tooLarge],
+    ];
+    for (const [answer, google, url] of cases) {
+      answers.set('/url/test', answer);
+      buttonNamed(cardOf(root, 'personal'), copy.TEST.test).click();
+      assert.deepEqual(buttons(cardOf(root, 'personal').querySelector('.ns-footer-right')), [copy.TEST.testing]);
+      await settle();
+      assert.equal(text(cardOf(root, 'personal').querySelector('.ns-card-results')), google);
+      buttonNamed(cardOf(root, 'rota'), copy.TEST.test).click();
+      await settle();
+      assert.equal(text(cardOf(root, 'rota').querySelector('.ns-card-results')), url);
+    }
+    assert.deepEqual(requests.filter((r) => r.path === '/url/test').slice(0, 2).map((r) => r.payload), [
+      { url: 'https://calendar.example.com/ical/private-synthetic/basic.ics', email: 'person@example.com' },
+      { url: 'webcal://rota.example.net/team.ics' },
+    ]);
+  });
+
+  it('validates the address and the email on blur', async () => {
+    const { root } = mount(RAW);
+    openCard(root, 'personal');
+    fill(root, 'calendars.personal.url', 'http://calendar.example.com/a.ics');
+    assert.equal(feedback(root, 'calendars.personal.url'), VALIDATION.address);
+    fill(root, 'calendars.personal.url', '');
+    assert.equal(feedback(root, 'calendars.personal.url'), 'Secret address in iCal format is required.');
+    fill(root, 'calendars.personal.email', 'nope');
+    assert.equal(feedback(root, 'calendars.personal.email'), VALIDATION.email);
+    fill(root, 'calendars.personal.name', '');
+    assert.equal(feedback(root, 'calendars.personal.name'), 'Name is required.');
+    fill(root, 'calendars.personal.name', 'Personal');
+    openCard(root, 'rota');
+    fill(root, 'calendars.rota.name', 'personal');
+    assert.equal(feedback(root, 'calendars.rota.name'), VALIDATION.duplicateName);
+    type(field(root, 'calendars.rota.url'), 'http://rota.example.net/team.ics');
+    buttonNamed(cardOf(root, 'rota'), copy.TEST.test).click();
+    assert.equal(requests.length, 0, 'Test waits for a valid address');
+    assert.equal(feedback(root, 'calendars.rota.url'), VALIDATION.address, 'and says why');
+  });
+});
+
+describe('settings page: the Microsoft 365 card (SPEC 11.3 C)', () => {
+  const TENANT = '11111111-2222-3333-4444-555555555555';
+  const CLIENT = '66666666-7777-8888-9999-000000000000';
+  const WORK = { type: 'microsoft', id: 'cal-work', name: 'Work', tenantId: TENANT, clientId: CLIENT, useTeamsStatus: true, useCalendar: true };
+  const CODE = { verificationUri: 'https://microsoft.com/devicelogin', userCode: 'SYNTH123', expiresAt: '2026-10-08T15:15:00.000Z' };
+  const OUTLOOK = { calendars: [
+    { id: 'AAMkDefault=', name: 'Calendar', isDefault: true, shared: false, eventsToday: 2 },
+    { id: 'AAMkTeam=', name: 'Team', isDefault: false, shared: true, eventsToday: null },
+  ] };
+
+  function work(raw: Record<string, unknown> = {}): { root: FakeElement; page: PageT } {
+    const mounted = mount({ platform: 'BusyLight', calendars: [{ ...WORK, ...raw }] });
+    openCard(mounted.root, 'cal-work');
+    return mounted;
+  }
+
+  it('shows the note with its link, the two IDs, the two checkboxes and, for a saved source with no list, the default calendar line', () => {
+    const { root } = work();
+    const node = cardOf(root, 'cal-work');
+    const note = node.querySelector('.bl-ms-note')!;
+    assert.equal(text(note), `${copy.MICROSOFT.note} ${copy.MICROSOFT.whatToAsk}`);
+    assert.equal(note.querySelector('a')!.getAttribute('href'), copy.MICROSOFT.adminUrl);
+    assert.equal(field(root, 'calendars.cal-work.tenantId').getAttribute('placeholder'), 'e.g. 00000000-0000-0000-0000-000000000000');
+    assert.ok(field(root, 'calendars.cal-work.clientId').className.includes('font-monospace'));
+    assert.equal(text(node.querySelector('.bl-default-line')), copy.MICROSOFT.defaultCalendar);
+    assert.equal(text(node.querySelector('.bl-connect-line')), copy.CALENDARS.connectToSee);
+    assert.deepEqual(buttons(node.querySelector('.ns-footer-right')), [copy.MICROSOFT.connect]);
+    assert.equal(buttons(node).includes(copy.MICROSOFT.disconnect), false, 'no Disconnect before it is known to be signed in');
+  });
+
+  it('Connect shows the code view, polls every 3 seconds, and on done returns the card Connected with the calendar list', async () => {
+    const { root, page } = work();
+    answers.set('/microsoft/start', CODE);
+    answers.set('/microsoft/poll', { state: 'waiting' });
+    buttonNamed(cardOf(root, 'cal-work'), copy.MICROSOFT.connect).click();
+    assert.deepEqual(buttons(cardOf(root, 'cal-work').querySelector('.ns-footer-right')), [copy.MICROSOFT.gettingCode]);
+    await settle();
+    assert.deepEqual(requests.find((r) => r.path === '/microsoft/start')!.payload,
+      { id: 'cal-work', tenantId: TENANT, clientId: CLIENT, useTeamsStatus: true, useCalendar: true });
+    let node = cardOf(root, 'cal-work');
+    const view = node.querySelector('.bl-code-view')!;
+    assert.equal(text(view.querySelector('.bl-code-title')), copy.MICROSOFT.codeTitle);
+    assert.equal(text(view.querySelector('.bl-code-body')), copy.MICROSOFT.codeBody);
+    assert.equal(text(view.querySelector('.bl-code')), 'SYNTH123');
+    assert.equal(text(view.querySelector('.bl-code-waiting')), copy.MICROSOFT.waiting);
+    assert.deepEqual(buttons(view), [copy.MICROSOFT.copyCode, copy.CALENDARS.cancel]);
+    const open = view.querySelector('a')!;
+    assert.deepEqual([text(open), open.getAttribute('href'), open.getAttribute('target')], [copy.MICROSOFT.openSignIn, CODE.verificationUri, '_blank']);
+    assert.equal(node.querySelector('[data-path="calendars.cal-work.tenantId"]'), null, 'the code view replaces the card body');
+    await dom.clock.advance(3000);
+    await dom.clock.advance(3000);
+    assert.equal(requests.filter((r) => r.path === '/microsoft/poll').length, 2);
+    assert.deepEqual(requests.find((r) => r.path === '/microsoft/poll')!.payload, { id: 'cal-work' });
+    answers.set('/microsoft/poll', { state: 'done' });
+    answers.set('/microsoft/calendars', OUTLOOK);
+    await dom.clock.advance(3000);
+    await settle();
+    node = cardOf(root, 'cal-work');
+    assert.equal(node.querySelector('.bl-code-view'), null);
+    assert.deepEqual(requests.find((r) => r.path === '/microsoft/calendars')!.payload, { id: 'cal-work', tenantId: TENANT, clientId: CLIENT });
+    const rows = node.querySelectorAll('.bl-cal-row').map((r) => [text(r.querySelector('label')), r.querySelector('input')!.checked,
+      text(r.querySelector('.bl-cal-meta')), r.querySelectorAll('.badge').map((b) => text(b)).join('+')]);
+    assert.deepEqual(rows, [['Calendar', false, '2 events today', 'Default+New'], ['Team', false, '', 'Shared with you+New']]);
+    assert.equal(text(node.querySelector('.bl-subheading-help')), copy.MICROSOFT.calendarsHelp);
+    assert.ok(buttons(node).includes(copy.MICROSOFT.disconnect), 'signed in: Disconnect');
+    const polls = requests.filter((r) => r.path === '/microsoft/poll').length;
+    await dom.clock.advance(9000);
+    assert.equal(requests.filter((r) => r.path === '/microsoft/poll').length, polls, 'polling stopped when the view closed');
+    tick(rowNamed(node, 'Team').querySelector('input')!, true);
+    await settle();
+    assert.deepEqual(calendarsOf('cal-work'), [{ id: 'AAMkTeam=', name: 'Team', use: 'all' }]);
+    void page;
+  });
+
+  it('the other three endings: expired, refused with the instructions link, and Microsoft not reachable', async () => {
+    const { root } = work();
+    answers.set('/microsoft/start', CODE);
+    answers.set('/microsoft/poll', { state: 'expired' });
+    buttonNamed(cardOf(root, 'cal-work'), copy.MICROSOFT.connect).click();
+    await settle();
+    await dom.clock.advance(3000);
+    assert.equal(text(cardOf(root, 'cal-work').querySelector('.ns-card-results')), copy.MICROSOFT.expired);
+    assert.ok(cardOf(root, 'cal-work').querySelector('[data-path="calendars.cal-work.tenantId"]'), 'the card body is back');
+
+    answers.set('/microsoft/poll', { state: 'refused', reason: 'your organization has not approved the permissions', help: copy.MICROSOFT.adminUrl });
+    buttonNamed(cardOf(root, 'cal-work'), copy.MICROSOFT.connect).click();
+    await settle();
+    await dom.clock.advance(3000);
+    const refused = cardOf(root, 'cal-work').querySelector('.ns-card-results')!;
+    assert.equal(text(refused), `${copy.MICROSOFT.refused('your organization has not approved the permissions')} ${copy.MICROSOFT.instructions}`);
+    assert.equal(refused.querySelector('a')!.getAttribute('href'), copy.MICROSOFT.adminUrl);
+
+    answers.set('/microsoft/start', { error: 'network' });
+    buttonNamed(cardOf(root, 'cal-work'), copy.MICROSOFT.connect).click();
+    await settle();
+    assert.equal(text(cardOf(root, 'cal-work').querySelector('.ns-card-results')), copy.MICROSOFT.network);
+    answers.set('/microsoft/start', { error: 'refused', reason: 'the app registration does not allow public client flows', help: copy.MICROSOFT.adminUrl });
+    buttonNamed(cardOf(root, 'cal-work'), copy.MICROSOFT.connect).click();
+    await settle();
+    assert.ok(text(cardOf(root, 'cal-work').querySelector('.ns-card-results')).startsWith(
+      copy.MICROSOFT.refused('the app registration does not allow public client flows')));
+  });
+
+  it('Cancel closes the code view and tells the server; Copy code reads Copied', async () => {
+    const { root } = work();
+    answers.set('/microsoft/start', CODE);
+    answers.set('/microsoft/poll', { state: 'waiting' });
+    answers.set('/microsoft/cancel', { ok: true });
+    buttonNamed(cardOf(root, 'cal-work'), copy.MICROSOFT.connect).click();
+    await settle();
+    buttonNamed(cardOf(root, 'cal-work'), copy.MICROSOFT.copyCode).click();
+    await flush();
+    assert.ok(buttons(cardOf(root, 'cal-work')).includes(copy.MICROSOFT.copied));
+    assert.ok(dom.document.copies > 0, 'copied with the fallback, since the host runs over plain http');
+    buttonNamed(cardOf(root, 'cal-work'), copy.CALENDARS.cancel).click();
+    await flush();
+    assert.deepEqual(requests.filter((r) => r.path === '/microsoft/cancel').map((r) => r.payload), [{ id: 'cal-work' }]);
+    assert.equal(cardOf(root, 'cal-work').querySelector('.bl-code-view'), null);
+    const polls = requests.filter((r) => r.path === '/microsoft/poll').length;
+    await dom.clock.advance(9000);
+    assert.equal(requests.filter((r) => r.path === '/microsoft/poll').length, polls);
+  });
+
+  it('a source the state file shows signed in lists its calendars at Connect, asks to sign in again when the token is gone, and disconnects', async () => {
+    answers.set('/version', { version: '0.1.0-beta.2' });
+    answers.set('/status', state({
+      sources: [{ id: 'cal-work', name: 'Work', type: 'microsoft', state: 'connected', lastChecked: null, events: 3, error: null }],
+    }));
+    const { root, page } = mount({ platform: 'BusyLight', calendars: [{ ...WORK, calendars: [{ id: 'AAMkTeam=', name: 'Team', use: 'outOfOffice' }] }] });
+    page.startPolling();
+    await flush();
+    let node = openCard(root, 'cal-work');
+    const before = node.querySelectorAll('.bl-cal-row').map((r) => [text(r.querySelector('label')), r.querySelector('input')!.checked]);
+    assert.deepEqual(before, [['Team', true]], 'the saved list, ticked, before Connect');
+    assert.equal(rowNamed(node, 'Team').querySelector('select')!.value, 'outOfOffice');
+    answers.set('/microsoft/calendars', OUTLOOK);
+    buttonNamed(node, copy.MICROSOFT.connect).click();
+    await settle();
+    assert.equal(requests.filter((r) => r.path === '/microsoft/start').length, 0, 'no new code for a source already signed in');
+    node = cardOf(root, 'cal-work');
+    const after = node.querySelectorAll('.bl-cal-row').map((r) => [text(r.querySelector('label')), r.querySelectorAll('.badge').map((b) => text(b)).join('+')]);
+    assert.deepEqual(after, [['Calendar', 'Default+New'], ['Team', 'Shared with you']]);
+
+    answers.set('/microsoft/calendars', { error: 'notSignedIn' });
+    buttonNamed(node, copy.MICROSOFT.connect).click();
+    await settle();
+    node = cardOf(root, 'cal-work');
+    assert.equal(text(node.querySelector('.bl-sign-in-again')), copy.MICROSOFT.signInAgain);
+
+    page.ui.microsoft.get('cal-work')!.connected = true;
+    page.rerender('calendars');
+    answers.set('/microsoft/disconnect', { ok: true });
+    buttonNamed(cardOf(root, 'cal-work'), copy.MICROSOFT.disconnect).click();
+    node = cardOf(root, 'cal-work');
+    assert.ok(text(node).includes(copy.MICROSOFT.disconnectQuestion));
+    assert.ok(buttons(node).includes(copy.MICROSOFT.keep));
+    node.querySelectorAll('button').find((b) => text(b) === copy.MICROSOFT.disconnect && b.className.includes('btn-danger'))!.click();
+    await flush();
+    assert.deepEqual(requests.filter((r) => r.path === '/microsoft/disconnect').map((r) => r.payload), [{ id: 'cal-work' }]);
+    assert.equal(buttons(cardOf(root, 'cal-work')).includes(copy.MICROSOFT.disconnect), false);
+  });
+
+  it('a source signed in for Teams status only asks for a new code when listing its calendars is refused', async () => {
+    answers.set('/version', { version: '0.1.0-beta.2' });
+    answers.set('/status', state({
+      sources: [{ id: 'cal-work', name: 'Work', type: 'microsoft', state: 'connected', lastChecked: null, events: null, error: null }],
+    }));
+    const { root, page } = mount({ platform: 'BusyLight', calendars: [WORK] });
+    page.startPolling();
+    await flush();
+    openCard(root, 'cal-work');
+    answers.set('/microsoft/calendars', { error: 'refused', reason: 'your organization has not approved the permissions', help: copy.MICROSOFT.adminUrl });
+    answers.set('/microsoft/start', CODE);
+    answers.set('/microsoft/poll', { state: 'waiting' });
+    buttonNamed(cardOf(root, 'cal-work'), copy.MICROSOFT.connect).click();
+    await settle();
+    assert.deepEqual(requests.filter((r) => r.path.startsWith('/microsoft/')).map((r) => r.path), ['/microsoft/calendars', '/microsoft/start']);
+    assert.equal((requests.find((r) => r.path === '/microsoft/start')!.payload as { useCalendar: boolean }).useCalendar, true);
+    const node = cardOf(root, 'cal-work');
+    assert.ok(node.querySelector('.bl-code-view'), 'the code view, for a sign-in that includes the calendars');
+    assert.equal(text(node).includes(copy.MICROSOFT.refused('your organization has not approved the permissions')), false);
+  });
+
+  it('a poll answered after Cancel and a new Connect leaves the new code view open', async () => {
+    const { root } = work();
+    answers.set('/microsoft/start', CODE);
+    answers.set('/microsoft/cancel', { ok: true });
+    let release: (answer: unknown) => void = () => undefined;
+    answers.set('/microsoft/poll', () => new Promise((resolve) => {
+      release = resolve;
+    }));
+    buttonNamed(cardOf(root, 'cal-work'), copy.MICROSOFT.connect).click();
+    await settle();
+    await dom.clock.advance(3000);
+    assert.equal(requests.filter((r) => r.path === '/microsoft/poll').length, 1, 'a poll is out');
+    buttonNamed(cardOf(root, 'cal-work'), copy.CALENDARS.cancel).click();
+    await flush();
+    buttonNamed(cardOf(root, 'cal-work'), copy.MICROSOFT.connect).click();
+    await settle();
+    release({ state: 'expired' });
+    await flush();
+    const node = cardOf(root, 'cal-work');
+    assert.ok(node.querySelector('.bl-code-view'), 'the new code view stays');
+    assert.equal(text(node).includes(copy.MICROSOFT.expired), false);
+    answers.set('/microsoft/poll', { state: 'waiting' });
+    await dom.clock.advance(3000);
+    assert.equal(requests.filter((r) => r.path === '/microsoft/poll').length, 2, 'and keeps polling');
+  });
+
+  it('validates the IDs, both checkboxes off, and a second Microsoft 365 card using Teams status', () => {
+    const { root } = mount({ platform: 'BusyLight', calendars: [WORK, { ...WORK, id: 'cal-two', name: 'Two' }] });
+    openCard(root, 'cal-work');
+    openCard(root, 'cal-two');
+    fill(root, 'calendars.cal-work.tenantId', 'contoso');
+    assert.equal(feedback(root, 'calendars.cal-work.tenantId'), VALIDATION.guid);
+    fill(root, 'calendars.cal-work.clientId', '');
+    assert.equal(feedback(root, 'calendars.cal-work.clientId'), 'Application (client) ID is required.');
+    const teams = field(root, 'calendars.cal-two.useTeamsStatus');
+    tick(teams, true);
+    assert.equal(feedback(root, 'calendars.cal-two.useTeamsStatus'), VALIDATION.microsoftTeamsTwice);
+    tick(field(root, 'calendars.cal-two.useTeamsStatus'), false);
+    tick(field(root, 'calendars.cal-two.useCalendar'), false);
+    (dom.document.activeElement as unknown as FakeElement).blur?.();
+    assert.equal(feedback(root, 'calendars.cal-two.useCalendar'), VALIDATION.microsoftNeither);
+  });
+});
+
+describe('settings page: Colors (SPEC 11.3 D)', () => {
+  function rowOf(root: FakeElement, key: string): FakeElement {
+    return root.querySelector(`[data-path="colors.${key}"]`)!;
+  }
+
+  it('one row per status in precedence order, with the swatch, the hex value and Off', () => {
+    const { root } = mount({ platform: 'BusyLight', colors: { inMeeting: '#aa00ff' } });
+    const rows = root.querySelectorAll('#section-colors .bl-color-row');
+    assert.deepEqual(rows.map((r) => text(r.querySelector('.bl-color-name')).replace(/ ?Teams only$/, '')),
+      ['Out of office', 'Do not disturb', 'In a call', 'In a meeting', 'Busy', 'Tentative', 'Away', 'Available', 'Offline']);
+    const meeting = rowOf(root, 'inMeeting');
+    assert.equal(meeting.querySelector('.bl-color-hex')!.value, '#AA00FF');
+    assert.equal(meeting.querySelector('input[type="color"]')!.value, '#aa00ff');
+    const offline = rowOf(root, 'offline');
+    assert.equal(offline.querySelector('input[type="checkbox"]')!.checked, true);
+    assert.equal(offline.querySelector('.bl-color-hex')!.disabled, true);
+    assert.equal(offline.querySelector('input[type="color"]')!.disabled, true);
+    assert.equal(text(root.querySelector('.bl-precedence')), copy.COLORS.precedence);
+  });
+
+  it('the swatch, the hex field and Off write the color; a bad value shows the 11.3 H message; Reset colors puts the defaults back', async () => {
+    const { root, page } = mount();
+    const row = rowOf(root, 'busy');
+    const swatch = row.querySelector('input[type="color"]')!;
+    swatch.value = '#123abc';
+    swatch.dispatchEvent(new FakeEvent('input', true));
+    assert.equal(row.querySelector('.bl-color-hex')!.value, '#123ABC');
+    await settle();
+    assert.equal((lastBlock().colors as Record<string, string>).busy, '#123ABC');
+    const hex = row.querySelector('.bl-color-hex')!;
+    hex.focus();
+    type(hex, '#12');
+    hex.blur();
+    assert.equal(feedback(root, 'colors.busy'), VALIDATION.color);
+    assert.ok(hex.classList.contains('is-invalid'));
+    assert.equal(save.enabled, false);
+    hex.focus();
+    type(hex, '#00ff00');
+    hex.blur();
+    assert.equal(feedback(root, 'colors.busy'), '');
+    tick(row.querySelector('input[type="checkbox"]')!, true);
+    assert.equal(page.config.colors.busy, 'off');
+    assert.equal(hex.disabled, true);
+    tick(row.querySelector('input[type="checkbox"]')!, false);
+    assert.equal(page.config.colors.busy, '#00FF00', 'unticking Off brings the last color back');
+    buttonNamed(root.querySelector('#section-colors')!, copy.COLORS.reset).click();
+    await settle();
+    assert.deepEqual(lastBlock().colors, {
+      outOfOffice: '#B400FF', doNotDisturb: '#FF0000', inCall: '#FF0000', inMeeting: '#FF0000', busy: '#FF6A00', tentative: '#FFD000',
+      away: '#FFD000', available: '#00FF00', offline: 'off',
+    });
+    assert.equal(rowOf(root, 'busy').querySelector('.bl-color-hex')!.value, '#FF6A00');
+  });
+
+  it('Teams only, muted, on the five Teams statuses while no Microsoft 365 source uses Teams status, saved or not', () => {
+    const teamsOnly = (root: FakeElement) => root.querySelectorAll('#section-colors .bl-color-row')
+      .filter((r) => r.querySelector('.badge')).map((r) => r.dataset.path);
+    const { root, page } = mount();
+    assert.deepEqual(teamsOnly(root), ['colors.doNotDisturb', 'colors.inCall', 'colors.busy', 'colors.away', 'colors.offline']);
+    assert.ok(root.querySelector('#section-colors .bl-badge-muted'));
+    buttonNamed(root, copy.CALENDARS.add).click();
+    root.querySelectorAll('.ns-chooser-tile')[2].click();
+    assert.deepEqual(teamsOnly(root), [], 'an unsaved Microsoft 365 card with Use Teams status on');
+    const id = page.config.calendars[0].id;
+    tick(field(root, `calendars.${id}.useTeamsStatus`), false);
+    assert.equal(teamsOnly(root).length, 5);
+    const saved = mount({ platform: 'BusyLight', calendars: [{ type: 'microsoft', id: 'w', name: 'W', tenantId: 'x', clientId: 'y' }] });
+    assert.deepEqual(teamsOnly(saved.root), []);
+  });
+});
+
+describe('settings page: Lights (SPEC 11.3 E)', () => {
+  const FLOOR = { label: 'Floor', serial: 'd073d5000001', ip: '192.168.4.50' };
+  const DESK = { label: 'Desk', serial: 'd073d5000002', ip: '192.168.4.51' };
+  const lifxCard = (root: FakeElement): FakeElement => root.querySelector('#section-lights .bl-lifx-card')!;
+  const lines = (root: FakeElement): string[] => lifxCard(root).querySelectorAll('.bl-lifx-results .bl-lifx-line').map((l) => text(l));
+
+  it('ticking Use a LIFX bulb searches at once; one bulb is used and written as its serial number', async () => {
+    const { root, page } = mount();
+    assert.deepEqual(lifxCard(root).querySelectorAll('input').length, 1, 'only the checkbox while it is off');
+    answers.set('/lifx/discover', { bulbs: [FLOOR] });
+    tick(field(root, 'lifx.enabled'), true);
+    assert.deepEqual(lines(root), [copy.LIGHTS.searching]);
+    await settle();
+    assert.deepEqual(requests.map((r) => r.path), ['/lifx/discover']);
+    assert.deepEqual(lines(root), ['Found Floor (192.168.4.50). Busy Light will use it.']);
+    assert.equal(page.config.lifx.bulb, 'd073d5000001');
+    assert.deepEqual(lastBlock().lifx, { enabled: true, bulb: 'd073d5000001', host: '', brightness: 100, refreshSeconds: 300 });
+    assert.deepEqual(buttons(lifxCard(root).querySelector('.bl-lifx-actions')), [copy.LIGHTS.searchAgain]);
+  });
+
+  it('the Pi: a saved block with the bulb found by discovery opens without searching; Search again finds Floor', async () => {
+    answers.set('/version', { version: '0.1.0-beta.2' });
+    answers.set('/status', state());
+    const { root, page } = mount({ platform: 'BusyLight', calendars: [ICLOUD_SOURCE], lifx: { enabled: true } });
+    page.startPolling();
+    await flush();
+    assert.equal(requests.some((r) => r.path === '/lifx/discover'), false, 'opening the page calls only /version and /status');
+    assert.deepEqual(lines(root), []);
+    answers.set('/lifx/discover', { bulbs: [FLOOR] });
+    buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
+    await settle();
+    assert.deepEqual(lines(root), ['Found Floor (192.168.4.50). Busy Light will use it.']);
+  });
+
+  it('several bulbs: one radio each, and the choice is written as its serial number', async () => {
+    const { root, page } = mount({ platform: 'BusyLight', lifx: { enabled: true } });
+    answers.set('/lifx/discover', { bulbs: [DESK, FLOOR] });
+    buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
+    await settle();
+    assert.deepEqual(lines(root), ['Found 2 bulbs. Choose one:']);
+    const radios = lifxCard(root).querySelectorAll('input[type="radio"]');
+    assert.deepEqual(radios.map((r) => text(r.parentNode!)), ['Desk (192.168.4.51)', 'Floor (192.168.4.50)']);
+    assert.equal(page.config.lifx.bulb, '', 'nothing is chosen for the user');
+    radios[1].checked = true;
+    radios[1].dispatchEvent(new FakeEvent('change', true));
+    await settle();
+    assert.equal(page.config.lifx.bulb, 'd073d5000001');
+    assert.equal(lifxCard(root).querySelectorAll('input[type="radio"]')[1].checked, true);
+  });
+
+  it('none found, the saved bulb missing, and a build 1 name written as its serial when found', async () => {
+    const { root, page } = mount({ platform: 'BusyLight', lifx: { enabled: true } });
+    answers.set('/lifx/discover', { bulbs: [] });
+    buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
+    await settle();
+    assert.deepEqual(lines(root), [copy.LIGHTS.none]);
+    const named = mount({ platform: 'BusyLight', lifx: { enabled: true, bulb: 'floor' } });
+    buttonNamed(lifxCard(named.root), copy.LIGHTS.searchAgain).click();
+    await settle();
+    assert.deepEqual(lines(named.root), ['floor was not found just now. It may be switched off.']);
+    answers.set('/lifx/discover', { bulbs: [DESK, FLOOR] });
+    buttonNamed(lifxCard(named.root), copy.LIGHTS.searchAgain).click();
+    await settle();
+    assert.equal(named.page.config.lifx.bulb, 'd073d5000001', 'the name matched without regard to case');
+    assert.equal(lifxCard(named.root).querySelectorAll('input[type="radio"]').find((r) => r.checked)!.value, 'd073d5000001');
+    void page;
+  });
+
+  it('an IP address under Advanced hides the search and says which bulb is used; it is validated', async () => {
+    const { root } = mount({ platform: 'BusyLight', lifx: { enabled: true, bulb: 'd073d5000001' } });
+    const advanced = lifxCard(root).querySelector('details')!;
+    assert.equal(advanced.open, false);
+    assert.equal(text(advanced.querySelector('summary')), copy.SHELL.advanced);
+    assert.equal(text(advanced.querySelector('[data-path="lifx.host"] .form-text')), `${copy.LIGHTS.ipLead} ${copy.LIGHTS.ipHelp}`);
+    fill(root, 'lifx.host', '192.168.4.99');
+    assert.deepEqual(lines(root), ['Busy Light will use the bulb at 192.168.4.99.']);
+    assert.equal(lifxCard(root).querySelector('.bl-search-again'), null);
+    fill(root, 'lifx.host', '999.1.1.1');
+    assert.equal(feedback(root, 'lifx.host'), VALIDATION.host);
+    fill(root, 'lifx.host', '');
+    assert.deepEqual(buttons(lifxCard(root).querySelector('.bl-lifx-actions')), [copy.LIGHTS.searchAgain]);
+    fill(root, 'lifx.brightness', '0');
+    assert.equal(feedback(root, 'lifx.brightness'), 'Enter a whole number from 1 to 100.');
+    fill(root, 'lifx.refreshSeconds', '');
+    assert.equal(feedback(root, 'lifx.refreshSeconds'), 'Send the color again every (seconds) is required.');
+  });
+
+  it('Test light sends the serial and address, or the IP address alone, and shows whether the bulb answered', async () => {
+    const { root } = mount({ platform: 'BusyLight', lifx: { enabled: true, brightness: 60 } });
+    answers.set('/lifx/discover', { bulbs: [FLOOR] });
+    buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
+    await settle();
+    answers.set('/lifx/test', { answered: true });
+    assert.equal(text(lifxCard(root).querySelector('.bl-test-help')), copy.LIGHTS.testHelp);
+    buttonNamed(lifxCard(root), copy.LIGHTS.testLight).click();
+    assert.deepEqual(buttons(lifxCard(root).querySelector('.ns-footer-right')), [copy.LIGHTS.testing]);
+    await settle();
+    assert.equal(text(lifxCard(root).querySelector('.ns-card-results')), copy.LIGHTS.answered);
+    assert.deepEqual(requests.find((r) => r.path === '/lifx/test')!.payload, { brightness: 60, serial: 'd073d5000001', host: '192.168.4.50' });
+    fill(root, 'lifx.host', '192.168.4.99');
+    answers.set('/lifx/test', { answered: false });
+    buttonNamed(lifxCard(root), copy.LIGHTS.testLight).click();
+    await settle();
+    assert.equal(text(lifxCard(root).querySelector('.ns-card-results')), copy.LIGHTS.noAnswer);
+    assert.deepEqual(requests.filter((r) => r.path === '/lifx/test')[1].payload, { brightness: 60, host: '192.168.4.99' });
+  });
+
+  it('the sensors to create, named from the platform name, the other seven under Show all statuses, and the three steps', async () => {
+    const { root, page } = mount({ platform: 'BusyLight', name: 'Door' });
+    const section = root.querySelector('#section-lights')!;
+    const labels = (node: FakeElement) => node.querySelectorAll('.form-check-label').map((l) => text(l));
+    assert.equal(text(section.querySelector('.bl-other-heading')), copy.LIGHTS.otherHeading);
+    assert.deepEqual(labels(section.querySelector('.bl-sensors')!), ['Door Available', 'Door Busy', 'Door Out of Office']);
+    const all = section.querySelector('details.bl-all-sensors')!;
+    assert.equal(text(all.querySelector('summary')), copy.LIGHTS.showAll);
+    assert.equal(all.open, false);
+    assert.deepEqual(labels(all), ['Door In a Meeting', 'Door In a Call', 'Door Do Not Disturb', 'Door Busy in Teams', 'Door Tentative', 'Door Away',
+      'Door Offline']);
+    assert.deepEqual(section.querySelectorAll('.bl-sensors input').slice(0, 3).map((i) => i.checked), [true, true, true]);
+    tick(all.querySelectorAll('input')[0], true);
+    tick(section.querySelectorAll('.bl-sensors input')[0], false);
+    await settle();
+    assert.deepEqual(lastBlock().sensors, ['busyAny', 'outOfOffice', 'inMeeting']);
+    assert.deepEqual(section.querySelectorAll('.ns-step-text').map((s) => text(s)), [
+      'In the Home app, add an automation: A sensor detects something.', 'Choose Door Busy, then Detects occupancy.', 'Set your light to red.',
+    ]);
+    assert.equal(mount({ platform: 'BusyLight', sensors: ['away'] }).root.querySelector('details.bl-all-sensors')!.open, true,
+      'open when one of the seven is ticked');
+    void page;
+  });
+});
+
+describe('settings page: Settings (SPEC 11.3 F)', () => {
+  function resetLink(root: FakeElement): FakeElement {
+    const link = root.querySelectorAll('#section-settings button').find((b) => text(b) === copy.SHELL.reset);
+    assert.ok(link, 'no Reset link');
+    return link;
+  }
+
+  it('one collapsed Advanced holding the settings in the order of the SPEC, with their help', () => {
+    const { root } = mount();
+    const details = root.querySelector('#section-settings details')!;
+    assert.equal(details.open, false);
+    assert.equal(text(details.querySelector('summary')), copy.SHELL.advanced);
+    const labels = details.querySelectorAll('label').map((l) => text(l).replace(/\*$/, ''));
+    assert.deepEqual(labels, [copy.SETTINGS.name, copy.SETTINGS.pollSeconds, copy.SETTINGS.calendarSeconds, copy.SETTINGS.ignoreAllDayBusy,
+      copy.SETTINGS.outOfOfficeWords, copy.SETTINGS.overrideSwitch, copy.SETTINGS.debug]);
+    assert.equal(field(root, 'name').value, 'Busy Light');
+    assert.equal(field(root, 'outOfOfficeWords').value, 'Out of office, OOO, Vacation, PTO');
+    assert.equal(text(root.querySelector('[data-path="debug"] .form-text')), copy.SETTINGS.debugHelp);
+    assert.deepEqual(buttons(details), [copy.SHELL.reset]);
+  });
+
+  it('validates on blur, opens Advanced for an issue, and writes the words as a list', async () => {
+    const { root, page } = mount();
+    fill(root, 'pollSeconds', '5');
+    assert.equal(feedback(root, 'pollSeconds'), 'Enter a whole number from 15 to 240.');
+    fill(root, 'calendarSeconds', '601');
+    assert.equal(feedback(root, 'calendarSeconds'), 'Enter a whole number from 60 to 600.');
+    fill(root, 'name', ' ');
+    assert.equal(feedback(root, 'name'), 'Name is required.');
+    assert.deepEqual(root.querySelectorAll('.ns-issue-link').map((b) => text(b)), [
+      'Settings: Name is required.', 'Settings: Enter a whole number from 15 to 240.', 'Settings: Enter a whole number from 60 to 600.',
+    ]);
+    assert.equal(save.enabled, false);
+    fill(root, 'name', 'Door');
+    fill(root, 'pollSeconds', '60');
+    fill(root, 'calendarSeconds', '300');
+    fill(root, 'outOfOfficeWords', 'Holiday, , Leave ');
+    await settle();
+    assert.equal(save.enabled, true);
+    assert.equal(root.querySelector('.ns-issues')!.hidden, true);
+    const block = lastBlock();
+    assert.deepEqual([block.name, block.pollSeconds, block.calendarSeconds, block.outOfOfficeWords], ['Door', 60, 300, ['Holiday', 'Leave']]);
+    assert.ok(text(root.querySelector('#section-lights .bl-sensors')).includes('Door Available'), 'the sensors follow the name');
+    const reopened = mount({ platform: 'BusyLight', pollSeconds: 5 });
+    assert.equal(reopened.page.issues().length, 1);
+    reopened.root.querySelector('.ns-issue-link')!.click();
+    assert.equal(reopened.root.querySelector('#section-settings details')!.open, true, 'the summary entry opens Advanced');
+    assert.equal(dom.document.activeElement, field(reopened.root, 'pollSeconds'), 'and moves focus to the field');
+    assert.equal(feedback(reopened.root, 'pollSeconds'), 'Enter a whole number from 15 to 240.');
+    void page;
+  });
+
+  it('the Reset dialog sits below the link, needs RESET in any case, and Confirm resets the page in place', async () => {
+    const { root, page } = mount({
+      platform: 'BusyLight', name: 'Door', debug: true, calendars: [ICLOUD_SOURCE], colors: { busy: '#123456' }, lifx: { enabled: true },
+    });
+    root.querySelector('#section-settings details')!.open = true;
+    resetLink(root).click();
+    let dialog = root.querySelector('.ns-inline-dialog')!;
+    assert.equal(resetLink(root).nextElementSibling, dialog, 'directly below the link');
+    assert.ok(dialog.classList.contains('card'), 'a card, so the host paints it in both themes');
+    assert.equal(text(dialog.querySelector('.ns-inline-dialog-title')), copy.SHELL.resetTitle);
+    assert.deepEqual(dialog.querySelectorAll('li').map((li) => text(li)), copy.SETTINGS.resetLines);
+    assert.equal(text(dialog.querySelector('label')), copy.SHELL.resetPrompt);
+    assert.deepEqual(buttons(dialog), [copy.SHELL.resetConfirm, copy.SHELL.resetCancel]);
+    await dom.clock.advance(0);
+    assert.equal(dom.document.activeElement, dialog.querySelector('input'));
+    assert.deepEqual(dialog.scrolledInto, [{ block: 'center' }]);
+    const confirm = buttonNamed(dialog, copy.SHELL.resetConfirm);
+    assert.equal(confirm.disabled, true);
+    type(dialog.querySelector('input')!, 'reset');
+    assert.equal(confirm.disabled, false);
+    buttonNamed(dialog, copy.SHELL.resetCancel).click();
+    assert.equal(root.querySelector('.ns-inline-dialog'), null);
+    resetLink(root).click();
+    dom.document.dispatchEvent(new FakeEvent('keydown', true, { key: 'Escape' }));
+    assert.equal(root.querySelector('.ns-inline-dialog'), null, 'Escape closes');
+
+    resetLink(root).click();
+    dialog = root.querySelector('.ns-inline-dialog')!;
+    type(dialog.querySelector('input')!, 'RESET');
+    answers.set('/reset', { ok: true });
+    answers.set('/status', { status: null });
+    buttonNamed(dialog, copy.SHELL.resetConfirm).click();
+    await settle();
+    assert.equal(requests.filter((r) => r.path === '/reset').length, 1);
+    const done = root.querySelector('.bl-reset-done')!;
+    assert.equal(text(done.querySelector('.ns-inline-dialog-title')), copy.SETTINGS.resetDoneTitle);
+    assert.equal(text(done.querySelector('.ns-inline-dialog-body')), copy.SETTINGS.resetDoneBody);
+    assert.equal(root.querySelectorAll('#section-settings button').find((b) => text(b) === copy.SHELL.reset), undefined, 'no Reset link until a reload');
+    assert.deepEqual(done.scrolledInto, [{ block: 'center' }]);
+    assert.equal(page.config.name, 'Busy Light');
+    assert.deepEqual(lastBlock(), exportConfig(readConfig({ platform: 'BusyLight' })), 'the defaults, for Save to write');
+    assert.equal(text(root.querySelector('#section-calendars .bl-empty')), copy.CALENDARS.empty);
+    assert.equal(dom.storage.getItem('homebridge-busy-light:draft'), null, 'no draft after a Reset');
+  });
+});
+
+describe('settings page: the draft (shell rule M1)', () => {
+  const GOOGLE_URL = 'https://calendar.example.com/ical/private-synthetic/basic.ics';
+  const ROTA_URL = 'https://rota.example.net/private-synthetic.ics';
+  const RAW = { platform: 'BusyLight', calendars: [
+    ICLOUD_SOURCE,
+    { type: 'google', id: 'personal', name: 'Personal', url: GOOGLE_URL },
+    { type: 'url', id: 'rota', name: 'Rota', url: ROTA_URL },
+  ] };
+
+  it('is written only after a change and never holds a secret', async () => {
+    const { root } = mount(RAW);
+    await settle();
+    assert.equal(dom.storage.getItem('homebridge-busy-light:draft'), null, 'opening the page writes none');
+    fill(root, 'name', 'Door');
+    const stored = dom.storage.getItem('homebridge-busy-light:draft')!;
+    assert.ok(stored.includes('"name":"Door"'));
+    for (const secret of ['abcd-efgh-ijkl-mnop', 'private-synthetic', 'calendar.example.com/ical']) {
+      assert.equal(stored.includes(secret), false, secret);
+    }
+  });
+
+  it('is offered back under the banner when it differs from the saved block; Restore puts the secrets back, Discard deletes it', async () => {
+    const first = mount(RAW);
+    fill(first.root, 'name', 'Door');
+    first.root.remove();
+    const { root, page } = mount(RAW);
+    const banner = root.querySelector('.ns-draft-banner')!;
+    assert.equal(root.children[1].firstElementChild, banner, 'directly under the banner');
+    assert.equal(text(banner.querySelector('.ns-draft-text')), copy.SHELL.draft);
+    assert.deepEqual(buttons(banner), [copy.SHELL.restore, copy.SHELL.discard]);
+    buttonNamed(banner, copy.SHELL.restore).click();
+    await settle();
+    assert.equal(root.querySelector('.ns-draft-banner'), null);
+    assert.equal(page.config.name, 'Door');
+    const icloud = page.config.calendars.find((s) => s.id === 'icloud')!;
+    assert.equal(icloud.appPassword, 'abcd-efgh-ijkl-mnop', 'the password comes back from the saved configuration');
+    assert.equal(page.config.calendars.find((s) => s.id === 'personal')!.url, GOOGLE_URL);
+    assert.equal(page.config.calendars.find((s) => s.id === 'rota')!.url, ROTA_URL);
+    assert.equal(lastBlock().name, 'Door');
+
+    const again = mount(RAW);
+    buttonNamed(again.root.querySelector('.ns-draft-banner')!, copy.SHELL.discard).click();
+    assert.equal(again.root.querySelector('.ns-draft-banner'), null);
+    assert.equal(dom.storage.getItem('homebridge-busy-light:draft'), null);
+    assert.equal(mount(RAW).root.querySelector('.ns-draft-banner'), null);
+  });
+
+  it('a draft equal to the saved block (it was saved) is deleted without a banner', () => {
+    const first = mount(RAW);
+    fill(first.root, 'name', 'Door');
+    fill(first.root, 'name', 'Busy Light');
+    assert.ok(dom.storage.getItem('homebridge-busy-light:draft'));
+    assert.equal(mount(RAW).root.querySelector('.ns-draft-banner'), null);
+    assert.equal(dom.storage.getItem('homebridge-busy-light:draft'), null);
+  });
+});

@@ -654,6 +654,8 @@ Microsoft 365 card:
 - Relative times: `just now`, `1 minute ago`, `{n} minutes ago`, `1 hour ago`, `{n} hours ago`, `1 day ago`, `{n} days ago`
 - Times: 12-hour in the host's locale, for example `1:00 PM`
 - Failures of the host itself: `Could not load the configuration.`, `Could not update the configuration.`
+- Draft banner (shell rule M1, as in `homebridge-notify-switch` 11.3): `You have unsaved changes from earlier. Restore them?` with the buttons `Restore` and `Discard`
+- Summary box (shell rule F4, as in `homebridge-notify-switch` 11.3): `Fix these before saving:`, one entry per issue reading `{Card name}: {message}` (a calendar's name, or `Colors`, `LIFX bulb` or `Settings` for the fields outside a calendar card), collapsed past three entries to `{n} fields need attention` (`1 field needs attention`) with the toggle `Show all`, then `Hide`
 
 **H. Validation** (on blur; the summary box lists the same messages)
 
