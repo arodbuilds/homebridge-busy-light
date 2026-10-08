@@ -6,7 +6,7 @@
 
 Your calendar and Teams status on a light. Green when you are free, red when you are not.
 
-Status: beta. Version 0.1.0-beta.3 adds status from other apps, a check interval for each calendar and color presets. It has been tested against recorded responses and in the Homebridge UI, not yet against every calendar service and bulb, nor on a real network with other apps reporting. Please report what you find.
+Status: beta. Version 0.1.0-beta.4 leads with the Outlook published calendar link for work calendars, finds Busy Light by name on your network, shows intervals in minutes, and shows only the statuses your setup can produce. It has been tested against recorded responses and in the Homebridge UI, not yet against every calendar service and bulb, nor on every network. Please report what you find.
 
 Busy Light reads your calendars and, if you use Microsoft 365, your Teams presence, and reduces them to one status. Other apps on your network can report a status too, for example a call helper that knows you are on a call. Busy Light shows the status two ways:
 
@@ -17,9 +17,9 @@ A typical use is a lamp outside a home office door: green when you are free, red
 
 It works with:
 
+- Outlook and Microsoft 365: your calendar's published link, with no IT approval, or sign-in for live Teams status (see [Outlook and Microsoft 365](#outlook-and-microsoft-365))
 - iCloud calendars
 - Google Calendar
-- Microsoft 365 (Outlook calendars and Teams presence)
 - Any calendar subscription link that starts with `https://` or `webcal://`
 
 Add as many calendars as you like. Events from all of them are combined.
@@ -58,7 +58,7 @@ Install Busy Light from the Plugins tab of the Homebridge UI, or run:
 npm install -g homebridge-busy-light@beta
 ```
 
-Then open the plugin settings, add at least one calendar, choose how the light is controlled, click Save and restart Homebridge.
+Then open the plugin settings, add at least one calendar, choose how the light is controlled, click Save and restart Homebridge. For a work calendar in Outlook, choose Outlook or Microsoft 365, then Published calendar link: it needs nothing from your IT department.
 
 Until the first release is on npm, build it from source inside your Homebridge storage directory, as the user Homebridge runs as (on the Homebridge Raspberry Pi image, run `sudo hb-shell` first):
 
@@ -86,11 +86,11 @@ What the running plugin shows at this moment: the color and the status, and why,
 
 ### Calendars
 
-One card per calendar. Click Add calendar and choose iCloud, Google Calendar, Microsoft 365 or Calendar URL. Click a card's header to open or close it. The header shows the calendar's state as the running plugin sees it (Connected, Checking, Sign-in needed or Not reachable, with the reason under it), or Not saved yet for a calendar you have not saved.
+One card per calendar. Click Add calendar and choose iCloud, Google Calendar, Outlook or Microsoft 365, or Calendar URL. Click a card's header to open or close it. The header shows the calendar's state as the running plugin sees it (Connected, Checking, Sign-in needed or Not reachable, with the reason under it), or Not saved yet for a calendar you have not saved.
 
 **Counts for.** Each calendar counts for "Busy and out of office" (the default) or "Out of office only". Out of office only uses the calendar's out of office events and ignores the rest, which is useful for a family calendar: a family member's holiday can make you out of office, but their appointments do not make you busy. For iCloud and Microsoft 365 you choose it for each calendar you tick; for Google Calendar and Calendar URL, for the card.
 
-**Check for changes every.** Under Advanced on each card, how often that calendar is read again, from 60 to 600 seconds. Leave it empty to use Reload calendars every, under Settings. A calendar that changes rarely, such as a team rota, can be read every 10 minutes while your main calendar is read every 3. Microsoft 365 Teams status is still checked at Check status every.
+**Check for changes every.** Under Advanced on each card, how often Busy Light looks for new or changed events on that calendar: 1, 2, 3, 5 or 10 minutes, or Same as Settings (the default), which follows Reload calendars every under Settings. A calendar that changes rarely, such as a team rota, can be read every 10 minutes while your main calendar is read every 3. Microsoft 365 Teams status is still checked at Check status every. A value typed in an earlier version that is not in the list (90 seconds, say) shows as its own choice, "1 minute 30 seconds", and is kept.
 
 #### iCloud
 
@@ -111,9 +111,19 @@ If iCloud does not accept the password, the plugin tries again only once an hour
 
 Google refreshes the secret address on its own schedule, so a change you make in Google Calendar can take a while to reach the light.
 
-#### Microsoft 365
+#### Outlook and Microsoft 365
 
-Microsoft 365 needs an app registration in your organization's tenant, which only your administrator can create. You need two IDs from them: the Directory (tenant) ID and the Application (client) ID.
+Choose **Outlook or Microsoft 365** under Add calendar. The page offers two ways in.
+
+**Published calendar link (recommended).** Works with any Outlook or Microsoft 365 calendar, with no IT approval, and shows busy, tentative and out of office. The card it adds, named Outlook, carries these steps:
+
+1. Open Outlook on the web and go to Settings, Calendar, Shared calendars.
+2. Under Publish a calendar, choose your calendar and Can view when I'm busy, then select Publish.
+3. Copy the ICS link and paste it into the card's Address, then click Test.
+
+"Can view when I'm busy" is all Busy Light needs: the link then carries only when you are busy, tentative or out of office, and never the titles, places or people of your meetings, which is more private than sharing titles. Treat the link like a password all the same: anyone with it can see when you are busy. Busy Light never writes it to the log, only its host name. A new or moved meeting shows up within a few minutes (about 2 in testing), and the light changes when it starts. If Publish a calendar is missing, your organization has turned publishing off: ask IT, or use sign-in below. A Calendar URL card whose address is an Outlook link shows the same steps under How to get this link.
+
+**Sign in with Microsoft 365 (advanced).** Adds your live Teams status, such as In a call, to your Outlook calendars. It needs an app registration in your organization's tenant, which only your administrator can create, and many IT departments will not approve one. You need two IDs from them: the Directory (tenant) ID and the Application (client) ID.
 
 **What to ask for:** send your administrator the text in [docs/microsoft-365-admin-request.md](docs/microsoft-365-admin-request.md) (the card links to it as "What do I ask for?"). It is written to be copied and pasted as is: what Busy Light does, the exact registration steps, the two IDs to send back, and notes for a security review.
 
@@ -141,9 +151,9 @@ Lets other apps on your network tell Busy Light you are on a call or busy: a cal
 
 **Turning it on.** Tick "Let other apps set your status". The page makes a key and shows:
 
-- **Address**: where apps send their status, for example `http://homebridge.local:8582`, and the computer's IP addresses. When the address by name is missing, the page asks you to reserve the IP address for Homebridge in your router, so apps keep reaching it.
+- **Address**: where apps send their status, for example `http://homebridge.local:8582`, with the computer's IP addresses below it. Busy Light uses the name when the network confirms it: it asks once with multicast DNS, the way a Mac or iPhone finds the Pi. When the name cannot be confirmed, the address is the IP address and the page asks you to reserve it for Homebridge in your router. Reserving it is a good idea either way, for apps that only take an IP address. If the IP address changes, the log and the page say so, and apps need the new setup code.
 - **Key**: 43 random characters. Treat it like a password. Replace key makes a new one; every app using the old key stops working until you give it the new one.
-- **Setup code**: the address, the key and this Busy Light's id in one line, for example `busylight://homebridge.local:8582/?key=...&id=...`. Paste it into the app that will report your status.
+- **Setup code**: the address, the key and this Busy Light's id in one line, for example `busylight://homebridge.local:8582/?key=...&id=...`. It is masked like the key: Show on the Key field reveals both, Hide masks both. Copy setup code copies the whole code either way. Paste it into the app that will report your status.
 
 Click Save and restart Homebridge. The log then says `Status input is listening on port 8582.` Test on the page sends a call for 30 seconds, so the light should turn red. **Allow the plain key** (on by default) lets tools that cannot sign their requests, such as Apple Shortcuts and curl, send the key itself; anyone watching your network could copy it then, so turn it off once every app under Apps reporting now shows Signed. Under Advanced you can change the port (8582) if another program already uses it.
 
@@ -168,7 +178,7 @@ The light turns red for 3 minutes, and "Test on my laptop" appears under Apps re
 
 The color the light shows for each status, in the order of the status table: when more than one applies, the one highest in the list wins. Each status has a row of presets: Red, Orange, Yellow, Green, Blue, Purple, White, Off (the light turns off for that status) and Custom. Custom shows a color picker and a field for any value such as `#1A2B3C`; a color saved by hand that is not a preset shows as Custom. Arrow keys move along a row. Reset colors puts the defaults back.
 
-Statuses only Teams can give are marked "Teams only" while no Microsoft 365 calendar uses Teams status and Status from other apps is off (In a call also while the On a Call switch is off).
+The list shows the statuses your setup can produce. With calendars alone (an Outlook link, iCloud, Google or any calendar link) that is four: Out of office, In a meeting, Tentative and Available. In a call needs the On a Call switch, Status from other apps or Teams status; Do not disturb, Busy, Away and Offline need Status from other apps or Teams status. The others wait behind "5 more statuses come from Teams or from other apps." and Show all statuses, and the list changes as you turn those on or off. Hidden statuses keep their colors, and Reset colors resets all nine.
 
 ### Lights
 
@@ -188,7 +198,7 @@ When the page opens, the card says which bulb the running plugin uses, for examp
 | Busy Light Busy | In a meeting, in a call, do not disturb, or busy |
 | Busy Light Out of Office | Out of office |
 
-Under Show all statuses you can add one for each individual status: In a Meeting, In a Call, Do Not Disturb, Busy in Teams, Tentative, Away and Offline. The names start with the Name under Settings, and renaming keeps your rooms and automations.
+Under Show all statuses you can add one for each individual status: In a Meeting, In a Call, Do Not Disturb, Busy in Teams, Tentative, Away and Offline. Statuses your setup cannot produce yet come last there, marked "Nothing in your setup reports this yet."; you can still add them. The names start with the Name under Settings, and renaming keeps your rooms and automations.
 
 For example, to make a Hue lamp red when you are busy:
 
@@ -203,7 +213,7 @@ Add a second automation on Busy Light Available to set it back to green.
 Under Advanced:
 
 - **Name** starts the name of every sensor.
-- **Check status every** and **Reload calendars every** (seconds).
+- **Check status every** (15 or 30 seconds, or 1, 2 or 4 minutes; 30 seconds by default) and **Reload calendars every** (1, 2, 3, 5 or 10 minutes; 3 minutes by default). `config.json` keeps them in seconds.
 - **Ignore all-day events marked busy** (on by default). All-day out of office events always count.
 - **Out of office words**, separated by commas.
 - **Override switch** adds "Busy Light Override" to the Home app. While it is on, the status is Do not disturb whatever your calendars say. It keeps its state across restarts.
@@ -329,6 +339,10 @@ Add `-U <path>` to use a Homebridge storage directory other than `/var/lib/homeb
 **An app gets `401`.** `unauthorized` means the app has an old key (after Replace key) or the plugin has not restarted since the key changed; `plain_key_off` means the app sent the key itself while Allow the plain key is off. The log names the address once an hour, for example `Status input: refused a request with a wrong key from 192.168.4.23.`
 
 **An app cannot reach Busy Light.** Check that the app's computer is on the home network and that the address works from it (`curl http://homebridge.local:8582/v1/ping`). If the address by name does not work on your network, use the IP address and reserve it for Homebridge in your router.
+
+**The Address shows only an IP address, with the "reserve this address" help.** Busy Light could not confirm its name on your network: it asks once with multicast DNS, as a Mac or iPhone would, then the computer's own resolver. Apps can use the IP address; reserve it for Homebridge in your router so it does not change.
+
+**"Homebridge's address changed from 192.168.4.10 to 192.168.4.23."** With no name confirmed, the IP address apps were given changed (a router gave Homebridge a new one). Give your apps the new setup code from the page; the notice there stays until you save the page.
 
 **More detail:** turn on Debug logging under Settings. Debug lines report counts and times, never event details.
 
