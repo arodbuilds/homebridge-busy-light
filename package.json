@@ -2,7 +2,7 @@
   "name": "homebridge-busy-light",
   "displayName": "Busy Light",
   "type": "module",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-beta.2",
   "description": "Shows your calendar and Teams status on a light: green when you are free, red when you are not. iCloud, Google Calendar, Microsoft 365 and calendar URLs, with LIFX control and HomeKit sensors.",
   "author": "Alex Rodriguez (https://alex-rodriguez.com)",
   "license": "Apache-2.0",
@@ -35,6 +35,8 @@
   },
   "files": [
     "dist",
+    "homebridge-ui/public",
+    "homebridge-ui/server.js",
     "config.schema.json",
     "LICENSE",
     "NOTICE",
@@ -47,12 +49,13 @@
     "homebridge": "^1.8.0 || ^2.0.0-beta.0"
   },
   "scripts": {
-    "build": "rimraf ./dist && tsc",
+    "build": "rimraf ./dist && tsc && npm run build:ui",
     "lint": "eslint . --max-warnings=0",
     "prepublishOnly": "npm run lint && npm run build",
     "test": "npm run lint && npm run build && npm run test:unit",
     "test:unit": "rimraf ./build-test && tsc -p tsconfig.test.json && node --test build-test/test/*.test.js",
-    "watch": "npm run build && npm link && nodemon"
+    "watch": "npm run build && npm link && nodemon",
+    "build:ui": "rimraf ./homebridge-ui/public/js && tsc -p homebridge-ui && node scripts/build-ui.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -67,6 +70,7 @@
     "typescript-eslint": "^8.67.0"
   },
   "dependencies": {
+    "@homebridge/plugin-ui-utils": "^2.2.6",
     "ical.js": "^2.2.1"
   }
 }

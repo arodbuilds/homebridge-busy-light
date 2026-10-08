@@ -2,6 +2,7 @@
   "pluginAlias": "BusyLight",
   "pluginType": "platform",
   "singular": true,
+  "customUi": true,
   "headerDisplay": "Busy Light shows whether you are free on a light. Add at least one calendar, then choose how the light is controlled. Not affiliated with or endorsed by Apple, Google, Microsoft or LIFX.",
   "schema": {
     "type": "object",
