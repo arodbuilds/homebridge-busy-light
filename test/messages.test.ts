@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  calendarsNotInUse, inputClockOff, inputFailed, inputNotLocal, inputPlainKeyOff, inputStarted, inputWrongKey, listedCalendarGone, senderCleared,
-  senderExpired, senderReports,
+  callSwitchTimeout, calendarsNotInUse, inputClockOff, inputFailed, inputNotLocal, inputPlainKeyOff, inputStarted, inputWrongKey,
+  listedCalendarGone, senderCleared, senderExpired, senderReports,
 } from '../src/messages.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -53,4 +53,9 @@ test('the build 3 status input lines are verbatim from SPEC section 12', () => {
   assert.equal(inputClockOff('192.168.4.20', 301), specLine('Clock off').replace('{ip}', '192.168.4.20').replace('{n}', '301'));
   assert.equal(inputPlainKeyOff('192.168.4.20'), specLine('Plain key off').replace('{ip}', '192.168.4.20'));
   assert.equal(inputNotLocal('203.0.113.9'), specLine('Not local').replace('{ip}', '203.0.113.9'));
+});
+
+test('the On a Call timeout line is verbatim from SPEC section 12, singular for 1', () => {
+  assert.equal(callSwitchTimeout('Busy Light', 3), specLine('Call switch timeout').replace('{name}', 'Busy Light').replace('{n}', '3'));
+  assert.equal(callSwitchTimeout('Busy Light', 1), 'Busy Light On a Call turned itself off after 1 hour.');
 });

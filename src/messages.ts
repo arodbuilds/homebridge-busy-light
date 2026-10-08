@@ -161,3 +161,8 @@ export function inputPlainKeyOff(ip: string): string {
 export function inputNotLocal(ip: string): string {
   return `Status input: refused a request from ${ip}, which is not on the local network.`;
 }
+
+/** SPEC 12 "Call switch timeout", with the singular noun for 1 (12 item 1). */
+export function callSwitchTimeout(name: string, hours: number): string {
+  return `${name} On a Call turned itself off after ${count(hours, 'hour')}.`;
+}

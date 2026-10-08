@@ -8,7 +8,7 @@ import { LifxClient } from '../src/lifx.js';
 import { SENSOR_KEYS } from '../src/model.js';
 import type { SensorKey, Status } from '../src/model.js';
 import { packageVersion } from '../src/names.js';
-import { BusyLightPlatform, OVERRIDE_UUID_SEED, sensorOn, sensorUuidSeed } from '../src/platform.js';
+import { BusyLightPlatform, CALL_SWITCH_UUID_SEED, OVERRIDE_UUID_SEED, sensorOn, sensorUuidSeed } from '../src/platform.js';
 import { readState } from '../src/state.js';
 import { FakeClock, FakeFetch, FakeNetwork, fakeLog, icsOf, settle, text, tmpDir } from './helpers.js';
 
@@ -79,12 +79,14 @@ afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-function launch(config: Record<string, unknown>, cached: FakeAccessory[] = []): { platform: BusyLightPlatform; api: FakeApi; log: ReturnType<typeof fakeLog> } {
+function launch(config: Record<string, unknown>, cached: FakeAccessory[] = [], clock = new FakeClock(T0)): {
+  platform: BusyLightPlatform; api: FakeApi; log: ReturnType<typeof fakeLog>;
+} {
   const api = new FakeApi(dir);
   const log = fakeLog();
   const platform = new BusyLightPlatform(log.log as unknown as Logging, { platform: 'BusyLight', ...config } as PlatformConfig,
     api as unknown as API, {
-      clock: new FakeClock(T0),
+      clock,
       lifx: new LifxClient({ socket: new FakeNetwork().factory, timings: { replyMs: 5, collectMs: 10 }, interfaces: () => ({}) }),
     });
   for (const accessory of cached) {
@@ -227,9 +229,15 @@ test('review: the override switch answers HomeKit at once, without waiting for t
   api.emit('didFinishLaunching');
   await settle();
   const override = api.registered.find((a) => a.UUID === hap.uuid.generate(OVERRIDE_UUID_SEED))!;
-  const started = Date.now();
   await override.getService(S.Switch)!.getCharacteristic(C.On).handleSetRequest(true);
-  assert.ok(Date.now() - started < 150, 'a silent bulb takes over a second; the switch must not wait for it');
+  // HomeKit has its answer. Had it waited for the apply, the queue would be done and this callback would run first;
+  // a silent bulb keeps the apply going for over a second. An order, not a stopwatch, so a slow machine cannot fail it.
+  let applied = false;
+  void platform.engine!.idle().then(() => {
+    applied = true;
+  });
+  await Promise.resolve();
+  assert.equal(applied, false, 'the switch must not wait for the bulb');
   await platform.engine!.idle();
   assert.equal(platform.engine!.status, 'doNotDisturb');
 });
@@ -247,4 +255,91 @@ test('a reset-pending marker unregisters every cached accessory at startup and i
   const third = launch({}, second.api.registered);
   assert.deepEqual(third.api.unregistered, [], 'without the marker nothing is removed');
   assert.deepEqual(third.api.registered, []);
+});
+
+// SPEC 15 item 18: the On a Call switch (18.9).
+
+const HOUR = 3_600_000;
+const callUuid = hap.uuid.generate(CALL_SWITCH_UUID_SEED);
+
+function callSwitch(api: FakeApi): { accessory: FakeAccessory; on: hap.Characteristic } {
+  const accessory = api.registered.find((a) => a.UUID === callUuid)!;
+  return { accessory, on: accessory.getService(S.Switch)!.getCharacteristic(C.On) };
+}
+
+test('the On a Call switch: on reports In a call from the Home app, off withdraws it, HomeKit answered at once', async () => {
+  const { platform, api } = launch({ callSwitch: { enabled: true } });
+  await settle();
+  const { accessory, on } = callSwitch(api);
+  assert.equal(accessory.displayName, 'Busy Light On a Call');
+  const info = accessory.getService(S.AccessoryInformation)!;
+  assert.equal(info.getCharacteristic(C.Model).value, 'Call switch');
+  assert.equal(info.getCharacteristic(C.SerialNumber).value, 'call-switch');
+  assert.equal(info.getCharacteristic(C.Manufacturer).value, 'Busy Light');
+  assert.equal(on.value, false);
+  assert.equal(platform.engine!.status, 'available', 'no calendars with the switch on: not unknown');
+  await on.handleSetRequest(true);
+  assert.equal(accessory.context.callOnAt, T0);
+  await settle();
+  assert.equal(platform.engine!.status, 'inCall');
+  assert.deepEqual(platform.engine!.inputs.list(T0).map((e) => [e.sender, e.status, e.app, e.via, e.auth, e.expiresAt]),
+    [['Home app', 'inCall', null, 'switch', null, null]]);
+  assert.equal(await on.handleGetRequest(), true);
+  await on.handleSetRequest(false);
+  await settle();
+  assert.equal(accessory.context.callOnAt, null);
+  assert.equal(platform.engine!.status, 'available');
+});
+
+test('the safety timeout turns the switch off after the configured hours, with one line', async () => {
+  const clock = new FakeClock(T0);
+  const { platform, api, log } = launch({ callSwitch: { enabled: true, hours: 1 } }, [], clock);
+  await settle();
+  const { accessory, on } = callSwitch(api);
+  await on.handleSetRequest(true);
+  await settle();
+  await clock.advance(HOUR - 1);
+  assert.equal(on.value, true);
+  await clock.advance(1);
+  assert.equal(on.value, false);
+  assert.equal(accessory.context.callOnAt, null);
+  assert.equal(platform.engine!.status, 'available');
+  assert.ok(log.lines('info').includes('Busy Light On a Call turned itself off after 1 hour.'));
+});
+
+test('after a restart the switch is restored with the time remaining, or turned off when the time has passed', async () => {
+  const first = launch({ callSwitch: { enabled: true } });
+  await settle();
+  const cached = [...first.api.registered];
+  first.platform.engine!.stop();
+  const call = cached.find((a) => a.UUID === callUuid)!;
+
+  call.context.callOnAt = T0 - HOUR;
+  const clock = new FakeClock(T0);
+  const second = launch({ callSwitch: { enabled: true } }, cached, clock);
+  await settle();
+  assert.equal(call.getService(S.Switch)!.getCharacteristic(C.On).value, true, 'restored on, from the accessory context');
+  assert.equal(second.platform.engine!.status, 'inCall');
+  await clock.advance(2 * HOUR);
+  assert.equal(call.getService(S.Switch)!.getCharacteristic(C.On).value, false, 'off when the three hours are up');
+  assert.ok(second.log.lines('info').includes('Busy Light On a Call turned itself off after 3 hours.'));
+  second.platform.engine!.stop();
+
+  call.context.callOnAt = T0 - 4 * HOUR;
+  const third = launch({ callSwitch: { enabled: true } }, cached);
+  await settle();
+  assert.equal(call.context.callOnAt, null, 'the time had passed');
+  assert.equal(call.getService(S.Switch)!.getCharacteristic(C.On).value, false);
+  assert.equal(third.platform.engine!.status, 'available');
+  assert.ok(third.log.lines('info').includes('Busy Light On a Call turned itself off after 3 hours.'));
+});
+
+test('the switch is removed when the configuration no longer enables it', async () => {
+  const first = launch({ callSwitch: { enabled: true } });
+  await settle();
+  const cached = [...first.api.registered];
+  first.platform.engine!.stop();
+  const second = launch({}, cached);
+  assert.deepEqual(second.api.unregistered.map((a) => a.UUID), [callUuid]);
+  assert.equal(second.platform.callSwitchAccessory(), null);
 });
