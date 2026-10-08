@@ -1,0 +1,73 @@
+name: Release
+
+# Publishes to npm when a GitHub release is published.
+#
+# Primary path: npm trusted publishing (OIDC) with provenance, which needs no secret. The npm package must
+# have this repository and this workflow registered as a trusted publisher on npmjs.com.
+#
+# First-publish fallback: npm cannot register a trusted publisher for a package that does not exist yet, so
+# the first publish uses the NPM_TOKEN secret. When the secret is present, NODE_AUTH_TOKEN is set from it and
+# the publish runs without --provenance. This token path is for the first publish only: once the package
+# exists, switch it to a GitHub Actions trusted publisher on npmjs.com and delete the NPM_TOKEN secret (and
+# revoke the token). With the secret absent the trusted-publishing step runs instead; nothing else changes.
+#
+# A release marked as a pre-release is published under the `beta` dist-tag; a release marked as latest is
+# published under `latest`.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    env:
+      # Only used to decide which publish step runs. Present for the first publish, deleted afterwards.
+      NPM_TOKEN_PRESENT: ${{ secrets.NPM_TOKEN != '' }}
+      DIST_TAG: ${{ github.event.release.prerelease && 'beta' || 'latest' }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      # Trusted publishing needs npm 11.5.1 or newer. npm 12 requires Node 22.22.2 or newer, so pin 11.
+      - name: Update npm
+        run: npm install -g npm@11
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint, build and test
+        run: npm test
+
+      - name: Check the tag matches package.json
+        run: |
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          TAG="${GITHUB_REF_NAME#v}"
+          if [ "$PKG_VERSION" != "$TAG" ]; then
+            echo "package.json version $PKG_VERSION does not match release tag $TAG"
+            exit 1
+          fi
+
+      # First publish only (see the note at the top): the one-time token, no provenance.
+      - name: Publish to npm with the one-time token
+        if: env.NPM_TOKEN_PRESENT == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --tag "$DIST_TAG"
+
+      # Every later publish: trusted publishing with provenance.
+      - name: Publish to npm with trusted publishing
+        if: env.NPM_TOKEN_PRESENT != 'true'
+        run: npm publish --provenance --access public --tag "$DIST_TAG"

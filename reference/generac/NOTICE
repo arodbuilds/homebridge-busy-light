@@ -1,0 +1,20 @@
+homebridge-generac (Generac for Homebridge)
+Copyright 2026 Alex Rodriguez (arodbuilds) https://alex-rodriguez.com
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+This product includes work from the following projects, in this order:
+
+1. ha-generac (https://github.com/binarydev/ha-generac)
+   The Auth0 and DPoP login flow in src/auth.ts is ported from the auth
+   module of ha-generac: the Auth0 flow by sslivins and the MFA handling by
+   pjordanandrsn. Licensed under the Apache License, Version 2.0.
+
+2. homebridge-mobilelink by Nicholas Penree
+   (https://www.npmjs.com/package/homebridge-mobilelink)
+   The original HomeKit bridge for Generac Mobile Link, of which this plugin
+   is the successor. Licensed under the Apache License, Version 2.0. No code
+   from homebridge-mobilelink is used in this project.
+
+Generac and Mobile Link are trademarks of Generac Power Systems, Inc. This
+project is not affiliated with Generac.
