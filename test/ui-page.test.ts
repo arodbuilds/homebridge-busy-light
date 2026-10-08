@@ -1192,6 +1192,7 @@ describe('settings page: Status from other apps (SPEC 11.3 I)', () => {
     assert.deepEqual(requests.map((r) => r.path), ['/input/info'], 'opening the page with the input on asks for the addresses');
     assert.deepEqual(addressLines(root), ['http://192.168.4.10:8582', 'http://10.0.0.7:8582']);
     assert.equal(text(section(root).querySelector('.bl-reserve-help')), copy.STATUS_INPUT.reserveHelp);
+    buttonNamed(section(root).querySelector('.bl-input-key')!, copy.SHELL.show).click();
     assert.equal(codeLine(root), `busylight://192.168.4.10:8582/?key=${key}&id=${ID}`);
     fill(root, 'statusInput.port', '9000');
     await settle();
@@ -1203,6 +1204,7 @@ describe('settings page: Status from other apps (SPEC 11.3 I)', () => {
     const key = 'r'.repeat(43);
     const { root, page } = mount({ platform: 'BusyLight', statusInput: { enabled: true, key } });
     await settle();
+    buttonNamed(section(root).querySelector('.bl-input-key')!, copy.SHELL.show).click();
     buttonNamed(section(root), copy.STATUS_INPUT.replaceKey).click();
     assert.equal(text(section(root).querySelector('.ns-confirm-question')), copy.STATUS_INPUT.replaceQuestion);
     buttonNamed(section(root), copy.STATUS_INPUT.cancel).click();
@@ -1421,5 +1423,68 @@ describe('settings page: the address change notice (SPEC 18.11 item 6)', () => {
     const { root } = mount({ platform: 'BusyLight', statusInput: { enabled: true, key: 'b'.repeat(43) } });
     await settle();
     assert.equal(section(root).querySelector('.bl-address-change'), null);
+  });
+});
+
+// SPEC 11.3 I (build 3.1), 15 item 24: the setup code is masked like the key and shares its Show and Hide.
+
+describe('settings page: the masked setup code (SPEC 11.3 I)', () => {
+  const ID = 'q3Lr8vT0cXw2mN5a';
+  const KEY = 'm'.repeat(43);
+  const CODE = `busylight://homebridge.local:8582/?key=${KEY}&id=${ID}`;
+  const section = (root: FakeElement): FakeElement => root.querySelector('#section-statusInput')!;
+  const codeLine = (root: FakeElement): string => text(section(root).querySelector('.bl-setup-code .bl-readonly-line'));
+  const keyInput = (root: FakeElement): FakeElement => section(root).querySelector('.bl-input-key input')!;
+  const toggle = (root: FakeElement): FakeElement => section(root).querySelector('.bl-input-key .input-group button')!;
+
+  async function open(): Promise<FakeElement> {
+    answers.set('/input/info', { hostname: 'homebridge.local', addresses: ['192.168.4.10'], port: 8582, id: ID, addressChange: null });
+    const { root } = mount({ platform: 'BusyLight', statusInput: { enabled: true, key: KEY } });
+    await settle();
+    return root;
+  }
+
+  it('is masked when the section opens, one dot per character, with no part of the key', async () => {
+    const root = await open();
+    assert.equal(keyInput(root).getAttribute('type'), 'password');
+    assert.equal(codeLine(root), '\u2022'.repeat(CODE.length));
+    assert.ok(!text(section(root)).includes(KEY), 'the key is nowhere in the text of the section');
+    assert.equal(text(toggle(root)), copy.SHELL.show);
+  });
+
+  it('one Show reveals both, one Hide masks both', async () => {
+    const root = await open();
+    toggle(root).click();
+    assert.equal(keyInput(root).getAttribute('type'), 'text');
+    assert.equal(codeLine(root), CODE);
+    assert.equal(text(toggle(root)), copy.SHELL.hide);
+    assert.equal(section(root).querySelectorAll('button').filter((b) => text(b) === copy.SHELL.show || text(b) === copy.SHELL.hide).length, 1,
+      'one toggle for both');
+    toggle(root).click();
+    assert.equal(keyInput(root).getAttribute('type'), 'password');
+    assert.equal(codeLine(root), '\u2022'.repeat(CODE.length));
+    assert.equal(text(toggle(root)), copy.SHELL.show);
+  });
+
+  it('Copy setup code copies the full code, masked or not', async () => {
+    const root = await open();
+    buttonNamed(section(root), copy.STATUS_INPUT.copySetupCode).click();
+    await flush();
+    assert.equal(dom.document.copied.at(-1), CODE, 'masked');
+    toggle(root).click();
+    buttonNamed(section(root), copy.STATUS_INPUT.copied).click();
+    await flush();
+    assert.equal(dom.document.copied.at(-1), CODE, 'shown');
+  });
+
+  it('a redraw of the section keeps them shown or masked together', async () => {
+    const root = await open();
+    toggle(root).click();
+    answers.set('/input/test', { ok: true });
+    buttonNamed(section(root), copy.STATUS_INPUT.test).click();
+    await settle();
+    assert.equal(text(section(root).querySelector('.bl-input-result')), copy.STATUS_INPUT.received, 'redrawn with the result');
+    assert.equal(keyInput(root).getAttribute('type'), 'text');
+    assert.equal(codeLine(root), CODE);
   });
 });

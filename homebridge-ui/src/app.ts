@@ -64,6 +64,8 @@ export interface InputUiState {
   result: { kind: 'received' | 'notListening' | 'unauthorized' | 'other'; message: string } | null;
   copied: 'key' | 'code' | null;
   replaceOpen: boolean;
+  /** Show was pressed: the key and the setup code are both shown, until Hide (SPEC 11.3 I). */
+  revealed: boolean;
 }
 
 /** An iCloud calendar as /icloud/calendars lists it. */

@@ -58,7 +58,7 @@ export function emptyUiState(): UiState {
   return {
     chooserOpen: false, expanded: new Set(), removeOpen: null, icloud: new Map(), tests: new Map(), microsoft: new Map(),
     lifx: { searching: false, bulbs: null, testing: false, answered: null },
-    input: { info: null, loading: false, failed: false, testing: false, result: null, copied: null, replaceOpen: false },
+    input: { info: null, loading: false, failed: false, testing: false, result: null, copied: null, replaceOpen: false, revealed: false },
     resetOpen: false, resetDone: false, issuesExpanded: false,
   };
 }

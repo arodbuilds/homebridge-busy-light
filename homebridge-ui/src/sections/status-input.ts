@@ -101,17 +101,28 @@ function copyButton(app: App, label: string, which: 'key' | 'code', value: strin
   return node;
 }
 
-/** The key: a read-only password field with Show and Hide, and Copy key. */
-function keyField(app: App, key: string): HTMLElement {
+/** The setup code as the masked field shows it: one dot per character, so it wraps as the code would. */
+function masked(code: string): string {
+  return '\u2022'.repeat([...code].length);
+}
+
+/**
+ * The key: a read-only password field with Show and Hide, and Copy key. Show and Hide also reveal and mask the setup
+ * code (SPEC 11.3 I, from build 3.1), whose line `onReveal` redraws in place.
+ */
+function keyField(app: App, key: string, onReveal: (revealed: boolean) => void): HTMLElement {
+  const state = app.ui.input;
   const id = uniqueId();
   const input = el('input', {
-    id, class: 'form-control font-monospace', type: 'password', value: key, readonly: true, autocomplete: 'off', spellcheck: 'false',
+    id, class: 'form-control font-monospace', type: state.revealed ? 'text' : 'password', value: key, readonly: true, autocomplete: 'off',
+    spellcheck: 'false',
   });
-  const toggle = el('button', { class: 'btn btn-outline-secondary', type: 'button', 'aria-controls': id }, SHELL.show);
+  const toggle = el('button', { class: 'btn btn-outline-secondary', type: 'button', 'aria-controls': id }, state.revealed ? SHELL.hide : SHELL.show);
   toggle.addEventListener('click', () => {
-    const reveal = input.type === 'password';
-    input.type = reveal ? 'text' : 'password';
-    toggle.textContent = reveal ? SHELL.hide : SHELL.show;
+    state.revealed = !state.revealed;
+    input.type = state.revealed ? 'text' : 'password';
+    toggle.textContent = state.revealed ? SHELL.hide : SHELL.show;
+    onReveal(state.revealed);
   });
   return el('div', { class: 'mb-3 bl-input-key' },
     el('label', { class: 'form-label', for: id }, STATUS_INPUT.key),
@@ -139,12 +150,19 @@ function enabledBody(app: App): HTMLElement {
       body.appendChild(helpText(STATUS_INPUT.reserveHelp, 'bl-reserve-help mb-3'));
     }
   }
-  body.appendChild(keyField(app, input.key));
   const host = info ? info.hostname ?? info.addresses[0] : undefined;
-  if (info && host) {
-    const code = setupCode(host, input.port, input.key, info.id);
+  const code = info && host ? setupCode(host, input.port, input.key, info.id) : null;
+  const codeField = code === null ? null : readOnlyLines(STATUS_INPUT.setupCode, [state.revealed ? code : masked(code)], 'mb-0');
+  body.appendChild(keyField(app, input.key, (revealed) => {
+    const line = codeField?.querySelector<HTMLElement>('.bl-readonly-line');
+    if (line && code !== null) {
+      line.textContent = revealed ? code : masked(code);
+    }
+  }));
+  if (codeField && code !== null) {
+    // Copy setup code copies the full code, masked or not.
     body.appendChild(el('div', { class: 'mb-3 bl-setup-code' },
-      readOnlyLines(STATUS_INPUT.setupCode, [code], 'mb-0'),
+      codeField,
       el('div', { class: 'bl-actions mt-2' }, copyButton(app, STATUS_INPUT.copySetupCode, 'code', code)),
       helpText(STATUS_INPUT.setupCodeHelp),
     ));
