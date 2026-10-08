@@ -275,3 +275,61 @@
 .bl-code-waiting {
   margin: 0;
 }
+
+/* Colors (SPEC 11.3 D): a row per status, the name on the left and the swatch, the hex value and Off on the right;
+   on a phone the controls wrap under the name. */
+.bl-color-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.35));
+}
+
+.bl-color-row:first-child {
+  padding-top: 0;
+}
+
+.bl-color-name {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  flex: 1 1 12rem;
+  min-width: 0;
+  margin: 0;
+  font-weight: 600;
+}
+
+.bl-color-controls {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.busy-light-ui .bl-color-swatch {
+  width: 44px;
+  height: 38px;
+  padding: 4px;
+  cursor: pointer;
+}
+
+.busy-light-ui .bl-color-hex {
+  width: 7.5rem;
+}
+
+.busy-light-ui .bl-color-off {
+  margin: 0;
+  min-height: 0;
+}
+
+.busy-light-ui .bl-color-row > .invalid-feedback {
+  flex: 1 0 100%;
+  margin-top: 0;
+}
+
+.bl-precedence {
+  margin: 0.75rem 0 0.5rem;
+}
