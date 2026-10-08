@@ -14,6 +14,8 @@ interface Prop {
   type?: string;
   default?: unknown;
   oneOf?: { title: string; enum: string[] }[];
+  anyOf?: Prop[];
+  enum?: string[];
   properties?: Record<string, Prop>;
   items?: Prop & { enum?: string[] };
   pattern?: string;
@@ -119,6 +121,19 @@ test('every field of SPEC section 9 is present', () => {
   assert.deepEqual(props.sensors.items!.enum, [...SENSOR_KEYS]);
 });
 
+test('build 2 fields: use on a source and on each listed calendar, and calendar entries as names or objects (SPEC 9.1 items 13 to 15)', () => {
+  const titles = new RegExp('the build 2 field `use` takes its title and choices from 11\\.3 C: `([^`]+)`, with `([^`]+)` for `all` and `([^`]+)` '
+    + 'for `outOfOffice`').exec(spec)!;
+  assert.ok(spec.includes(`\`${titles[1]}\` (select) with \`${titles[2]}\` and \`${titles[3]}\``), 'the titles are those of 11.3 C');
+  assert.equal(item.use.title, titles[1]);
+  assert.deepEqual(item.use.oneOf, [{ title: titles[2], enum: ['all'] }, { title: titles[3], enum: ['outOfOffice'] }]);
+  assert.equal(item.use.default, 'all');
+  const entry = item.calendars.items!.anyOf!;
+  assert.deepEqual(entry.map((e) => e.type), ['string', 'object'], 'a build 1 name or a build 2 entry');
+  assert.deepEqual(Object.keys(entry[1].properties!), ['id', 'name', 'use']);
+  assert.deepEqual(entry[1].properties!.use.enum, ['all', 'outOfOffice']);
+});
+
 test('defaults agree with the plugin defaults', () => {
   const d = defaultConfig();
   assert.equal(props.name.default, d.name);
@@ -144,8 +159,8 @@ test('each source type shows only its own fields', () => {
     .filter((l) => l.key?.startsWith('calendars[].') && !l.key.endsWith('[]') && (!l.condition || l.condition.functionBody.includes(`'${type}'`)))
     .map((l) => l.key!.slice(12));
   assert.deepEqual(shownFor('icloud'), ['type', 'name', 'appleId', 'appPassword', 'calendars']);
-  assert.deepEqual(shownFor('google'), ['type', 'name', 'url', 'email']);
-  assert.deepEqual(shownFor('url'), ['type', 'name', 'url']);
+  assert.deepEqual(shownFor('google'), ['type', 'name', 'url', 'email', 'use']);
+  assert.deepEqual(shownFor('url'), ['type', 'name', 'url', 'use']);
   assert.deepEqual(shownFor('microsoft'), ['type', 'name', 'tenantId', 'clientId', 'useTeamsStatus', 'useCalendar']);
   for (const entry of layoutEntries().filter((l) => l.condition)) {
     // The Homebridge UI runs conditions as new Function('model', 'arrayIndices', body).

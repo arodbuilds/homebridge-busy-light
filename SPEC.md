@@ -287,10 +287,13 @@ Each source is in one of four states, shown in the state file and, from build 2,
   "platform": "BusyLight",
   "name": "Busy Light",
   "calendars": [
-    { "type": "icloud", "name": "Family", "appleId": "", "appPassword": "", "calendars": [] },
-    { "type": "google", "name": "Personal", "url": "", "email": "" },
-    { "type": "microsoft", "name": "Work", "tenantId": "", "clientId": "", "useTeamsStatus": true, "useCalendar": true },
-    { "type": "url", "name": "Team rota", "url": "" }
+    { "type": "icloud", "id": "cal-mgx3k2f1a9q", "name": "iCloud", "appleId": "", "appPassword": "",
+      "calendars": [ { "id": "/123456789/calendars/home/", "name": "Alex", "use": "all" },
+                     { "id": "/123456789/calendars/family-1/", "name": "Family", "use": "outOfOffice" } ] },
+    { "type": "google", "id": "cal-mgx3k5b7c2d", "name": "Personal", "url": "", "email": "", "use": "all" },
+    { "type": "microsoft", "id": "cal-mgx3k8e4f6g", "name": "Work", "tenantId": "", "clientId": "", "useTeamsStatus": true, "useCalendar": true,
+      "calendars": [ { "id": "AAMkAGSyntheticCalendarId=", "name": "Calendar", "use": "all" } ] },
+    { "type": "url", "id": "cal-mgx3kb9h1j4", "name": "Team rota", "url": "", "use": "outOfOffice" }
   ],
   "colors": { "available": "#00FF00", "offline": "off" },
   "lifx": { "enabled": false, "bulb": "", "host": "", "brightness": 100, "refreshSeconds": 300 },
@@ -304,15 +307,7 @@ Each source is in one of four states, shown in the state file and, from build 2,
 }
 ```
 
-Build 2 extends this example, and the schema, with the fields of 9.1 items 13 to 15. A build 2 calendar list looks like this:
-
-```json
-{ "type": "icloud", "id": "cal-mgx3k2f1a9q", "name": "iCloud", "appleId": "", "appPassword": "",
-  "calendars": [ { "id": "/123456789/calendars/home/", "name": "Alex", "use": "all" },
-                 { "id": "/123456789/calendars/family-1/", "name": "Family", "use": "outOfOffice" } ] }
-```
-
-and a Google or URL source carries `"use": "all"` or `"use": "outOfOffice"`.
+This is the build 2 shape, as the settings page writes it: every source has an explicit `id` (11.2 item 3), the iCloud and Microsoft 365 sources list the calendars to read with their ids and `use` (9.1 items 13 to 15), and a Google or URL source carries its own `use`. A block written by build 1 (no ids, an iCloud `calendars` list of names such as `["Alex"]`, no `use`) reads the same as it always did.
 
 ### 9.1 Rules
 
@@ -331,7 +326,7 @@ and a Google or URL source carries `"use": "all"` or `"use": "outOfOffice"`.
 13. iCloud `calendars` (from build 2) is a list whose items are either a name (text, as build 1 wrote them) or `{ "id", "name", "use" }`, where `id` is the CalDAV collection path, `name` the display name when it was ticked, and `use` as in item 15. A text item is read as `{ "name": text, "use": "all" }`. No list, or an empty one, keeps every calendar, as in build 1; the settings page always writes an explicit list.
 14. Microsoft `calendars` (from build 2) is a list of `{ "id", "name", "use" }` with the Graph calendar id. No list, or an empty one, reads the default calendar only, as in build 1. It is ignored when `useCalendar` is off.
 15. `use` is `all` (the default) or `outOfOffice`, on each item of an iCloud or Microsoft `calendars` list and on a Google or URL source itself. Any other value falls back to `all` with a warning.
-16. An item of a `calendars` list with neither an `id` nor a name is ignored with a warning. Two items with the same `id` keep the first.
+16. An item of a `calendars` list with neither an `id` nor a name is ignored with a warning. Two items with the same `id` keep the first. An item of a Microsoft list without an `id` cannot be read, so it is ignored with the same warning.
 
 The validation messages, after `{path}: `:
 
@@ -370,7 +365,7 @@ From build 2 the custom page of section 11 replaces this form (`customUi`). The 
 
 `config.schema.json` describes the whole block for the Homebridge UI's standard form (`pluginAlias` `BusyLight`, `pluginType` `platform`, `singular` true). The calendar list is an array whose type-specific fields use the form's `condition` support so only the fields for the chosen type show. Secret fields are plain text fields in this form (the standard form has no reliable password control for array items); build 2 replaces the form.
 
-Titles and descriptions, verbatim:
+Titles and descriptions, verbatim (the build 2 field `use` takes its title and choices from 11.3 C: `Counts for`, with `Busy and out of office` for `all` and `Out of office only` for `outOfOffice`):
 
 | Field | Title | Description |
 | --- | --- | --- |

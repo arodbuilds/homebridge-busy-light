@@ -20,7 +20,7 @@ const T0 = Date.UTC(2026, 9, 8, 15);
 const DEVICE_CODE = 'synthetic-device-code-never-logged';
 
 const source: MicrosoftSourceConfig = {
-  type: 'microsoft', id: 'work', name: 'Work', tenantId: TENANT, clientId: CLIENT, useTeamsStatus: true, useCalendar: true,
+  type: 'microsoft', id: 'work', name: 'Work', tenantId: TENANT, clientId: CLIENT, useTeamsStatus: true, useCalendar: true, calendars: [],
 };
 
 let fake: FakeFetch;

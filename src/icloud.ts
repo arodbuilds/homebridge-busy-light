@@ -113,7 +113,7 @@ export class ICloudSource implements CalendarSource {
     const principal = await this.href(ICLOUD_ROOT, PRINCIPAL_BODY, 'current-user-principal');
     const home = await this.href(principal, HOME_BODY, 'calendar-home-set');
     const all = parseCalendarList(await this.dav('PROPFIND', home, '1', LIST_BODY), home);
-    const wanted = this.config.calendars.map((n) => n.trim().toLowerCase()).filter(Boolean);
+    const wanted = this.config.calendars.map((c) => c.name.toLowerCase()).filter(Boolean);
     const used = wanted.length ? all.filter((c) => wanted.includes(c.name.toLowerCase())) : all;
     this.onCalendars(all.map((c) => c.name), used.map((c) => c.name));
     return used;

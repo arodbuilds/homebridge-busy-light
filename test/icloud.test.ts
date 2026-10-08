@@ -33,7 +33,10 @@ function serve(style: 'prefixed' | 'default-ns'): void {
 }
 
 function source(calendars: string[] = [], onCalendars?: (found: string[], used: string[]) => void): ICloudSource {
-  const config: ICloudSourceConfig = { type: 'icloud', id: 'family', name: 'Family', appleId: 'person@example.com', appPassword: PASSWORD, calendars };
+  const config: ICloudSourceConfig = {
+    type: 'icloud', id: 'family', name: 'Family', appleId: 'person@example.com', appPassword: PASSWORD,
+    calendars: calendars.map((name) => ({ id: null, name, use: 'all' as const })),
+  };
   return new ICloudSource(config, ics, onCalendars);
 }
 
