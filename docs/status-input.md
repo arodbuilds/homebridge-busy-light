@@ -9,7 +9,7 @@ There are two ways in:
 
 Both lead to the same place: Busy Light combines what senders report with your calendars and Microsoft Teams status, and the light and the Home app sensors follow.
 
-Status of this document: the specification for API version 1, written October 8, 2026 and revised the same day (signed requests, names in Unicode, `clear`, finding Busy Light by name, and sending from a laptop that leaves home), and again for replay memory, the plain key setting and sender restarts, ahead of the build that implements it. Section and rule numbers refer to Busy Light's `SPEC.md`, section 18.
+Status of this document: describes Busy Light 0.1.0-beta.3, the first version with the status API (API version 1) and the On a Call switch. Written October 8, 2026 and revised the same day (signed requests, names in Unicode, `clear`, finding Busy Light by name, sending from a laptop that leaves home, replay memory, the plain key setting and sender restarts), then updated for what the build settled: the error messages, `null` fields, the body as an object, and the order of the checks. Section and rule numbers refer to Busy Light's `SPEC.md`, section 18.
 
 ## 1. What a sender can report
 
@@ -47,6 +47,8 @@ The status API is off until the user turns it on in Busy Light's settings, under
 ```
 busylight://homebridge.local:8582/?key=Rk7fJ3...&id=q3Lr8vT0cXw2mN5a
 ```
+
+The user can also print it on the Homebridge computer with `homebridge-busy-light input --setup-code`.
 
 Parse it as a URL: the host (a name, an IPv4 address, or an IPv6 address in brackets) and port are the address, `key` is the key, `id` is this Busy Light's id (section 2.7), and the scheme tells you it is a Busy Light setup code. Accept it pasted with surrounding spaces. Keep the host as given; do not resolve a name once and store the IP address, or a router change breaks your app again.
 
@@ -99,7 +101,7 @@ Text rule for `sender` and `app`:
 2. Busy Light normalizes the text to Unicode NFC before checking, storing and comparing it, so the same name typed two ways is one sender.
 3. Not allowed: leading or trailing spaces, control characters (newlines and tabs included), U+2028, U+2029, and the bidirectional formatting characters U+202A to U+202E and U+2066 to U+2069. Busy Light never trims or rewrites a name; it refuses it with `invalid_sender` or `invalid_app`.
 
-Any field other than the four above is rejected with `400 unknown_field`.
+The body must be a JSON object; anything else (an array, a string, `null`) is `400 invalid_json`. `"app": null` and `"ttlSeconds": null` are read as if the field were absent. Any field other than the four above is rejected with `400 unknown_field`.
 
 Response `200`:
 
@@ -107,7 +109,7 @@ Response `200`:
 { "accepted": true, "expiresAt": "2026-10-09T12:06:00.000Z", "status": "inCall" }
 ```
 
-`status` in the response is Busy Light's resulting overall status, which may differ from what you sent if something higher applies.
+`status` in the response is Busy Light's resulting overall status, which may differ from what you sent if something higher applies. It can also be `tentative`, which a sender cannot report but a tentative event in the user's calendar gives (it ranks between `busy` and `away`), so do not decode it against the list in section 1 alone.
 
 `clear` removes this sender's report:
 
@@ -130,7 +132,9 @@ Busy Light's current overall status, for apps that want to show it.
 }
 ```
 
-`status` is one of the statuses in section 1 (never `clear`) or `unknown` when Busy Light has no fresh information.
+1. `status` is one of the statuses in section 1 (never `clear`), `tentative` (from a calendar), or `unknown` when Busy Light has no fresh information.
+2. `reason` is null while the status is `unknown`. Otherwise `reason.source` is the name of the active sender that decided the status, or null when something else decided it (a calendar, Teams, or the user's override switch). A sender learns nothing about calendars or events, so `reason.until` is always null.
+3. `senders` lists the active senders. `app` is null when the sender named none. The On a Call switch appears as the sender `Home app`, with `app` and `expiresAt` null (it turns itself off on its own schedule, section 3).
 
 ### 2.4 Signing a request
 
@@ -150,7 +154,8 @@ Authorization: BusyLight-HMAC-SHA256 ts=<ts>, sig=<sig>
 5. Each report from a sender must carry a `ts` greater than that sender's previous one, or it is refused with `401 replayed`. Take the current time in milliseconds, and if it is not greater than the last `ts` you sent, use the last one plus 1.
    1. **Store your last `ts`** where it survives your app restarting (for example in user defaults), and read it back at launch. Otherwise a clock that stepped backward (a time sync, a manual change) leaves your next reports below the one Busy Light remembers, and they are refused with `replayed` for no reason you can see.
    2. A `replayed` answer carries `"lastTs"`, the `ts` Busy Light remembers for you (a string of digits). Store `lastTs` plus 1 as your last `ts` and send the report again once. Do not loop: if that is refused too, show the error.
-6. Keep the computer's clock set automatically. A `ts` more than 300 seconds from Busy Light's clock is refused with `401 clock_skew`, and the message says by how much.
+6. Keep the computer's clock set automatically. A `ts` more than 300 seconds from Busy Light's clock is refused with `401 clock_skew`, and the message says by how much, in whole seconds rounded up. Busy Light checks the signature first, so a request with a wrong signature gets `unauthorized` whatever its `ts`.
+7. The scheme name `BusyLight-HMAC-SHA256` is matched without regard to case. `ts` and `sig` may come in either order, separated by a comma and optional spaces, each exactly once; anything else is `401 unauthorized`.
 
 Test vector. With the key `Synthetic-test-key-0000-do-not-use-anywhere`, `ts` `1791547380000` and this exact body (81 bytes, with a curly apostrophe):
 
@@ -177,11 +182,13 @@ For a status the user sets deliberately and that should last, such as "do not di
 
 ### 2.6 Errors
 
-Every error is JSON: `{ "error": "<key>", "message": "<plain sentence>" }`. `replayed` adds one field, `lastTs`.
+Every error is JSON: `{ "error": "<key>", "message": "<plain sentence>" }`. `replayed` adds one field, `lastTs`. The message is a fixed sentence for each `error` (only `clock_skew` adds the number of seconds), the same for every cause of `unauthorized`, so act on `error` and show `message` to the user if you like. Every answer Busy Light writes, error or not, has `Cache-Control: no-store`.
+
+Busy Light checks a request in this order and answers with the first problem it finds: local address (`403`), rate limit (`429`), path and method (`404`, `405`), size (`413`), media type for a `POST` (`415`), authentication (`401`, not for `/v1/ping`), JSON (`400`), fields (`400`), the replay rule (`401 replayed`), sender count (`409`). So a request that fails authentication gets `401` whatever its body, which is not read as JSON first, and only a correctly signed request can get `replayed` and learn `lastTs`.
 
 | Code | `error` | Meaning |
 | --- | --- | --- |
-| 400 | `invalid_json` | The body is not JSON |
+| 400 | `invalid_json` | The body is not a JSON object |
 | 400 | `unknown_field` | A field not listed in 2.3 |
 | 400 | `invalid_sender`, `invalid_status`, `invalid_app`, `invalid_ttl` | That field breaks its rule |
 | 401 | `unauthorized` | Missing or wrong key, a wrong signature, or a malformed `Authorization` header |
@@ -268,7 +275,7 @@ Apple Shortcuts: a **Get Contents of URL** action with method POST, a header `Au
 For senders that should not make network requests themselves, Busy Light can add a switch to the Home app: **{name} On a Call** (for example "Busy Light On a Call"). The user turns it on in Busy Light's settings, under **Status from other apps**.
 
 1. While the switch is on, the sender "Home app" reports `inCall`. Turning it off withdraws it (`clear`).
-2. It turns itself off after a safety period, 3 hours by default (1 to 12, set by the user), in case nothing turns it off.
+2. It turns itself off after a safety period, 3 hours by default (1 to 12, set by the user), in case nothing turns it off. Turning it on while it is already on starts the safety period again, so a shortcut that turns it on at the start of every call keeps it on through a long day of calls.
 3. Anything that can control a HomeKit switch can use it: a shortcut's **Home** action ("Set Busy Light On a Call to On"), Siri ("Turn on Busy Light On a Call"), a Home tile, a Home automation, or a Stream Deck with a HomeKit plugin.
 
 An app that wants to stay off the network can therefore run two of the user's shortcuts, one when a call starts and one when it ends, and let the shortcuts set the switch. HomeKit carries the change to Busy Light with its own security, at home and away.
