@@ -389,7 +389,8 @@ Build 1 form details not in the table above:
 3. The sensors are a checkbox list named with the accessory name endings of section 7 ("Available", "Busy", "Out of Office", and so on).
 4. `calendars[].id` is in the schema but not shown. Patterns flag colors that are not `#RRGGBB` or `off`, IDs that are not GUIDs, and addresses that do not start with `https://` or `webcal://`.
 5. The two lists of text (`calendars[].calendars` and `outOfOfficeWords`) are `array` entries in the layout with an item key (`outOfOfficeWords[]`). Given as a bare key, the Homebridge UI shows neither their items nor an Add button.
-6. Checked October 8, 2026, in Homebridge UI 5.29.0: each type shows only its fields, the address titles switch with the type, the LIFX fields appear when ticked, and saving writes a block the plugin reads. The form also writes `useTeamsStatus` and `useCalendar` into every calendar entry; the plugin ignores them for other types.
+6. Every list in the layout (`calendars`, `calendars[].calendars` and `outOfOfficeWords`) sets `"orderable": false`. The Homebridge UI otherwise makes each item draggable, and a dropdown inside a draggable item swallows the mouse release: choosing a calendar type left the whole entry stuck to the pointer (found on the Pi, October 8, 2026).
+7. Checked October 8, 2026, in Homebridge UI 5.29.0: each type shows only its fields, the address titles switch with the type, the LIFX fields appear when ticked, and saving writes a block the plugin reads. The form also writes `useTeamsStatus` and `useCalendar` into every calendar entry; the plugin ignores them for other types.
 
 ## 10. State file, CLI and UI server
 
@@ -601,3 +602,4 @@ Test helpers (`test/helpers.ts`) provide a fake `fetch` that throws on any addre
 - Open: iCloud calendars shared from another person, and subscribed calendars inside iCloud, have not been checked against discovery.
 - Open: the settings page prototype from Design (section 11).
 - Open: confirm that LIFX bulbs acknowledge with the request's sequence and reply to the sender's port, as the LAN protocol documents, on the user's bulb.
+- 2026-10-08: The settings form's lists are not reorderable (`orderable: false`), after the calendar entry stuck to the pointer in Homebridge UI 5.29.0 on the Pi. Order has no meaning for any of them.

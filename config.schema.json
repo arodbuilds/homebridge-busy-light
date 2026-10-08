@@ -317,7 +317,8 @@
           "type": "array",
           "items": [
             "calendars[].calendars[]"
-          ]
+          ],
+          "orderable": false
         },
         {
           "key": "calendars[].url",
@@ -365,7 +366,8 @@
             "functionBody": "return model.calendars[arrayIndices].type === 'microsoft';"
           }
         }
-      ]
+      ],
+      "orderable": false
     },
     {
       "type": "fieldset",
@@ -469,7 +471,8 @@
       "type": "array",
       "items": [
         "outOfOfficeWords[]"
-      ]
+      ],
+      "orderable": false
     },
     "debug"
   ]
