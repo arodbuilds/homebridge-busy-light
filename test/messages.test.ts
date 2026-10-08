@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { calendarsNotInUse, listedCalendarGone, senderCleared, senderExpired, senderReports } from '../src/messages.js';
+import {
+  calendarsNotInUse, inputClockOff, inputFailed, inputNotLocal, inputPlainKeyOff, inputStarted, inputWrongKey, listedCalendarGone, senderCleared,
+  senderExpired, senderReports,
+} from '../src/messages.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const spec = fs.readFileSync(path.join(root, 'SPEC.md'), 'utf8');
@@ -39,4 +42,15 @@ test('the build 3 sender lines are verbatim from SPEC section 12', () => {
     withApp.replace('{sender}', sender).replace('{Display name}', 'In a call').replace('{app}', 'Zoom'));
   assert.equal(senderCleared(sender), specLine('Sender cleared').replace('{sender}', sender));
   assert.equal(senderExpired(sender), specLine('Sender expired').replace('{sender}', sender));
+});
+
+test('the build 3 status input lines are verbatim from SPEC section 12', () => {
+  assert.equal(inputStarted(8582), specLine('Input started').replace('{port}', '8582'));
+  const [inUse, other] = specLines('Input failed');
+  assert.equal(inputFailed(8582, null), inUse.replace('{port}', '8582'));
+  assert.equal(inputFailed(8582, 'EACCES'), `Status input could not start${other.replace('{short reason}', 'EACCES')}`);
+  assert.equal(inputWrongKey('192.168.4.20'), specLine('Wrong key').replace('{ip}', '192.168.4.20'));
+  assert.equal(inputClockOff('192.168.4.20', 301), specLine('Clock off').replace('{ip}', '192.168.4.20').replace('{n}', '301'));
+  assert.equal(inputPlainKeyOff('192.168.4.20'), specLine('Plain key off').replace('{ip}', '192.168.4.20'));
+  assert.equal(inputNotLocal('203.0.113.9'), specLine('Not local').replace('{ip}', '203.0.113.9'));
 });

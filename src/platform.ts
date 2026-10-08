@@ -17,6 +17,8 @@ import { validation } from './messages.js';
 import { SENSOR_NAMES, SENSOR_STATUSES } from './model.js';
 import type { SensorKey, Status } from './model.js';
 import { PLATFORM_NAME, PLUGIN_NAME, RESET_MARKER, packageVersion } from './names.js';
+import { StatusInputServer } from './status-api.js';
+import type { InputServerOptions } from './status-api.js';
 
 export const MANUFACTURER = 'Busy Light';
 export const SENSOR_MODEL = 'Status sensor';
@@ -34,15 +36,18 @@ export function sensorOn(key: SensorKey, status: Status | null): boolean {
   return status !== null && status !== 'unknown' && SENSOR_STATUSES[key].includes(status);
 }
 
-/** Test seams: a clock and a LIFX client. */
+/** Test seams: a clock, a LIFX client, and the status input's server factory (so no test opens a socket). */
 export interface PlatformDeps {
   clock?: Clock;
   lifx?: LifxClient;
+  createServer?: InputServerOptions['createServer'];
 }
 
 export class BusyLightPlatform implements DynamicPlatformPlugin {
   readonly config: BusyLightConfig;
   engine: BusyLightEngine | null = null;
+  /** The status API (SPEC 18.3), while `statusInput.enabled` is on. */
+  inputServer: StatusInputServer | null = null;
   private readonly log: Log;
   private readonly cached = new Map<string, PlatformAccessory>();
   private readonly sensors = new Map<SensorKey, Service>();
@@ -67,7 +72,10 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
         this.log.error(`Could not start: ${(err as Error).message}`);
       }
     });
-    this.api.on('shutdown', () => this.engine?.stop());
+    this.api.on('shutdown', () => {
+      this.inputServer?.stop();
+      this.engine?.stop();
+    });
   }
 
   configureAccessory(accessory: PlatformAccessory): void {
@@ -89,6 +97,18 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
       onStatus: (status) => this.showStatus(status),
     });
     this.engine.start();
+    if (this.config.statusInput.enabled) {
+      this.inputServer = new StatusInputServer({
+        config: this.config.statusInput,
+        engine: this.engine,
+        log: this.log,
+        version: packageVersion(),
+        storageDir,
+        now: this.deps.clock?.now,
+        createServer: this.deps.createServer,
+      });
+      void this.inputServer.start();
+    }
   }
 
   /**
