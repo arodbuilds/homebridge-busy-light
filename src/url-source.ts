@@ -2,28 +2,18 @@
  * Google Calendar (secret iCal address) and calendar URL sources (SPEC 5.2). The address is the credential, so it
  * is never logged or written anywhere: errors name the host only.
  */
+import { WINDOW_MS } from './calendar.js';
+import type { CalendarSource, IcsSettings } from './calendar.js';
 import type { GoogleSourceConfig, UrlSourceConfig } from './config.js';
 import { SourceError } from './errors.js';
 import { describeNetworkError, hostOf, readLimited, send } from './http.js';
 import { readIcs } from './ics.js';
 import type { CalEvent } from './status.js';
 
-export const WINDOW_MS = 24 * 3_600_000;
 export const MAX_BODY_BYTES = 10 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
 /** A 304 reuses the events parsed from the last full download for at most this long, so the window keeps moving. */
 export const REUSE_PARSED_MS = 6 * 3_600_000;
-
-/** What the iCalendar reader needs from the configuration as a whole. */
-export interface IcsSettings {
-  outOfOfficeWords: string[];
-  ownerAddresses: string[];
-}
-
-/** Every source implements one call: the events overlapping 24 hours either side of now (SPEC 5). */
-export interface CalendarSource {
-  fetchEvents(now: number): Promise<CalEvent[]>;
-}
 
 export class UrlSource implements CalendarSource {
   private etag: string | null = null;

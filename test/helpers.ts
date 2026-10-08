@@ -18,10 +18,14 @@ export function fixture(name: string): string {
 /** Every SUMMARY in the iCalendar fixtures: none of these may ever reach a log line or the state file. */
 export function fixtureTitles(): string[] {
   const titles = new Set<string>();
-  for (const name of fs.readdirSync(fixturesDir)) {
-    const text = fs.readFileSync(path.join(fixturesDir, name), 'utf8');
-    for (const m of text.matchAll(/^SUMMARY[^:\r\n]*:(.+?)\r?$/gm)) {
-      titles.add(m[1].trim());
+  for (const name of fs.readdirSync(fixturesDir, { recursive: true }) as string[]) {
+    const file = path.join(fixturesDir, name);
+    if (!fs.statSync(file).isFile()) {
+      continue;
+    }
+    for (const m of fs.readFileSync(file, 'utf8').matchAll(/^SUMMARY[^:\r\n]*:(.+?)(?:&#13;)?\r?$/gm)) {
+      const title = m[1].trim();
+      titles.add(file.endsWith('.xml') ? title.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&') : title);
     }
   }
   return [...titles];

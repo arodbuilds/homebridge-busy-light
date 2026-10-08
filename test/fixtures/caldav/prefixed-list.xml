@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:CS="http://calendarserver.org/ns/">
+  <D:response>
+    <D:href>/10000001/calendars/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:resourcetype><D:collection/></D:resourcetype>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+    <D:propstat>
+      <D:prop>
+        <D:displayname/>
+        <C:supported-calendar-component-set/>
+      </D:prop>
+      <D:status>HTTP/1.1 404 Not Found</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/10000001/calendars/home/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:displayname>Home</D:displayname>
+        <D:resourcetype><D:collection/><C:calendar/></D:resourcetype>
+        <C:supported-calendar-component-set><C:comp name="VEVENT"/></C:supported-calendar-component-set>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/10000001/calendars/work/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:displayname>Work &amp; Projects</D:displayname>
+        <D:resourcetype><D:collection/><C:calendar/></D:resourcetype>
+        <C:supported-calendar-component-set><C:comp name="VEVENT"/><C:comp name="VTODO"/></C:supported-calendar-component-set>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/10000001/calendars/tasks/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:displayname>Reminders</D:displayname>
+        <D:resourcetype><D:collection/><C:calendar/></D:resourcetype>
+        <C:supported-calendar-component-set><C:comp name="VTODO"/></C:supported-calendar-component-set>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/10000001/calendars/inbox/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:resourcetype><D:collection/><C:schedule-inbox/></D:resourcetype>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/10000001/calendars/notification/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:resourcetype><D:collection/><CS:notification/></D:resourcetype>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>

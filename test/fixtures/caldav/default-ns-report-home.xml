@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<multistatus xmlns="DAV:">
+<response><href>/10000001/calendars/home/object-0.ics</href><propstat><prop><calendar-data xmlns="urn:ietf:params:xml:ns:caldav">BEGIN:VCALENDAR&#13;
+VERSION:2.0&#13;
+PRODID:-//Busy Light tests//Synthetic fixture//EN&#13;
+BEGIN:VTIMEZONE&#13;
+TZID:America/New_York&#13;
+BEGIN:DAYLIGHT&#13;
+TZOFFSETFROM:-0500&#13;
+TZOFFSETTO:-0400&#13;
+TZNAME:EDT&#13;
+DTSTART:19700308T020000&#13;
+RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU&#13;
+END:DAYLIGHT&#13;
+BEGIN:STANDARD&#13;
+TZOFFSETFROM:-0400&#13;
+TZOFFSETTO:-0500&#13;
+TZNAME:EST&#13;
+DTSTART:19701101T020000&#13;
+RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU&#13;
+END:STANDARD&#13;
+END:VTIMEZONE&#13;
+BEGIN:VEVENT&#13;
+UID:caldav-weekly&#13;
+SUMMARY:Synthetic school run &amp; pickup&#13;
+DTSTART;TZID=America/New_York:20260108T110000&#13;
+DTEND;TZID=America/New_York:20260108T113000&#13;
+RRULE:FREQ=WEEKLY;BYDAY=TH&#13;
+END:VEVENT&#13;
+END:VCALENDAR&#13;
+</calendar-data></prop><status>HTTP/1.1 200 OK</status></propstat></response>
+<response><href>/10000001/calendars/home/object-1.ics</href><propstat><prop><calendar-data xmlns="urn:ietf:params:xml:ns:caldav">BEGIN:VCALENDAR&#13;
+VERSION:2.0&#13;
+PRODID:-//Busy Light tests//Synthetic fixture//EN&#13;
+BEGIN:VEVENT&#13;
+UID:caldav-leave&#13;
+SUMMARY:Synthetic OOO &lt;long weekend&gt;&#13;
+DTSTART;VALUE=DATE:20261008&#13;
+DTEND;VALUE=DATE:20261009&#13;
+END:VEVENT&#13;
+END:VCALENDAR&#13;
+</calendar-data></prop><status>HTTP/1.1 200 OK</status></propstat></response>
+</multistatus>
