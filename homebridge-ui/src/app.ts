@@ -64,18 +64,24 @@ export type TestResult =
   | { eventsToday: number }
   | { error: 'insecure' | 'notCalendar' | 'http' | 'network' | 'tooLarge'; host: string; code?: number };
 
-/** The Microsoft code view (SPEC 11.3 C) and how it ended. */
-export type MicrosoftFlow =
-  | { step: 'code'; verificationUri: string; userCode: string; copied: boolean }
-  | { step: 'expired' }
-  | { step: 'refused'; reason: string; help: string }
-  | { step: 'network' };
+/** The Microsoft code view (SPEC 11.3 C), which replaces the card body while a code waits. */
+export interface MicrosoftFlow {
+  verificationUri: string;
+  userCode: string;
+  copied: boolean;
+}
+
+/** How the last Connect ended when it did not sign in: the card shows it under its body. */
+export type MicrosoftEnding = { kind: 'expired' } | { kind: 'refused'; reason: string; help: string } | { kind: 'network' };
 
 export interface MicrosoftState extends ListState {
   /** Signed in on this page, or so the state file says; null before either says. */
   connected: boolean | null;
   flow: MicrosoftFlow | null;
+  ending: MicrosoftEnding | null;
   disconnectOpen: boolean;
+  /** What the busy Connect button reads: getting a code, or listing the calendars of a source already signed in. */
+  busyLabel: string | null;
 }
 
 export interface LifxBulb {

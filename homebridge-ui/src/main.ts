@@ -216,7 +216,7 @@ export class Page implements App {
     for (let details = node.closest('details'); details; details = details.parentElement?.closest('details') ?? null) {
       details.open = true;
     }
-    const control = node.querySelector<HTMLElement>('input:not([type="hidden"]), select, textarea');
+    const control = node.querySelector<HTMLElement>('input, select, textarea');
     control?.focus();
   }
 

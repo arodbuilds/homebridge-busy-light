@@ -128,3 +128,150 @@
   background: transparent;
   border-style: dashed;
 }
+
+/* Calendars (SPEC 11.3 C). */
+
+/* The state file's error under a card's header, in its pill's tone. */
+.bl-card-error {
+  padding: 6px 16px;
+  font-size: 0.875em;
+  border-bottom: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.35));
+}
+
+.bl-tone-connected,
+.bl-tone-checking {
+  color: var(--bs-secondary-color, currentColor);
+}
+
+.bl-tone-warning {
+  color: var(--bs-warning-text-emphasis, #664d03);
+  background-color: var(--bs-warning-bg-subtle, #fff3cd);
+}
+
+.bl-tone-danger {
+  color: var(--bs-danger-text-emphasis, #58151c);
+  background-color: var(--bs-danger-bg-subtle, #f8d7da);
+}
+
+.bl-pill-holder:empty {
+  display: none;
+}
+
+.busy-light-ui .bl-source-card {
+  margin-bottom: 0.75rem;
+}
+
+/* "Calendars to use": a subheading, one line of help, then a row per calendar. */
+.bl-calendars {
+  margin: 0 0 1rem;
+}
+
+.bl-subheading {
+  font-weight: 600;
+  margin: 0.25rem 0 0;
+}
+
+.bl-subheading-help {
+  margin: 0 0 0.5rem;
+}
+
+.bl-cal-list {
+  margin: 0 0 0.5rem;
+}
+
+/* A calendar row: the checkbox, the name, today's count and the badges; a ticked row adds Counts for beside them, or
+   under them on a phone. */
+.bl-cal-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.35));
+}
+
+.bl-cal-row:first-child {
+  border-top: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.35));
+}
+
+.busy-light-ui .bl-cal-check {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  flex: 1 1 16rem;
+  min-width: 0;
+  margin: 0;
+}
+
+.busy-light-ui .bl-cal-check .form-check-input {
+  margin-top: 0;
+}
+
+.bl-cal-meta {
+  color: var(--bs-secondary-color, currentColor);
+  font-size: 0.875em;
+}
+
+.bl-cal-use-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 auto;
+}
+
+.busy-light-ui .bl-cal-use-label {
+  margin: 0;
+  font-weight: 400;
+  font-size: 0.875em;
+  white-space: nowrap;
+}
+
+.busy-light-ui .bl-cal-use {
+  width: auto;
+  min-height: 31px;
+}
+
+.bl-cal-line {
+  flex: 1 0 100%;
+  margin-top: 0;
+  padding-left: 1.5em;
+}
+
+.bl-connect-line,
+.bl-default-line,
+.bl-sign-in-again {
+  margin: 0.25rem 0 0;
+}
+
+.busy-light-ui .bl-cal-list > .form-text {
+  margin-top: 0.25rem;
+}
+
+/* The Microsoft note and the code view, which takes the card body's place while a code waits. */
+.bl-ms-note {
+  margin: 0 0 0.75rem;
+}
+
+.bl-code-view {
+  padding-bottom: 0.5rem;
+}
+
+.bl-code-title {
+  margin-bottom: 0.25rem;
+}
+
+.bl-code-body {
+  margin: 0 0 0.5rem;
+}
+
+.bl-code {
+  font-size: 1.75rem;
+  letter-spacing: 0.12em;
+  margin: 0 0 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.bl-code-waiting {
+  margin: 0;
+}
