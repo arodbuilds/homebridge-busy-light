@@ -19,7 +19,7 @@ Not affiliated with Apple, Google, Microsoft or LIFX.
 1. Calendar sources: iCloud (CalDAV), Google Calendar (secret iCal address), Microsoft 365 (Outlook calendar and Teams presence through Microsoft Graph), and any calendar subscription URL.
 2. Any number of sources, combined.
 3. Nine statuses with a fixed precedence (section 6).
-4. LIFX LAN control of one bulb, a color per status.
+4. LIFX LAN control of one bulb, a color per status. The bulb is found on the network automatically (section 13.2); an IP address is optional.
 5. HomeKit occupancy sensors: three roll-ups and seven individual statuses (section 7).
 6. An optional Do Not Disturb override switch.
 7. A command line tool for checking sources, signing in to Microsoft and testing the bulb (section 10.2).
@@ -31,8 +31,8 @@ Not affiliated with Apple, Google, Microsoft or LIFX.
 2. Philips Hue or other direct light integrations.
 3. Google sign-in with OAuth (the secret address covers the need without a Google Cloud project).
 4. Working hours (treating time outside set hours as Offline without Teams).
-5. LIFX bulb discovery. The bulb is addressed by IP.
-6. More than one person.
+5. More than one person.
+6. A built-in Microsoft app registration, so that no IDs are needed. A multi-tenant app from an unverified publisher cannot be consented to by ordinary users in other tenants, so it would not remove the administrator step. Revisit with publisher verification.
 
 ### 2.3 Never
 
@@ -79,6 +79,24 @@ Public client, no client secret. The tenant ID and client ID come from an app re
 3. Show the `verification_uri` and `user_code` (log lines in section 12; the CLI prints the same).
 4. Poll `POST .../oauth2/v2.0/token` with `grant_type=urn:ietf:params:oauth:grant-type:device_code`, `client_id` and `device_code` at the returned `interval`. `authorization_pending` continues, `slow_down` adds 5 seconds to the interval, anything else ends the attempt.
 5. At startup, a source with no stored token starts this flow by itself. If a code expires unused, one more code is issued, up to three codes in total. After the third, the flow stops until Homebridge restarts or `homebridge-busy-light login` is run. The source is Sign-in needed throughout.
+
+### 4.3.1 When Microsoft sign-in is refused
+
+The Microsoft 365 source is fully built in build 1: with a tenant ID and client ID from a working app registration, signing in with the code is all that is needed. When Microsoft refuses instead, the cause is nearly always the app registration or a tenant policy, which only the user's administrator can change. The plugin recognises these by the `AADSTS` code at the start of `error_description` (or in `error_codes`), from either the device code request or the token poll, and says what to do in plain words.
+
+| Codes | Meaning | Reason shown |
+| --- | --- | --- |
+| `AADSTS700016`, `AADSTS90002`, `AADSTS900023` | The client ID or tenant ID is not known | `the Directory (tenant) ID or Application (client) ID was not recognised` |
+| `AADSTS7000218`, `AADSTS70002` | Public client flows are not allowed on the app | `the app registration does not allow public client flows` |
+| `AADSTS65001`, `AADSTS90094`, `AADSTS90099`, `AADSTS650051`, `AADSTS650057` | Consent is missing or needs an administrator | `your organization has not approved the permissions` |
+| `AADSTS53003`, `AADSTS530033`, `AADSTS50105`, `AADSTS50158` | Blocked by Conditional Access or assignment | `your organization's sign-in policy blocked it` |
+| `AADSTS50020`, `AADSTS50059` | Wrong kind of account or tenant | `that account does not belong to this organization` |
+| anything else | | `Microsoft answered {AADSTS code or error}` |
+
+1. Each of these ends the attempt at once (no further codes are issued) and marks the source Sign-in needed with that reason in the state file.
+2. The "Microsoft refused" log line of section 12 is written once. It carries the reason and the address of the instructions to give an administrator: `https://github.com/arodbuilds/homebridge-busy-light/blob/latest/docs/microsoft-365-admin-request.md`. The CLI `login` command prints the same two lines.
+3. A Graph 403 on `/me/presence` or `/me/calendarView` after a successful sign-in is treated the same way with the reason `your organization has not approved the permissions`, since it means the token lacks the scope.
+4. `docs/microsoft-365-admin-request.md` is written to be copied and pasted to an administrator as is: what the tool does, the exact registration steps, the two IDs to send back, and notes for a security review. The README links to it from the Microsoft 365 setup section and from Troubleshooting. From build 2 the settings page links to it as "What do I ask for?".
 
 ### 4.4 Microsoft 365: refresh and storage
 
@@ -258,7 +276,7 @@ Each source is in one of four states, shown in the state file and, from build 2,
     { "type": "url", "name": "Team rota", "url": "" }
   ],
   "colors": { "available": "#00FF00", "offline": "off" },
-  "lifx": { "enabled": false, "host": "", "brightness": 100, "refreshSeconds": 300 },
+  "lifx": { "enabled": false, "bulb": "", "host": "", "brightness": 100, "refreshSeconds": 300 },
   "sensors": ["available", "busyAny", "outOfOffice"],
   "overrideSwitch": false,
   "pollSeconds": 30,
@@ -276,7 +294,7 @@ Each source is in one of four states, shown in the state file and, from build 2,
 3. `type` is one of `icloud`, `google`, `microsoft`, `url`. Required fields: iCloud `appleId` and `appPassword`; Google and URL `url`; Microsoft `tenantId` and `clientId` (both GUIDs).
 4. At most one Microsoft source may have `useTeamsStatus` on. A Microsoft source with both `useTeamsStatus` and `useCalendar` off is an error.
 5. `colors` values are `#RRGGBB` or `off`, any case. Unknown status keys are ignored with a warning.
-6. `lifx.host` is an IPv4 address or host name; required when `lifx.enabled` is on. `brightness` is 1 to 100.
+6. `lifx.bulb` (a bulb's name as shown in the LIFX app, or its serial number) and `lifx.host` (an IPv4 address or host name) are both optional; section 13.2 says how the bulb is chosen. `brightness` is 1 to 100.
 7. `sensors` holds keys from section 7. Unknown keys are ignored with a warning. An empty list creates no sensors.
 8. Validation never stops Homebridge. An invalid source is skipped with one error line naming the field (for example `calendars[1].url: must start with https:// or webcal://`); an invalid scalar falls back to its default with one warning.
 
@@ -304,7 +322,8 @@ Titles and descriptions, verbatim:
 | `useCalendar` | Use Outlook calendar | |
 | `colors.*` | (the display name of the status) | (on the group) A color such as #FF0000, or the word off to turn the light off for that status. |
 | `lifx.enabled` | Set a LIFX bulb directly | |
-| `lifx.host` | Bulb IP address | Reserve this address for the bulb in your router so it does not change. |
+| `lifx.bulb` | Bulb name | Leave empty if you have one LIFX bulb: it is found automatically. With several, enter the bulb's name from the LIFX app. The log lists the bulbs found. |
+| `lifx.host` | Bulb IP address | Optional. Only needed when the bulb cannot be found automatically, for example when Homebridge runs in Docker without host networking. |
 | `lifx.brightness` | Brightness (percent) | |
 | `lifx.refreshSeconds` | Send the color again every (seconds) | Recovers a bulb that was switched off at the wall. 0 sends only when the status changes. |
 | `sensors` | Sensors to create | Each is an occupancy sensor in the Home app that is on while that is your status. Use them in automations to set any other light. |
@@ -334,12 +353,13 @@ Titles and descriptions, verbatim:
     { "id": "work", "name": "Work", "type": "microsoft", "state": "connected", "lastChecked": "2026-10-08T13:00:05.000Z", "events": 6, "error": null }
   ],
   "signIn": null,
-  "light": { "enabled": true, "lastSent": "#FF0000", "lastSentAt": "2026-10-08T13:00:05.000Z", "answered": true }
+  "light": { "enabled": true, "label": "Office Door", "host": "192.168.4.50", "found": "discovered", "lastSent": "#FF0000", "lastSentAt": "2026-10-08T13:00:05.000Z", "answered": true }
 }
 ```
 
 1. `events` is a count. `error` is a short message that never contains a secret or a calendar address.
-2. `signIn` is null, or `{ "id", "verificationUri", "userCode", "expiresAt" }` while a Microsoft code is waiting.
+2. A source in `signInNeeded` or `notReachable` carries a short `error`; for a refused Microsoft sign-in it is the reason of 4.3.1, and the source also carries `"help"`, the address of the administrator instructions.
+2a. `signIn` is null, or `{ "id", "verificationUri", "userCode", "expiresAt" }` while a Microsoft code is waiting.
 3. The file never holds tokens, passwords, addresses or anything about an event beyond the count and the `until` time.
 
 ### 10.2 CLI
@@ -351,7 +371,8 @@ Titles and descriptions, verbatim:
 | `status` | Prints the state file in plain words: the status, the reason, and one line per source. |
 | `check` | Without touching HomeKit or the bulb, fetches every source once and prints, per source, its state, the number of events in the window and the events active now as times and `showAs` only. Then prints the resolved status. |
 | `login [name]` | Runs the device code flow for the named Microsoft source (or the only one) and stores the token. |
-| `light <ip> [#RRGGBB\|off]` | Sends the color (default the Available color) to the bulb and prints whether it answered. |
+| `lights` | Searches the network for LIFX bulbs and prints each one's name, serial number and IP address. |
+| `light [name\|ip] [#RRGGBB\|off]` | Sends the color (default the Available color) to the bulb and prints whether it answered. With no bulb given, uses the configured or only bulb, as the plugin would. |
 | `help` | Lists the commands. |
 
 The CLI follows the same logging rules as the plugin (section 12).
@@ -401,7 +422,11 @@ Lines, verbatim (`{}` are values):
 | iCloud 401 | warn | `{name}: iCloud did not accept the Apple ID and app-specific password. Check them in the plugin settings.` |
 | Microsoft code | warn | `{name}: Microsoft sign-in needed. Open {verificationUri} and enter the code {userCode}.` |
 | Microsoft done | info | `{name}: signed in to Microsoft 365.` |
+| Microsoft refused | warn | `{name}: Microsoft did not allow the sign-in: {reason}. This needs your Microsoft 365 administrator. Instructions to send them: {help address}` |
 | Microsoft gave up | warn | `{name}: the sign-in code was not used. Restart Homebridge or run "homebridge-busy-light login" to try again.` |
+| Bulbs found | info | `LIFX bulbs found: {label (ip), label (ip)}. Using {label}.` |
+| No bulb | warn | `No LIFX bulb was found on the network. Check that it is on, or enter its IP address in the plugin settings.` |
+| Several bulbs | warn | `More than one LIFX bulb was found: {labels}. Enter the name of the one to use in the plugin settings.` |
 | Bulb silent | warn | `The LIFX bulb at {host} did not answer.` (once, then debug until it answers) |
 | Bulb back | info | `The LIFX bulb at {host} is answering again.` |
 | Validation | error or warn | `{path}: {message}` |
@@ -410,7 +435,9 @@ Times in log lines use the host's locale and time zone, 12-hour.
 
 ## 13. LIFX
 
-LIFX LAN protocol over UDP port 56700, sent to the configured address. No LIFX account, no cloud.
+LIFX LAN protocol over UDP port 56700. No LIFX account, no cloud.
+
+### 13.1 Packets
 
 1. Header, 36 bytes, little endian: size (uint16), then `0x3400` (protocol 1024, addressable, tagged), source (uint32, a fixed non-zero value), target (8 bytes of zero), 6 reserved bytes, flags (byte 22; bit 1 `ack_required`), sequence (byte 23), 8 reserved bytes, message type (uint16 at 32), 2 reserved bytes.
 2. SetColor, type 102, 49 bytes: one reserved byte at 36, then hue, saturation, brightness and kelvin (uint16 each, from 37) and duration in milliseconds (uint32 at 45). Hue, saturation and brightness are the color's HSB scaled to 0 to 65535; brightness is further scaled by `lifx.brightness`. Kelvin is 3500.
@@ -418,6 +445,17 @@ LIFX LAN protocol over UDP port 56700, sent to the configured address. No LIFX a
 4. A color is sent as SetColor then SetPower on. `off` is SetPower off. Duration is 1000 ms on a status change and 0 on a refresh.
 5. Each packet sets `ack_required` and waits up to 500 ms for an Acknowledgement (type 45) with the same sequence, trying three times. The bulb "answered" when the last packet of the send was acknowledged.
 6. One socket is opened per send and closed afterwards.
+7. Once a bulb's serial number is known (13.2), packets to it are sent untagged (`0x1400`) with the serial as the target. Before that, or for a bulb given only by IP, they are sent tagged with a zero target.
+
+### 13.2 Finding the bulb
+
+1. Discovery: bind a UDP socket with broadcast enabled, send GetService (type 2, tagged, zero target) to `255.255.255.255` and to the broadcast address of every non-internal IPv4 interface, three times 500 ms apart, and collect StateService replies (type 3) for 2 seconds. Each reply's header target is the bulb's serial number (the first 6 bytes, written as 12 hex digits) and its sender address is the bulb's IP. Then ask each bulb found for its name with GetLabel (type 23) and read StateLabel (type 25, 32 bytes, UTF-8, zero padded).
+2. Choosing, at startup when `lifx.enabled` is on:
+   1. `lifx.host` set: use that address, no discovery. This is the fallback for networks where broadcast does not reach the bulbs.
+   2. Otherwise discover. With `lifx.bulb` set, use the bulb whose name matches without regard to case, or whose serial matches. With `lifx.bulb` empty and exactly one bulb found, use it. With several found and no `lifx.bulb`, use none and write the "several bulbs" line. With none found, write the "no bulb" line.
+3. The chosen bulb's serial, name and last IP are kept in `busy-light/light.json`, and that IP is tried first at the next start so a restart does not wait on discovery.
+4. Discovery runs again, at most once every 5 minutes, while no bulb is chosen or the chosen bulb has not answered three sends in a row. This is what lets the bulb change IP address without any reserved address in the router.
+5. The "bulbs found" line is written when the set of bulbs or the chosen bulb changes, not on every discovery.
 
 ## 14. Assets and branding
 
@@ -435,8 +473,8 @@ All tests use `node:test`, run from `build-test/`, and never open a socket.
 2. iCalendar: a fixture with a time zone, a weekly series, a second weekly series with one moved occurrence (the two series must not share the exception), a free event, an all-day out of office match, a declined invitation, a cancelled event, an event outside the window, a `STATUS:TENTATIVE` event, a bad event that is skipped, and daylight saving on both sides of a change.
 3. CalDAV: discovery and REPORT against recorded-shape fixtures with two different namespace prefix styles, a Reminders list that is dropped, a name filter, a 401, and rediscovery after a failure.
 4. URL source: `webcal://` rewrite, `http://` refused, ETag and 304, oversize body, redirect to `http://` refused.
-5. Graph: device code success, `authorization_pending`, `slow_down`, expiry and the three-code limit; refresh with rotation; `invalid_grant`; one shared refresh for concurrent calls; 401 retry; presence mapping; calendar paging; all-day parsing; `Retry-After`.
-6. LIFX: packet bytes for SetColor and SetPower, hex to HSB, brightness scaling, acknowledgement matching by sequence, three tries then "did not answer", with a fake socket.
+5. Graph: device code success, `authorization_pending`, `slow_down`, expiry and the three-code limit; refresh with rotation; `invalid_grant`; one shared refresh for concurrent calls; 401 retry; presence mapping; every row of the 4.3.1 table from both the device code request and the token poll, with the reason and help address in the log line and state file and no further codes issued; a Graph 403; calendar paging; all-day parsing; `Retry-After`.
+6. LIFX: packet bytes for SetColor, SetPower, GetService and GetLabel, hex to HSB, brightness scaling, acknowledgement matching by sequence, three tries then "did not answer", tagged and untagged addressing, and discovery with a fake socket: one bulb, several bulbs with and without `lifx.bulb`, a match by serial, none found, the remembered IP tried first, and rediscovery after three silent sends when the bulb's IP has changed.
 7. Platform: sensor set from configuration, stable UUIDs, removal of unwanted accessories, roll-up mapping, backoff schedule, the boundary timer, bulb refresh, and that Unknown leaves the bulb alone.
 8. Config: every rule of 9.1, including the derived id and the fall-back-with-warning behaviour.
 9. Redaction: a failing URL source's log line and state file error contain the host and never the path or query; no log line in any test contains an event title from the fixtures.
@@ -458,7 +496,9 @@ All tests use `node:test`, run from `build-test/`, and never open a socket.
 - 2026-10-07: Other HomeKit lights are reached through sensors and Home automations. A Homebridge plugin cannot command another HomeKit accessory.
 - 2026-10-07: Available and Out of office exist only as roll-up sensors, since an individual sensor would be identical.
 - 2026-10-07: Icon direction 2C "Lit day" on slate `#36434F`.
-- Open: confirm on a real bulb that it acknowledges a tagged packet sent to its own address with a zero target. If it does not, send untagged with the bulb's MAC learned from a GetService reply.
+- 2026-10-07: LIFX bulbs are discovered automatically; an IP address is only a fallback. A discovered bulb is addressed untagged by serial number.
+- 2026-10-07: Microsoft 365 is complete in build 1, including plain-language handling of refused sign-ins with a link to the administrator instructions.
+- Open: confirm on the Pi that broadcast discovery finds the bulb, and that a bulb given only by IP acknowledges a tagged packet with a zero target.
 - Open: confirm `outOfOfficeSettings` is present on `/me/presence` in the user's tenant.
 - Open: Google can take hours to reflect a change in the secret address feed. Measure it and say so in the README.
 - Open: iCloud calendars shared from another person, and subscribed calendars inside iCloud, have not been checked against discovery.
