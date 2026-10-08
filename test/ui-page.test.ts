@@ -5,6 +5,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
 import { FakeEvent, flush, installFakeDom, text, type, type FakeElement } from './fake-dom.js';
+import { parseConfig } from '../src/config.js';
 
 process.env.TZ = 'UTC';
 const dom = installFakeDom();
@@ -1720,5 +1721,50 @@ describe('settings page: Outlook or Microsoft 365 (SPEC 11.3 C)', () => {
     }
     assert.equal(openCard(root, 'rota').querySelector('.bl-outlook-steps'), null);
     assert.equal(openCard(root, 'g').querySelector('.bl-outlook-steps'), null);
+  });
+});
+
+// Build 3.1, before the pull request: the owner's configuration shape opens unchanged and Save writes it back as it was.
+
+describe('settings page: the owner\'s configuration, opened and saved back (build 3.1)', () => {
+  const OWNER = {
+    platform: 'BusyLight',
+    name: 'Busy Light',
+    calendars: [
+      { type: 'icloud', id: 'icloud', name: 'iCloud', appleId: 'person@example.com', appPassword: 'abcd-efgh-ijkl-mnop',
+        calendars: [{ id: '/123456789/calendars/home/', name: 'Alex', use: 'all' }] },
+      { type: 'url', id: 'office', name: 'Office', url: 'https://outlook.office365.com/owa/calendar/synthetic/reachcalendar.ics', use: 'all' },
+    ],
+    colors: { outOfOffice: '#B400FF', doNotDisturb: '#FF0000', inCall: '#FF0000', inMeeting: '#FF0000', busy: '#FF6A00', tentative: '#FFD000',
+      away: '#FFD000', available: '#00FF00', offline: 'off' },
+    lifx: { enabled: true, bulb: 'd073d5000001', host: '', brightness: 100, refreshSeconds: 300 },
+    sensors: ['available', 'busyAny', 'outOfOffice'],
+    overrideSwitch: false,
+    pollSeconds: 30,
+    calendarSeconds: 180,
+    ignoreAllDayBusy: true,
+    outOfOfficeWords: ['Out of office', 'OOO', 'Vacation', 'PTO'],
+    debug: false,
+    statusInput: { enabled: true, port: 8582, key: 'o'.repeat(43), allowPlainKey: true },
+    callSwitch: { enabled: true, hours: 3 },
+  };
+
+  it('opens with every value as saved, all nine colors, the intervals as their durations, and How to get this link on the Office card', async () => {
+    answers.set('/input/info', { hostname: 'homebridge.local', addresses: ['192.168.4.10'], port: 8582, id: 'q3Lr8vT0cXw2mN5a', addressChange: null });
+    const { root, page } = mount(OWNER);
+    await settle();
+    assert.deepEqual(page.issues(), []);
+    assert.equal(root.querySelectorAll('#section-colors .bl-color-row').length, 9, 'the status input and the switch are on');
+    assert.deepEqual([field(root, 'pollSeconds').value, field(root, 'calendarSeconds').value], ['30', '180']);
+    assert.ok(openCard(root, 'office').querySelector('details.bl-outlook-howto'));
+    assert.equal(field(root, 'calendars.office.calendarSeconds').value, '', 'Same as Settings');
+    // Any change pushes the whole block; put the name back as it was, as Save would write it.
+    fill(root, 'name', 'Busy Light');
+    await settle();
+    assert.deepEqual(lastBlock(), OWNER, 'written back with the same values, intervals in seconds');
+    const read = parseConfig(lastBlock());
+    assert.deepEqual(read.issues, [], 'the plugin reads the block with no issues');
+    assert.deepEqual(read.config, parseConfig(OWNER).config);
+    assert.deepEqual([read.config.pollSeconds, read.config.calendarSeconds], [30, 180]);
   });
 });
