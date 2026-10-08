@@ -7,7 +7,7 @@ import { renderFooter, type FooterHandle } from './footer.js';
 import { exportConfig, isInputKey, newInputKey, PLATFORM, readConfig, restoreSecrets, withoutSecrets, type UiConfig } from './model.js';
 import { calendarsOnStatus, renderCalendars } from './sections/calendars.js';
 import { renderColors } from './sections/colors.js';
-import { renderLights } from './sections/lights.js';
+import { lightsOnStatus, renderLights } from './sections/lights.js';
 import { renderRightNow } from './sections/right-now.js';
 import { renderSettings } from './sections/settings.js';
 import { renderStatusInput, statusInputOnStatus } from './sections/status-input.js';
@@ -38,7 +38,7 @@ const SECTIONS: SectionDef[] = [
   { key: 'calendars', title: CALENDARS.heading, help: CALENDARS.help, render: renderCalendars, onStatus: calendarsOnStatus },
   { key: 'statusInput', title: STATUS_INPUT.heading, help: '', render: renderStatusInput, onStatus: statusInputOnStatus },
   { key: 'colors', title: COLORS.heading, help: COLORS.help, render: renderColors },
-  { key: 'lights', title: LIGHTS.heading, help: '', render: renderLights },
+  { key: 'lights', title: LIGHTS.heading, help: '', render: renderLights, onStatus: lightsOnStatus },
   { key: 'settings', title: SETTINGS.heading, help: '', render: renderSettings },
 ];
 

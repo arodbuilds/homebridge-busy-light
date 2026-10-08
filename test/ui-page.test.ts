@@ -725,28 +725,64 @@ describe('settings page: Colors (SPEC 11.3 D)', () => {
   function rowOf(root: FakeElement, key: string): FakeElement {
     return root.querySelector(`[data-path="colors.${key}"]`)!;
   }
+  /** The name of the swatch a row has chosen, and which swatch takes Tab. */
+  const chosen = (row: FakeElement): string => row.querySelector('[role="radio"][aria-checked="true"]')!.getAttribute('aria-label')!;
+  const tabStop = (row: FakeElement): string[] => row.querySelectorAll('[role="radio"]').filter((b) => b.getAttribute('tabindex') === '0')
+    .map((b) => b.getAttribute('aria-label')!);
+  const swatchNamed = (row: FakeElement, name: string): FakeElement => row.querySelector(`[role="radio"][aria-label="${name}"]`)!;
 
-  it('one row per status in precedence order, with the swatch, the hex value and Off', () => {
-    const { root } = mount({ platform: 'BusyLight', colors: { inMeeting: '#aa00ff' } });
+  it('one row per status in precedence order, each a radio group of the presets, Off and Custom, the saved color chosen', () => {
+    const { root } = mount({ platform: 'BusyLight', colors: { inMeeting: '#aa00ff', busy: '#ff6a00', available: '#00ff00' } });
     const rows = root.querySelectorAll('#section-colors .bl-color-row');
     assert.deepEqual(rows.map((r) => text(r.querySelector('.bl-color-name')).replace(/ ?Teams only$/, '')),
       ['Out of office', 'Do not disturb', 'In a call', 'In a meeting', 'Busy', 'Tentative', 'Away', 'Available', 'Offline']);
+    for (const row of rows) {
+      const group = row.querySelector('[role="radiogroup"]')!;
+      assert.ok(group.getAttribute('aria-labelledby'));
+      assert.deepEqual(group.querySelectorAll('[role="radio"]').map((b) => [b.getAttribute('aria-label'), b.getAttribute('title')]),
+        ['Red', 'Orange', 'Yellow', 'Green', 'Blue', 'Purple', 'White', 'Off', 'Custom'].map((n) => [n, n]), 'the name as label and tooltip');
+      assert.deepEqual(group.querySelectorAll('.bl-preset-label').map((l) => text(l)),
+        ['Red', 'Orange', 'Yellow', 'Green', 'Blue', 'Purple', 'White', 'Off', 'Custom'], 'the names under each swatch below 600 px');
+      assert.equal(tabStop(row).length, 1, 'one tab stop per group');
+    }
+    assert.deepEqual(rows.map(chosen), ['Purple', 'Red', 'Red', 'Custom', 'Orange', 'Yellow', 'Yellow', 'Green', 'Off'],
+      'the defaults are presets, case does not matter, and any other color is Custom');
     const meeting = rowOf(root, 'inMeeting');
+    assert.equal(meeting.querySelector('.bl-color-custom')!.hidden, false);
     assert.equal(meeting.querySelector('.bl-color-hex')!.value, '#AA00FF');
     assert.equal(meeting.querySelector('input[type="color"]')!.value, '#aa00ff');
-    const offline = rowOf(root, 'offline');
-    assert.equal(offline.querySelector('input[type="checkbox"]')!.checked, true);
-    assert.equal(offline.querySelector('.bl-color-hex')!.disabled, true);
-    assert.equal(offline.querySelector('input[type="color"]')!.disabled, true);
+    assert.match(swatchNamed(meeting, 'Custom').querySelector('.bl-preset-swatch')!.getAttribute('style')!, /#AA00FF/);
+    assert.equal(rowOf(root, 'busy').querySelector('.bl-color-custom')!.hidden, true, 'hidden unless Custom is chosen');
+    assert.ok(swatchNamed(rowOf(root, 'offline'), 'Off').querySelector('.bl-preset-off'), 'Off is an outlined circle with a line');
     assert.equal(text(root.querySelector('.bl-precedence')), copy.COLORS.precedence);
   });
 
-  it('the swatch, the hex field and Off write the color; a bad value shows the 11.3 H message; Reset colors puts the defaults back', async () => {
+  it('a preset, Off and Custom write the color; arrow keys move and choose; a bad hex shows the 11.3 H message; Reset colors', async () => {
     const { root, page } = mount();
     const row = rowOf(root, 'busy');
-    const swatch = row.querySelector('input[type="color"]')!;
-    swatch.value = '#123abc';
-    swatch.dispatchEvent(new FakeEvent('input', true));
+    swatchNamed(row, 'Blue').click();
+    await settle();
+    assert.equal((lastBlock().colors as Record<string, string>).busy, '#0050FF');
+    assert.equal(chosen(row), 'Blue');
+    assert.deepEqual(tabStop(row), ['Blue']);
+    swatchNamed(row, 'Off').click();
+    assert.equal(page.config.colors.busy, 'off');
+    const white = swatchNamed(row, 'White');
+    white.focus();
+    white.dispatchEvent(new FakeEvent('keydown', true, { key: 'ArrowLeft' }));
+    assert.equal(page.config.colors.busy, '#B400FF', 'ArrowLeft from White chooses Purple');
+    assert.equal(dom.document.activeElement, swatchNamed(row, 'Purple') as unknown, 'and moves focus with it');
+    swatchNamed(row, 'Purple').dispatchEvent(new FakeEvent('keydown', true, { key: 'End' }));
+    assert.equal(chosen(row), 'Custom');
+    assert.equal(row.querySelector('.bl-color-custom')!.hidden, false);
+    assert.equal(page.config.colors.busy, '#B400FF', 'Custom starts from the color it had');
+    assert.equal(chosen(row), 'Custom', 'and stays Custom while the color equals a preset');
+    swatchNamed(row, 'Custom').dispatchEvent(new FakeEvent('keydown', true, { key: 'ArrowRight' }));
+    assert.equal(chosen(row), 'Red', 'the arrows wrap around');
+    swatchNamed(row, 'Custom').click();
+    const picker = row.querySelector('input[type="color"]')!;
+    picker.value = '#123abc';
+    picker.dispatchEvent(new FakeEvent('input', true));
     assert.equal(row.querySelector('.bl-color-hex')!.value, '#123ABC');
     await settle();
     assert.equal((lastBlock().colors as Record<string, string>).busy, '#123ABC');
@@ -761,21 +797,19 @@ describe('settings page: Colors (SPEC 11.3 D)', () => {
     type(hex, '#00ff00');
     hex.blur();
     assert.equal(feedback(root, 'colors.busy'), '');
-    tick(row.querySelector('input[type="checkbox"]')!, true);
-    assert.equal(page.config.colors.busy, 'off');
-    assert.equal(hex.disabled, true);
-    tick(row.querySelector('input[type="checkbox"]')!, false);
-    assert.equal(page.config.colors.busy, '#00FF00', 'unticking Off brings the last color back');
+    swatchNamed(row, 'Off').click();
+    swatchNamed(row, 'Custom').click();
+    assert.equal(page.config.colors.busy, '#00FF00', 'Custom brings the last custom color back');
     buttonNamed(root.querySelector('#section-colors')!, copy.COLORS.reset).click();
     await settle();
     assert.deepEqual(lastBlock().colors, {
       outOfOffice: '#B400FF', doNotDisturb: '#FF0000', inCall: '#FF0000', inMeeting: '#FF0000', busy: '#FF6A00', tentative: '#FFD000',
       away: '#FFD000', available: '#00FF00', offline: 'off',
     });
-    assert.equal(rowOf(root, 'busy').querySelector('.bl-color-hex')!.value, '#FF6A00');
+    assert.equal(chosen(rowOf(root, 'busy')), 'Orange');
   });
 
-  it('Teams only, muted, on the five Teams statuses while no Microsoft 365 source uses Teams status, saved or not', () => {
+  it('Teams only, muted, while nothing else can give the status: no Teams status, no status input, and for In a call no switch', () => {
     const teamsOnly = (root: FakeElement) => root.querySelectorAll('#section-colors .bl-color-row')
       .filter((r) => r.querySelector('.badge')).map((r) => r.dataset.path);
     const { root, page } = mount();
@@ -789,6 +823,10 @@ describe('settings page: Colors (SPEC 11.3 D)', () => {
     assert.equal(teamsOnly(root).length, 5);
     const saved = mount({ platform: 'BusyLight', calendars: [{ type: 'microsoft', id: 'w', name: 'W', tenantId: 'x', clientId: 'y' }] });
     assert.deepEqual(teamsOnly(saved.root), []);
+    const call = mount({ platform: 'BusyLight', callSwitch: { enabled: true } });
+    assert.deepEqual(teamsOnly(call.root), ['colors.doNotDisturb', 'colors.busy', 'colors.away', 'colors.offline'], 'the switch gives In a call');
+    const input = mount({ platform: 'BusyLight', statusInput: { enabled: true, key: 'k'.repeat(43) } });
+    assert.deepEqual(teamsOnly(input.root), [], 'other apps can report each of them');
   });
 });
 
@@ -819,7 +857,7 @@ describe('settings page: Lights (SPEC 11.3 E)', () => {
     page.startPolling();
     await flush();
     assert.equal(requests.some((r) => r.path === '/lifx/discover'), false, 'opening the page calls only /version and /status');
-    assert.deepEqual(lines(root), []);
+    assert.deepEqual(lines(root), ['Busy Light is using Floor (192.168.4.50).'], 'the bulb in use, from the state file (SPEC 11.3 E)');
     answers.set('/lifx/discover', { bulbs: [FLOOR] });
     buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
     await settle();

@@ -225,6 +225,7 @@ export function renderStatusInput(app: App, container: HTMLElement): void {
     }
     app.changed();
     app.rerender('statusInput');
+    app.rerender('colors');
     app.focusLater('statusInput.enabled');
     if (v && !app.ui.input.info) {
       void loadInfo(app);
@@ -242,6 +243,7 @@ export function renderStatusInput(app: App, container: HTMLElement): void {
     call.enabled = v;
     app.changed();
     app.rerender('statusInput');
+    app.rerender('colors');
     app.focusLater('callSwitch.enabled');
   }, { path: 'callSwitch.enabled', help: STATUS_INPUT.callSwitchHelp }));
   if (call.enabled) {
