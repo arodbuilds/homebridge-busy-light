@@ -9,7 +9,7 @@ There are two ways in:
 
 Both lead to the same place: Busy Light combines what senders report with your calendars and Microsoft Teams status, and the light and the Home app sensors follow.
 
-Status of this document: describes Busy Light 0.1.0-beta.4. The status API (API version 1) and the On a Call switch came in 0.1.0-beta.3; 0.1.0-beta.4 finds Busy Light by name more reliably (section 2.1) and changes nothing a sender sends or receives. Written October 8, 2026 and revised the same day (signed requests, names in Unicode, `clear`, finding Busy Light by name, sending from a laptop that leaves home, replay memory, the plain key setting and sender restarts), then updated for what the build settled: the error messages, `null` fields, the body as an object, and the order of the checks. Section and rule numbers refer to Busy Light's `SPEC.md`, section 18.
+Status of this document: describes Busy Light 0.1.0-beta.5. The status API (API version 1) and the On a Call switch came in 0.1.0-beta.3; 0.1.0-beta.4 finds Busy Light by name more reliably (section 2.1) and changes nothing a sender sends or receives; 0.1.0-beta.5 reserves the sender name `Home app` for the On a Call switch and adds `notWorking`, an overall status a sender may see but never sends (section 2.3). Written October 8, 2026 and revised the same day (signed requests, names in Unicode, `clear`, finding Busy Light by name, sending from a laptop that leaves home, replay memory, the plain key setting and sender restarts), then updated for what the build settled: the error messages, `null` fields, the body as an object, and the order of the checks. Updated October 9, 2026 for 0.1.0-beta.5. Section and rule numbers refer to Busy Light's `SPEC.md`, section 18.
 
 ## 1. What a sender can report
 
@@ -110,7 +110,7 @@ Response `200`:
 { "accepted": true, "expiresAt": "2026-10-09T12:06:00.000Z", "status": "inCall" }
 ```
 
-`status` in the response is Busy Light's resulting overall status, which may differ from what you sent if something higher applies. It can also be `tentative`, which a sender cannot report but a tentative event in the user's calendar gives (it ranks between `busy` and `away`), so do not decode it against the list in section 1 alone.
+`status` in the response is Busy Light's resulting overall status, which may differ from what you sent if something higher applies. It can also be `tentative`, which a sender cannot report but a tentative event in the user's calendar gives (it ranks between `busy` and `away`), so do not decode it against the list in section 1 alone. From Busy Light 0.1.0-beta.5 it can also be `notWorking`: the user has turned off Busy Light's Working switch at the end of the day, the light is off, and that is above everything, so your report is accepted and kept but changes nothing until the switch is turned on. `notWorking` is a value a sender may see, never one it sends: sending it is `400 invalid_status`.
 
 `clear` removes this sender's report:
 
@@ -133,8 +133,8 @@ Busy Light's current overall status, for apps that want to show it.
 }
 ```
 
-1. `status` is one of the statuses in section 1 (never `clear`), `tentative` (from a calendar), or `unknown` when Busy Light has no fresh information.
-2. `reason` is null while the status is `unknown`. Otherwise `reason.source` is the name of the active sender that decided the status, or null when something else decided it (a calendar, Teams, or the user's override switch). A sender learns nothing about calendars or events, so `reason.until` is always null.
+1. `status` is one of the statuses in section 1 (never `clear`), `tentative` (from a calendar), `unknown` when Busy Light has no fresh information, or, from Busy Light 0.1.0-beta.5, `notWorking` while the user's Working switch is off (see the `POST /v1/status` response above).
+2. `reason` is null while the status is `unknown` or `notWorking`. Otherwise `reason.source` is the name of the active sender that decided the status, or null when something else decided it (a calendar, Teams, or the user's override switch). A sender learns nothing about calendars or events, so `reason.until` is always null.
 3. `senders` lists the active senders. `app` is null when the sender named none. The On a Call switch appears as the sender `Home app`, with `app` and `expiresAt` null (it turns itself off on its own schedule, section 3).
 
 ### 2.4 Signing a request
@@ -293,4 +293,4 @@ The switch reports only `inCall`. For other statuses, use the status API.
 6. Send only `sender`, `status`, `app` and `ttlSeconds`. Never content.
 7. Follow section 2.7 when the network changes: confirm the `id` before reporting, stay quiet when Busy Light is not reachable, never queue old reports, and send the current status fresh on return.
 8. Handle `401` (`unauthorized`: key replaced; `clock_skew`: the clock is off; `replayed`: your `ts` went backwards, see item 4; `plain_key_off`: an app sent the plain key), `403` (wrong network), `429` (back off) and no answer (Busy Light off or not on this network) with a plain message to the user.
-9. Expect the overall status to differ from what you sent; Busy Light decides.
+9. Expect the overall status to differ from what you sent, including `notWorking` and `tentative`, which you never send; Busy Light decides.
