@@ -319,3 +319,63 @@ test('a disabled light sends nothing', async () => {
   assert.equal(await light.maintain(), false);
   assert.equal(net.sent.length, 0);
 });
+
+// Build 3.2: a chosen bulb is never replaced by another unless lifx.bulb names it (SPEC 13.2 item 4).
+
+const KITCHEN: FakeBulb = { serial: 'd073d5000003', label: 'Kitchen', host: '192.168.4.52', answers: true };
+const colorsTo = (host: string) => net.sent.filter((s) => s.to === host && [MSG.SetColor, MSG.SetPower].includes(parseHeader(s.buf)!.type as 102 | 117));
+
+test('the office bulb goes silent and a kitchen bulb answers: the kitchen bulb is never sent a color (SPEC 13.2 item 4)', async () => {
+  net.bulbs = [{ ...DOOR }];
+  const { light, log } = controller();
+  await light.start();
+  assert.equal(await light.send('#00FF00', 1000), true);
+  // The office bulb is switched off at the wall; a kitchen bulb is the only one that answers.
+  net.bulbs = [{ ...KITCHEN }];
+  for (let round = 0; round < 3; round++) {
+    clock += REDISCOVER_MS;
+    for (let i = 0; i < 3; i++) {
+      assert.equal(await light.send('#FF0000', 0), false);
+    }
+  }
+  assert.ok(net.sent.filter((s) => parseHeader(s.buf)!.type === MSG.GetService).length > 3, 'discovery kept looking');
+  assert.deepEqual(colorsTo(KITCHEN.host), []);
+  assert.equal(light.host, DOOR.host);
+  assert.equal(light.state().label, 'Office Door');
+  assert.deepEqual(JSON.parse(fs.readFileSync(lightFile(dir), 'utf8')), { serial: DOOR.serial, label: 'Office Door', host: DOOR.host });
+  assert.ok(!log.all().some((l) => l.includes('Kitchen')), 'no line says the kitchen bulb is used');
+
+  // The office bulb comes back at a new address: discovery finds it by its serial number.
+  net.bulbs = [{ ...KITCHEN }, { ...DOOR, host: '192.168.4.77' }];
+  clock += REDISCOVER_MS;
+  assert.equal(await light.send('#FF0000', 0), true);
+  assert.equal(light.host, '192.168.4.77');
+  assert.deepEqual(colorsTo(KITCHEN.host), []);
+});
+
+test('a remembered office bulb that does not answer is kept when only a kitchen bulb answers (SPEC 13.2 item 4)', async () => {
+  fs.writeFileSync(lightFile(dir), JSON.stringify({ serial: DOOR.serial, label: 'Office Door', host: DOOR.host }));
+  net.bulbs = [{ ...KITCHEN }];
+  const { light } = controller();
+  assert.equal(await light.send('#FF0000', 1000), false, 'the first send fails and discovery runs at once');
+  assert.equal(light.host, DOOR.host);
+  assert.equal(light.state().found, 'remembered');
+  assert.deepEqual(colorsTo(KITCHEN.host), []);
+  assert.equal(await light.maintain(), false, 'a bulb is chosen, so nothing new to send');
+});
+
+test('lifx.bulb naming a bulb by name moves to the bulb that has that name when the chosen one is gone (SPEC 13.2 item 4)', async () => {
+  net.bulbs = [{ ...DESK }];
+  const { light } = controller({ bulb: 'Desk' });
+  await light.start();
+  assert.equal(light.host, DESK.host);
+  const NEW_DESK: FakeBulb = { serial: 'd073d5000009', label: 'Desk', host: '192.168.4.59', answers: true };
+  net.bulbs = [{ ...KITCHEN }, { ...NEW_DESK }];
+  clock += REDISCOVER_MS;
+  for (let i = 0; i < 2; i++) {
+    assert.equal(await light.send('#FF0000', 0), false);
+  }
+  assert.equal(await light.send('#FF0000', 0), true, 'the third silent send rediscovers and moves to the bulb named Desk');
+  assert.equal(light.host, NEW_DESK.host);
+  assert.deepEqual(colorsTo(KITCHEN.host), []);
+});

@@ -159,20 +159,34 @@ export class LightController {
     }
   }
 
-  /** Runs discovery and applies the choosing rules, writing the bulb lines only when the outcome changes. */
+  /**
+   * Runs discovery and applies the choosing rules, writing the bulb lines only when the outcome changes. A chosen bulb
+   * with a serial number is never replaced by a different bulb unless `lifx.bulb` names that one (SPEC 13.2 item 4):
+   * when it is not found it is kept, and the next discovery looks for it again by its serial number. Only while no
+   * bulb has been chosen (none this run, none remembered that fits) does discovery pick one.
+   */
   private async discover(): Promise<void> {
     this.lastDiscovery = this.now();
     const bulbs = await this.options.client.discover();
     const wanted = this.options.config.bulb;
     const previous = this.chosen;
-    const same = previous?.serial ? bulbs.find((b) => b.serial === previous.serial) : undefined;
     let pick: Bulb | undefined;
-    if (same) {
-      pick = same;
-    } else if (previous && bulbs.length === 0) {
-      // Keep the bulb we had: it may only be switched off.
-      this.log(`none|${previous.serial}`, () => noBulb(), 'warn');
-      return;
+    if (previous?.serial) {
+      const same = bulbs.find((b) => b.serial === previous.serial);
+      const named = wanted ? bulbs.find((b) => b.serial !== previous.serial && matchesBulb(wanted, b)) : undefined;
+      if (same && (!named || matchesBulb(wanted, same))) {
+        pick = same;
+      } else if (named) {
+        pick = named;
+      } else if (bulbs.length === 0) {
+        // Keep the bulb we had: it may only be switched off.
+        this.log(`none|${previous.serial}`, () => noBulb(), 'warn');
+        return;
+      } else {
+        // Others answer, but the chosen bulb is kept: it may only be switched off.
+        this.options.log.debug(`LIFX: the bulb in use was not among the ${bulbs.length} found; it is kept.`);
+        return;
+      }
     } else if (wanted) {
       pick = bulbs.find((b) => matchesBulb(wanted, b));
     } else if (bulbs.length === 1) {
