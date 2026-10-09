@@ -1774,6 +1774,51 @@ describe('settings page: the per-status sensors and the statuses the setup can p
   });
 });
 
+// Build 3.2 (SPEC 11.2 item 11, D1): a message from leaving a field waits until the pointer is released, so a click on a
+// button below an empty required field lands.
+
+describe('settings page: the lost click (SPEC 11.2 item 11)', () => {
+  it('Add calendar pressed under an empty Outlook Address: the click lands, then the message shows', async () => {
+    const { root } = mount();
+    const section = root.querySelector('#section-calendars')!;
+    buttonNamed(section, copy.CALENDARS.add).click();
+    section.querySelector('.ns-chooser-tile[data-type="microsoft"]')!.click();
+    section.querySelector('.bl-outlook-published')!.click();
+    await settle();
+    const id = section.querySelectorAll('.ns-card').at(-1)!.getAttribute('data-card-id')!;
+    const address = field(root, `calendars.${id}.url`);
+    assert.equal(dom.document.activeElement, address, 'the Address has focus');
+    const add = buttonNamed(section, copy.CALENDARS.add);
+    // Press: focus leaves the empty Address. Its message waits, so nothing below it moves under the pointer.
+    add.dispatchEvent(new FakeEvent('pointerdown', true));
+    address.blur();
+    assert.equal(feedback(root, `calendars.${id}.url`), '', 'no message while the pointer is down');
+    await dom.clock.advance(10);
+    assert.equal(feedback(root, `calendars.${id}.url`), '', 'nor a moment later');
+    // Release, and the click lands on Add calendar.
+    add.dispatchEvent(new FakeEvent('pointerup', true));
+    add.click();
+    assert.ok(section.querySelector('.ns-chooser'), 'the chooser opened: the click landed');
+    await dom.clock.advance(0);
+    assert.equal(feedback(root, `calendars.${id}.url`), 'Address is required.', 'the message shows once the click has landed');
+  });
+
+  it('leaving a field with the keyboard shows its message at once, and a pointer never released shows it after 5 seconds', async () => {
+    const { root } = mount();
+    fill(root, 'name', ' ');
+    assert.equal(feedback(root, 'name'), 'Name is required.');
+    const other = mount();
+    const name = field(other.root, 'name');
+    name.focus();
+    type(name, '');
+    other.root.querySelector('#section-settings')!.dispatchEvent(new FakeEvent('pointerdown', true));
+    name.blur();
+    assert.equal(feedback(other.root, 'name'), '');
+    await dom.clock.advance(5000);
+    assert.equal(feedback(other.root, 'name'), 'Name is required.');
+  });
+});
+
 // SPEC 11.3 C (build 3.1), 15 item 24: the Outlook published calendar link as the recommended Microsoft 365 setup.
 
 describe('settings page: Outlook or Microsoft 365 (SPEC 11.3 C)', () => {

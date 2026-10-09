@@ -23,6 +23,8 @@ import { validate, type UiIssue, type ValidationContext } from './validate.js';
 export const STATUS_POLL_MS = 15 * 1000;
 /** Past this many entries the summary box collapses to a count (shell rule F4). */
 export const ISSUES_SHOWN = 3;
+/** A message held for a pointer that is never released (outside the frame, say) shows after this long. */
+export const HELD_MESSAGE_MS = 5000;
 
 interface SectionDef {
   key: Section;
@@ -83,6 +85,12 @@ export class Page implements App {
   private otherBlocks: Array<Record<string, unknown>> = [];
   /** A draft is written only once the user has changed something (shell rule M1). */
   private draftAllowed = false;
+  /** A pointer button is down; a message from leaving a field waits until it is released (SPEC 11.2 item 11). */
+  private pointerDown = false;
+  /** Fields left while a pointer was down: touched once it is released, so no redraw meanwhile shows their message. */
+  private readonly held = new Set<string>();
+  /** Shows the held messages after the release, or anyway once `HELD_MESSAGE_MS` has passed. */
+  private heldTimer: number | undefined;
 
   constructor(public config: UiConfig, readonly saved: UiConfig, private readonly root: HTMLElement) {
     root.appendChild(el('img', { class: 'ns-banner', src: BANNER.file, alt: BANNER.alt, width: '1280', height: '320' }));
@@ -130,6 +138,33 @@ export class Page implements App {
         this.markIssues(this.issues());
       }
     });
+    // The lost click (SPEC 11.2 item 11, from build 3.2): pressing a button below an empty required field leaves the
+    // field, whose message would appear at once and move the button before the pointer is released, so the click
+    // never landed. While a pointer button is down the message waits, and it shows once the click has landed.
+    document.addEventListener('pointerdown', () => {
+      this.pointerDown = true;
+    }, true);
+    const release = (): void => {
+      this.pointerDown = false;
+      if (this.heldTimer !== undefined) {
+        window.clearTimeout(this.heldTimer);
+        // After the click, which the browser sends straight after the release.
+        this.heldTimer = window.setTimeout(() => this.showHeld(), 0);
+      }
+    };
+    document.addEventListener('pointerup', release, true);
+    document.addEventListener('pointercancel', release, true);
+    window.addEventListener('blur', release);
+  }
+
+  /** Draws the inline messages held while a pointer was down. */
+  private showHeld(): void {
+    this.heldTimer = undefined;
+    for (const path of this.held) {
+      this.touched.add(path);
+    }
+    this.held.clear();
+    this.markIssues(this.issues());
   }
 
   setOtherBlocks(blocks: Array<Record<string, unknown>>): void {
@@ -168,6 +203,7 @@ export class Page implements App {
   replaceConfig(config: UiConfig, opts: { draft?: boolean } = {}): void {
     this.config = config;
     this.touched.clear();
+    this.held.clear();
     this.allTouched = false;
     this.renderAll();
     this.push();
@@ -180,12 +216,21 @@ export class Page implements App {
   }
 
   touch(path: string): void {
+    if (this.pointerDown && !this.touched.has(path)) {
+      // Held until the pointer is released, so nothing below the field moves under it (SPEC 11.2 item 11).
+      this.held.add(path);
+      if (this.heldTimer === undefined) {
+        this.heldTimer = window.setTimeout(() => this.showHeld(), HELD_MESSAGE_MS);
+      }
+      return;
+    }
     this.touched.add(path);
     this.markIssues(this.issues());
   }
 
   untouch(path: string): void {
     this.touched.delete(path);
+    this.held.delete(path);
   }
 
   /** Which cards show a list of calendars to tick: after Connect on this page, or the saved rows before it. */

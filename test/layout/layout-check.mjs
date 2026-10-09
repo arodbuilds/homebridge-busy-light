@@ -7,9 +7,10 @@
  * result and a sender of each kind listed (SPEC 15 item 19). From build 3.1 it also has the chooser's two Outlook
  * options, a new Outlook card and an existing Outlook address with How to get this link open, the interval selects
  * with a saved value not in their list, the address change notice, and the Colors list measured collapsed and
- * expanded once the status input, the On a Call switch and Teams status are turned off on the page. It checks that
- * secondary text and locked fields keep 4.5:1 contrast, that nothing is wider than the frame, and that the frame
- * itself never scrolls.
+ * expanded once the status input, the On a Call switch and Teams status are turned off on the page. From build 3.2 it
+ * clicks Add calendar with the mouse while a new Outlook card's empty Address has focus, and expects the click to land
+ * (SPEC 11.2 item 11). It checks that secondary text and locked fields keep 4.5:1 contrast, that nothing is wider than
+ * the frame, and that the frame itself never scrolls.
  *
  * It needs Playwright with Chromium and the Homebridge UI's own stylesheet, which are not dependencies of the plugin:
  *   HOMEBRIDGE_UI_CSS=/path/to/homebridge-config-ui-x/public/styles-*.css npm run test:layout
@@ -294,6 +295,7 @@ async function run() {
         await context.addInitScript(mockHost, { config: CONFIG, answers: ANSWERS });
         const page = await context.newPage();
         const errors = [];
+        const lost = [];
         page.on('pageerror', (e) => errors.push(e.message));
         await page.goto(`http://127.0.0.1:${port}/?theme=${encodeURIComponent(theme)}`);
         const frame = page.frame({ url: /plugin\/index.html/ });
@@ -339,14 +341,18 @@ async function run() {
         await click('#section-calendars .ns-section-add');
         await click('#section-calendars .ns-chooser-tile[data-type="microsoft"]');
         await click('#section-calendars .bl-outlook-published');
-        // Paste the link, as a person would; leaving the empty field would show its message and move Add under the pointer.
-        // TODO(alex): the shell's validation on blur (homebridge-ui/src/main.ts, focusout) moves a button below an empty
-        // required field before the mouse is released, so that click is lost; left as it is in build 3.1 (SPEC 17).
-        const address = frame.locator('#section-calendars input:focus');
-        await address.fill('https://outlook.office365.com/owa/calendar/synthetic/second.ics');
-        await address.press('Tab');
-        await fit();
+        // The lost click (SPEC 11.2 item 11, from build 3.2): Add calendar clicked with the mouse while the new Outlook card's
+        // empty Address has focus. The Address's message waits for the release, so the button stays put and the click lands.
+        if (!await frame.evaluate(() => document.activeElement?.closest('[data-path]')?.dataset.path?.endsWith('.url'))) {
+          lost.push('the new Outlook card\'s Address did not take focus');
+        }
         await click('#section-calendars .ns-section-add');
+        if (!await frame.locator('#section-calendars .ns-chooser').count()) {
+          lost.push('the click on Add calendar under the empty Outlook Address was lost');
+          await click('#section-calendars .ns-section-add'); // a second click, so the rest of the run still reports
+        }
+        await frame.waitForFunction(() => document.querySelector('#section-calendars [data-path$=".url"].has-issue'), undefined, { timeout: 2000 })
+          .catch(() => lost.push('the Address showed no message after the click'));
         await click('#section-calendars .ns-chooser-tile[data-type="microsoft"]');
         // Settings: the interval selects, and a cleared Name for the summary box.
         await click('#section-settings details summary');
@@ -360,7 +366,7 @@ async function run() {
         await fit();
         const report = async (label, shot) => {
           const { problems, checked } = await frame.evaluate(measure);
-          problems.push(...errors.splice(0).map((e) => `page error: ${e}`));
+          problems.push(...errors.splice(0).map((e) => `page error: ${e}`), ...lost.splice(0));
           if (problems.length) {
             failed += problems.length;
             console.log(`not ok ${label}: ${checked} elements checked`);

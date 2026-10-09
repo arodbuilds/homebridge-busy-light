@@ -601,6 +601,7 @@ Busy Light additions:
 8. Calendar cards open and close from their header, which is one button with the shell's disclosure glyph. Saved cards start closed; a new card opens expanded. There is no per-card help toggle: 11.3 C defines the header without one.
 9. A field's message appears once it has been left (or, for a checkbox or a calendar list, changed); the issues summary after Settings lists every issue at once, a new card's included, so Save is never disabled without a reason on the page.
 10. The Right now swatch uses the saved colors, which are what the running plugin sends, not unsaved edits.
+11. From build 3.2, the message that leaving a field shows (item 9) waits while a pointer button is down, and shows once the pointer is released and its click has landed, or after 5 seconds when no release comes (one outside the frame, say). So a button below an empty required field stays put between press and release, and the click lands: in build 3.1 the message moved the button down before the release, and the click was lost (17). Leaving a field with the keyboard shows its message at once, as before.
 
 ### 11.3 Copy (verbatim)
 
