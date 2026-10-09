@@ -1965,4 +1965,25 @@ describe('settings page: the owner\'s configuration, opened and saved back (buil
     assert.deepEqual(read.config, parseConfig(OWNER).config);
     assert.deepEqual([read.config.pollSeconds, read.config.calendarSeconds], [30, 180]);
   });
+
+  it('opens with the build 3.2 controls shown and off: the Working switch, Warn before meetings, Copy on each address line', async () => {
+    answers.set('/input/info', { hostname: 'homebridge.local', addresses: ['192.168.4.10'], port: 8582, id: 'q3Lr8vT0cXw2mN5a', addressChange: null });
+    answers.set('/status', state({ status: 'available', reason: { source: null, until: null },
+      inputs: [{ sender: 'Home app', status: 'inCall', app: null, via: 'switch', auth: null, lastHeard: new Date(T - 600_000).toISOString(),
+        expiresAt: null, active: false, ended: 'cleared' }] }));
+    const { root, page } = mount(OWNER);
+    page.startPolling();
+    await settle();
+    assert.deepEqual(page.issues(), []);
+    assert.equal(field(root, 'workingSwitch.enabled').checked, false);
+    assert.equal(field(root, 'meetingWarningSeconds').value, '0', 'Warn before meetings: Off');
+    const rows = root.querySelectorAll('#section-statusInput .bl-address-row');
+    assert.deepEqual(rows.map((r) => [text(r.querySelector('.bl-readonly-line')), text(r.querySelector('button'))]),
+      [['http://homebridge.local:8582', 'Copy'], ['http://192.168.4.10:8582', 'Copy']]);
+    assert.deepEqual(root.querySelectorAll('#section-statusInput .bl-sender-row .bl-badge').map((b) => text(b)), ['Cleared'],
+      'the On a Call switch turned off reads Cleared');
+    assert.ok(root.querySelectorAll('#section-lights .form-check-label').some((l) => text(l) === 'Busy Light Meeting Soon'));
+    assert.equal(requests.filter((r) => r.path !== '/version' && r.path !== '/status' && r.path !== '/input/info').length, 0,
+      'opening it asks nothing else');
+  });
 });

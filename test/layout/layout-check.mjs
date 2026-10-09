@@ -9,8 +9,10 @@
  * with a saved value not in their list, the address change notice, and the Colors list measured collapsed and
  * expanded once the status input, the On a Call switch and Teams status are turned off on the page. From build 3.2 it
  * clicks Add calendar with the mouse while a new Outlook card's empty Address has focus, and expects the click to land
- * (SPEC 11.2 item 11). It checks that secondary text and locked fields keep 4.5:1 contrast, that nothing is wider than
- * the frame, and that the frame itself never scrolls.
+ * (SPEC 11.2 item 11); it also has the Working switch checkbox ticked, Warn before meetings set, a Copy button beside
+ * an address line clicked, a Cleared sender beside an Expired one, and Right now in the meeting warning, with the
+ * Working switch off and with a time on another day, each measured. It checks that secondary text and locked fields
+ * keep 4.5:1 contrast, that nothing is wider than the frame, and that the frame itself never scrolls.
  *
  * It needs Playwright with Chromium and the Homebridge UI's own stylesheet, which are not dependencies of the plugin:
  *   HOMEBRIDGE_UI_CSS=/path/to/homebridge-config-ui-x/public/styles-*.css npm run test:layout
@@ -71,11 +73,13 @@ const CONFIG = {
   colors: { busy: '#1A2B3C' },
   lifx: { enabled: true },
   sensors: ['available', 'busyAny', 'outOfOffice'],
+  workingSwitch: { enabled: true },
+  meetingWarningSeconds: 120,
 };
 
 const NOW = Date.now();
 const ANSWERS = {
-  '/version': { version: '0.1.0-beta.4' },
+  '/version': { version: '0.1.0-beta.5' },
   '/status': {
     version: 1, updatedAt: new Date(NOW - 20_000).toISOString(), status: 'inMeeting',
     reason: { source: 'Work', until: new Date(NOW + 1_800_000).toISOString() }, override: false, signIn: null,
@@ -86,17 +90,21 @@ const ANSWERS = {
       { id: 'cal-work', name: 'Work', type: 'microsoft', state: 'signInNeeded', lastChecked: null, events: null, error: 'waiting for sign-in' },
     ],
     light: { enabled: true, label: 'Floor', host: '192.168.4.50', found: 'discovered', lastSent: '#FF0000', lastSentAt: null, answered: true },
-    statusInput: { enabled: true, port: 8582, listening: true, error: null, id: 'q3Lr8vT0cXw2mN5a' },
     inputs: [
       { sender: 'CallWatch on Alex’s iMac', status: 'inCall', app: 'Microsoft Teams', via: 'api', auth: 'signed',
-        lastHeard: new Date(NOW - 30_000).toISOString(), expiresAt: new Date(NOW + 150_000).toISOString(), active: true },
+        lastHeard: new Date(NOW - 30_000).toISOString(), expiresAt: new Date(NOW + 150_000).toISOString(), active: true, ended: null },
       { sender: 'Test on my laptop with a rather long name for a sender', status: 'busy', app: null, via: 'api', auth: 'plain',
-        lastHeard: new Date(NOW - 300_000).toISOString(), expiresAt: new Date(NOW - 60_000).toISOString(), active: false },
+        lastHeard: new Date(NOW - 300_000).toISOString(), expiresAt: new Date(NOW - 60_000).toISOString(), active: false, ended: 'expired' },
+      { sender: 'Status script on the office Mac', status: 'doNotDisturb', app: null, via: 'api', auth: 'signed',
+        lastHeard: new Date(NOW - 900_000).toISOString(), expiresAt: new Date(NOW - 900_000).toISOString(), active: false, ended: 'cleared' },
       { sender: 'Home app', status: 'inCall', app: null, via: 'switch', auth: null, lastHeard: new Date(NOW - 600_000).toISOString(),
-        expiresAt: null, active: true },
+        expiresAt: null, active: true, ended: null },
     ],
+    statusInput: { enabled: true, port: 8582, listening: true, error: null, id: 'q3Lr8vT0cXw2mN5a',
+      reported: { doNotDisturb: new Date(NOW - 900_000).toISOString() } },
+    meetingWarning: null,
   },
-  '/input/info': { hostname: null, addresses: ['192.168.4.10', 'fd00:1234:5678:9abc::10'], port: 8582, id: 'q3Lr8vT0cXw2mN5a',
+  '/input/info': { hostname: 'homebridge.local', addresses: ['192.168.4.10', 'fd00:1234:5678:9abc::10'], port: 8582, id: 'q3Lr8vT0cXw2mN5a',
     addressChange: { from: '192.168.4.23', to: '192.168.4.10' } },
   '/input/test': { error: 'notListening', message: 'Nothing is listening on port 8582.' },
   '/icloud/calendars': { calendars: [
@@ -115,12 +123,26 @@ const ANSWERS = {
   '/lifx/test': { answered: false },
 };
 
-/** The stand-in for the Homebridge UI's `window.homebridge` inside the iframe. */
+/**
+ * The stand-in for the Homebridge UI's `window.homebridge` inside the iframe. Its answers can be changed from the
+ * runner (`window.__answers`), and the page's 15 second /status poll run at once (`window.__poll`), so Right now can be
+ * shown in each state without waiting.
+ */
 function mockHost({ config, answers }) {
   const pushed = [];
   window.__pushed = pushed;
+  window.__answers = answers;
+  const polls = [];
+  const setInterval = window.setInterval.bind(window);
+  window.setInterval = (fn, ms, ...rest) => {
+    if (ms === 15_000) {
+      polls.push(fn);
+    }
+    return setInterval(fn, ms, ...rest);
+  };
+  window.__poll = () => polls.forEach((fn) => fn());
   window.homebridge = {
-    request: async (p) => JSON.parse(JSON.stringify(answers[p] ?? {})),
+    request: async (p) => JSON.parse(JSON.stringify(window.__answers[p] ?? {})),
     getPluginConfig: async () => [JSON.parse(JSON.stringify(config))],
     updatePluginConfig: async (blocks) => {
       pushed.push(blocks);
@@ -333,6 +355,8 @@ async function run() {
         await click('#section-statusInput .bl-replace-key');
         await click('#section-statusInput .bl-input-test');
         await frame.waitForSelector('#section-statusInput .bl-input-result');
+        // A Copy button beside an address line, clicked (from build 3.2), so it reads Copied.
+        await click('#section-statusInput .bl-address-row:nth-of-type(3) .bl-copy-address');
         await click('[data-card-id="cal-google"] .bl-source-advanced summary');
         // Colors: Off on one row and Custom on another, with Busy already a custom color.
         await click('#section-colors [data-path="colors.inMeeting"] button.bl-preset-off');
@@ -391,6 +415,28 @@ async function run() {
         await report(`${themeName} ${width}px, Colors collapsed`, '-collapsed');
         await click('#section-colors .bl-show-statuses');
         await report(`${themeName} ${width}px, Colors expanded`, '-expanded');
+        // Right now in the states build 3.2 adds: the meeting warning, the Working switch off, and a time on another day.
+        const day = 24 * 3_600_000;
+        const states = [
+          ['meeting warning', { status: 'available', reason: { source: null, until: new Date(NOW + 120_000).toISOString() },
+            meetingWarning: { meetingAt: new Date(NOW + 120_000).toISOString() } }, '.bl-now-line'],
+          ['not working', { status: 'notWorking', reason: null, meetingWarning: null }, '.bl-now-not-working'],
+          ['another day', { status: 'available', reason: { source: null, until: new Date(NOW + 10 * day).toISOString() }, meetingWarning: null },
+            '.bl-now-line'],
+        ];
+        for (const [label, fields, selector] of states) {
+          const before = await frame.evaluate(() => document.querySelector('#section-rightNow')?.textContent ?? '');
+          await frame.evaluate((f) => {
+            window.__answers['/status'] = { ...window.__answers['/status'], ...f, updatedAt: new Date().toISOString() };
+            window.__poll();
+          }, fields);
+          await frame.waitForFunction(([sel, old]) => {
+            const section = document.querySelector('#section-rightNow');
+            return section?.querySelector(sel) && section.textContent !== old;
+          }, [selector, before]);
+          await fit();
+          await report(`${themeName} ${width}px, Right now ${label}`, `-${label.replace(/ /g, '-')}`);
+        }
         await context.close();
       }
     }
