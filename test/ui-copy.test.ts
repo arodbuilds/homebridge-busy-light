@@ -43,6 +43,8 @@ const PLACEHOLDERS: Record<string, string[]> = {
   'LIGHTS.usingIp': ['{ip}'],
   'LIGHTS.usingBulb': ['{label}', '{host}'],
   'LIGHTS.usingBulbSilent': ['{label}', '{host}'],
+  'LIGHTS.bulbAnswered': ['{label}'],
+  'LIGHTS.bulbNoAnswer': ['{label}'],
   'STATUS_INPUT.portError': ['{port}'],
   'STATUS_INPUT.addressChanged': ['{old}', '{new}'],
   'COLORS.moreStatuses': ['{n}'],

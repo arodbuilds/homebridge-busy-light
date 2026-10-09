@@ -4,7 +4,7 @@ Source of truth for behaviour, naming, configuration, log lines and UI copy. Wri
 
 ## 1. Overview
 
-Busy Light reads a person's calendars and, optionally, their Microsoft Teams presence, reduces them to one status, and shows that status on a light. It does this two ways: by setting a LIFX bulb directly over the local network, and by exposing HomeKit occupancy sensors that a Home automation can use to set any other HomeKit light or scene.
+Busy Light reads a person's calendars and, optionally, their Microsoft Teams presence, reduces them to one status, and shows that status on a light. It does this two ways: by setting one or more LIFX bulbs directly over the local network, and by exposing HomeKit occupancy sensors that a Home automation can use to set any other HomeKit light or scene.
 
 It is the fourth plugin in a family (`homebridge-notify-switch`, `homebridge-peloton`, `homebridge-generac`) and shares their structure, tooling, settings page shell and release process.
 
@@ -19,7 +19,7 @@ Not affiliated with Apple, Google, Microsoft or LIFX.
 1. Calendar sources: iCloud (CalDAV), Google Calendar (secret iCal address), Microsoft 365 (Outlook calendar and Teams presence through Microsoft Graph), and any calendar subscription URL.
 2. Any number of sources, combined.
 3. Nine statuses with a fixed precedence (section 6).
-4. LIFX LAN control of one bulb, a color per status. The bulb is found on the network automatically (section 13.2); an IP address is optional.
+4. LIFX LAN control of a bulb, a color per status, and from build 3.2 of several bulbs that show the status together (13.3). Bulbs are found on the network automatically (section 13.2); an IP address is optional.
 5. HomeKit occupancy sensors: three roll-ups and seven individual statuses (section 7).
 6. An optional Do Not Disturb override switch.
 7. A command line tool for checking sources, signing in to Microsoft and testing the bulb (section 10.2).
@@ -29,7 +29,7 @@ Not affiliated with Apple, Google, Microsoft or LIFX.
 
 ### 2.2 Deferred
 
-1. More than one light, or a different color set per light.
+1. A different color set per light. (More than one LIFX bulb, all showing the same colors, came in build 3.2: 13.3.)
 2. Philips Hue or other direct light integrations.
 3. Google sign-in with OAuth (the secret address covers the need without a Google Cloud project).
 4. Working hours (treating time outside set hours as Offline without Teams). From build 3.2 the Working switch (6.6) covers the need without built-in hours: a Home scene or automation turns it off and on.
@@ -304,6 +304,7 @@ One accessory per sensor, so each can be placed in a room and used in automation
 2. With no change, the bulb is sent its color again every `lifx.refreshSeconds` (default 300, 0 turns this off), so a bulb that was switched off at the wall recovers. Not during a meeting warning (6.7 item 6).
 3. `unknown` sends nothing to the bulb. `notWorking` sends `off` (6.6).
 4. A bulb chosen later (13.2 item 4) is sent the current color at once, with the 1 second fade.
+5. From build 3.2 there can be several chosen bulbs (13.3): wherever this SPEC says the bulb is sent something (a status change, a refresh, the meeting warning, the Working switch turning the light off, a bulb chosen later), every chosen bulb is sent it at the same moment, each on its own.
 
 ### 8.3 Source status and backoff
 
@@ -331,7 +332,7 @@ Each source is in one of four states, shown in the state file and, from build 2,
     { "type": "url", "id": "cal-mgx3kb9h1j4", "name": "Team rota", "url": "", "use": "outOfOffice", "calendarSeconds": 600 }
   ],
   "colors": { "available": "#00FF00", "offline": "off" },
-  "lifx": { "enabled": false, "bulb": "", "host": "", "brightness": 100, "refreshSeconds": 300 },
+  "lifx": { "enabled": false, "bulbs": [], "host": "", "brightness": 100, "refreshSeconds": 300 },
   "sensors": ["available", "busyAny", "outOfOffice"],
   "overrideSwitch": false,
   "pollSeconds": 30,
@@ -355,7 +356,7 @@ This is the build 2 shape, as the settings page writes it: every source has an e
 3. `type` is one of `icloud`, `google`, `microsoft`, `url`. Required fields: iCloud `appleId` and `appPassword`; Google and URL `url`; Microsoft `tenantId` and `clientId` (both GUIDs).
 4. At most one Microsoft source may have `useTeamsStatus` on. A Microsoft source with both `useTeamsStatus` and `useCalendar` off is an error.
 5. `colors` values are `#RRGGBB` or `off`, any case. Unknown status keys are ignored with a warning.
-6. `lifx.bulb` (a bulb's name as shown in the LIFX app, or its serial number) and `lifx.host` (an IPv4 address or host name) are both optional; section 13.2 says how the bulb is chosen. `brightness` is 1 to 100.
+6. `lifx.bulbs` (from build 3.2: a list of bulbs, each a name as shown in the LIFX app or a serial number; the page writes serial numbers) and `lifx.host` (one or more IPv4 addresses or host names separated by commas, each a bulb; from build 3.2 several) are both optional; section 13.2 says how the bulbs are chosen. `lifx.bulbs` replaces `lifx.bulb` (one name or serial number), which keeps working: when `lifx.bulbs` is absent, a saved `lifx.bulb` is read as a list of one, and the page writes `lifx.bulbs` and drops `lifx.bulb` on the next Save. With `lifx.bulbs` present, `lifx.bulb` is ignored. A `lifx.host` with any part that is not an IPv4 address or host name is ignored as a whole, with one warning. `brightness` is 1 to 100, one setting for every bulb.
 7. `sensors` holds keys from section 7. Unknown keys are ignored with a warning. An empty list creates no sensors.
 8. Validation never stops Homebridge. An invalid source is skipped with one error line naming the field (for example `calendars[1].url: must start with https:// or webcal://`); an invalid scalar falls back to its default with one warning.
 9. Names are trimmed before the length check and before the id is derived. The derived id follows rule 2 literally (`Work (Contoso)` becomes `work-contoso-`). An explicit id is 1 to 64 of `a-z`, `0-9` and `-`. Two sources with the same id, given or derived, is an error on the later one.
@@ -389,12 +390,12 @@ The validation messages, after `{path}: `:
 | `only one Microsoft 365 calendar can use Teams status` | error | Rule 4 |
 | `Use Teams status and Use Outlook calendar cannot both be off` | error | Rule 4 (on `useCalendar`) |
 | `must be true or false` | warn | A boolean |
-| `must be a list` | warn | `calendars`, `sensors`, `outOfOfficeWords`, `calendars[].calendars` |
+| `must be a list` | warn | `calendars`, `sensors`, `outOfOfficeWords`, `calendars[].calendars`, `lifx.bulbs` |
 | `must be text, ignored` | warn | An item of a list of words or names |
 | `must be a set of colors` / `must be a set of LIFX settings` | warn | `colors` or `lifx` is not an object |
 | `is not a status, ignored` | warn | An unknown key in `colors` |
 | `must be #RRGGBB or off` | warn | A color value |
-| `must be an IPv4 address or host name` | warn | `lifx.host` |
+| `must be an IPv4 address or host name` | warn | `lifx.host` (any of its comma separated parts) |
 | `must be a whole number from 1 to 100` | warn | `lifx.brightness` |
 | `must be a whole number from 0 to 86400` | warn | `lifx.refreshSeconds` |
 | `must be a whole number from 15 to 240` / `from 60 to 600` | warn | `pollSeconds`, `calendarSeconds`, `calendars[].calendarSeconds` |
@@ -435,8 +436,8 @@ Titles and descriptions, verbatim (the build 2 field `use` takes its title and c
 | `useCalendar` | Use Outlook calendar | |
 | `colors.*` | (the display name of the status) | (on the group) A color such as #FF0000, or the word off to turn the light off for that status. |
 | `lifx.enabled` | Set a LIFX bulb directly | |
-| `lifx.bulb` | Bulb name | Leave empty if you have one LIFX bulb: it is found automatically. With several, enter the bulb's name from the LIFX app. The log lists the bulbs found. |
-| `lifx.host` | Bulb IP address | Optional. Only needed when the bulb cannot be found automatically, for example when Homebridge runs in Docker without host networking. |
+| `lifx.bulbs` | Bulbs | Leave empty if you have one LIFX bulb: it is found automatically. With several, add the name of each bulb to use, from the LIFX app. The log lists the bulbs found. |
+| `lifx.host` | Bulb IP address | Only needed when the search cannot reach the bulbs, for example when Homebridge runs in Docker without host networking. Separate several addresses with commas. |
 | `lifx.brightness` | Brightness (percent) | |
 | `lifx.refreshSeconds` | Send the color again every (seconds) | Recovers a bulb that was switched off at the wall. 0 sends only when the status changes. |
 | `sensors` | Sensors to create | Each is an occupancy sensor in the Home app that is on while that is your status. Use them in automations to set any other light. |
@@ -460,7 +461,7 @@ Titles and descriptions, verbatim (the build 2 field `use` takes its title and c
 
 Build 1 form details not in the table above:
 
-1. The colors and LIFX settings are fieldsets titled "Colors" and "LIFX bulb". The LIFX fields after the checkbox show only while it is ticked. From build 3, the status input and the On a Call switch are fieldsets titled "Status from other apps" and "On a Call switch" after the calendars, with their other fields shown only while the checkbox is ticked, and every calendar entry ends with its own `calendarSeconds`.
+1. The colors and LIFX settings are fieldsets titled "Colors" and "LIFX bulbs" (from build 3.2; "LIFX bulb" before). The LIFX fields after the checkbox show only while it is ticked. From build 3, the status input and the On a Call switch are fieldsets titled "Status from other apps" and "On a Call switch" after the calendars, with their other fields shown only while the checkbox is ticked, and every calendar entry ends with its own `calendarSeconds`.
 2. `calendars[].url` is one property shown twice in the layout, with the Google title and description or the URL title and description, by a `condition` on the type (evaluated by the Homebridge UI as `new Function('model', 'arrayIndices', body)`).
 3. The sensors are a checkbox list named with the accessory name endings of section 7 ("Available", "Busy", "Out of Office", and so on).
 4. `calendars[].id` is in the schema but not shown. Patterns flag colors that are not `#RRGGBB` or `off`, IDs that are not GUIDs, and addresses that do not start with `https://` or `webcal://`.
@@ -487,7 +488,10 @@ Build 1 form details not in the table above:
     { "id": "work", "name": "Work", "type": "microsoft", "state": "connected", "lastChecked": "2026-10-08T13:00:05.000Z", "events": 6, "error": null }
   ],
   "signIn": null,
-  "light": { "enabled": true, "label": "Office Door", "host": "192.168.4.50", "found": "discovered", "lastSent": "#FF0000", "lastSentAt": "2026-10-08T13:00:05.000Z", "answered": true },
+  "lights": [
+    { "enabled": true, "label": "Office Door", "host": "192.168.4.50", "found": "discovered", "lastSent": "#FF0000", "lastSentAt": "2026-10-08T13:00:05.000Z", "answered": true },
+    { "enabled": true, "label": "Status Light", "host": "192.168.4.21", "found": "remembered", "lastSent": "#FF0000", "lastSentAt": "2026-10-08T13:00:05.000Z", "answered": false }
+  ],
   "statusInput": { "enabled": true, "port": 8582, "listening": true, "error": null, "id": "q3Lr8vT0cXw2mN5a", "advertised": "homebridge.local", "addressChange": null,
                    "reported": { "inCall": "2026-10-08T13:00:04.000Z" } },
   "inputs": [ { "sender": "CallWatch on Alex’s iMac", "status": "inCall", "app": "Microsoft Teams", "via": "api", "auth": "signed", "lastHeard": "2026-10-08T13:00:04.000Z", "expiresAt": "2026-10-08T13:03:04.000Z", "active": true, "ended": null } ],
@@ -500,7 +504,7 @@ Build 1 form details not in the table above:
 2a. `signIn` is null, or `{ "id", "verificationUri", "userCode", "expiresAt" }` while a Microsoft code is waiting.
 3. The file never holds tokens, passwords, addresses or anything about an event beyond the count and the `until` time.
 4. `status` is `unknown` until the first resolve, and `reason` is null while the status is unknown. `lastChecked` is the last attempt (either part of a Microsoft source). `events` is null for a Microsoft source that does not read the calendar. A Microsoft source without a token has the `error` `waiting for sign-in`, `not signed in` or `the sign-in code was not used`. `help` appears only with a refused sign-in.
-5. `light.found` is `configured` (from `lifx.host`), `remembered` (from `light.json`), `discovered`, or null when no bulb is chosen. `lastSent` is `#RRGGBB` or `off`. The file is mode 600.
+5. `light.found` is `configured` (from `lifx.host`), `remembered` (from `light.json`), `discovered`, or null when no bulb is chosen. `lastSent` is `#RRGGBB` or `off`. The file is mode 600. From build 3.2 the file has `lights`, one entry per chosen bulb (13.3) with the fields `light` had, in the order of `lifx.bulbs` (or of `lifx.host`), in place of `light`. While no bulb is chosen there is one entry, as `light` was: `enabled` false when LIFX is off, or `enabled` true with a null `host` while none is found yet. Readers (the CLI and the page) still read a `light` object, as one entry, from a state file written before build 3.2.
 6. `statusInput` and `inputs` (from build 3, section 18): `via` is `api` or `switch`. `inputs` holds the senders of 18.7 item 5, each with `"auth": "signed"` or `"plain"`, and `null` for the switch (the replay table stays in `inputs.json` only). `statusInput.id` is null until the status input first starts. `reason` carries `"app"` when a report with an app decided the status, so Right now can read `From {sender} ({app}).`; `GET /v1/status` gives no calendar name or event time (18.10 item 3): its `reason.source` is an active sender's name or null, and `reason.until` is null. A build 2 state file, without these fields, still reads. The key is never in the state file.
 7. `statusInput.advertised` (from build 3.1) is the address the plugin last gave senders: the host name, or the first IPv4 address when there is none (18.11 item 6), or null before the first check. `statusInput.addressChange` is null, or `{ "from", "to", "at" }` for the last change from one IPv4 address to another. Both are read back from the previous state file when the plugin starts.
 8. From build 3.2: `status` is `notWorking` while the Working switch is off, with `reason` null (6.6). `meetingWarning` is null, or `{ "meetingAt" }`, the meeting's start as an ISO time, while the meeting warning is on (6.7). Each `inputs` entry has `ended`: `cleared` when the sender's last word was `clear` (the On a Call switch turned off included), `expired` when its report ran out, and null while it is active; an entry written before build 3.2 has none and reads as `expired`. `statusInput.reported` holds, for each status an app has reported through the status API, when it last did, `{ "<status>": "<ISO time>" }`, kept in `inputs.json` across restarts (18.7 item 8); the page reads it for the statuses it shows (11.3 D). `reason.until` stays an ISO time: Right now, the CLI `status` and the log show it with its day (6.3).
@@ -515,7 +519,7 @@ Build 1 form details not in the table above:
 | `check` | Without touching HomeKit or the bulb, fetches every source once and prints, per source, its state, the number of events in the window and the events active now as times and `showAs` only. Then prints the resolved status. |
 | `login [name]` | Runs the device code flow for the named Microsoft source (or the only one) and stores the token. |
 | `lights` | Searches the network for LIFX bulbs and prints each one's name, serial number and IP address. |
-| `light [name\|ip] [#RRGGBB\|off]` | Sends the color (default the Available color) to the bulb and prints whether it answered. With no bulb given, uses the configured or only bulb, as the plugin would. |
+| `light [name\|ip] [#RRGGBB\|off]` | Sends the color (default the Available color) to the bulb and prints whether it answered. With no bulb given, uses the configured or only bulb, as the plugin would (from build 3.2, every chosen bulb, with one answer line per bulb). |
 | `input` | Prints whether the status input and the On a Call switch are on, the port, the instance id, the address by host name when there is one (18.11; the CLI runs the check itself), the addresses of the Homebridge host (`http://{ip}:{port}`, one per non-internal IPv4 address), and the senders from the state file. |
 | `input --setup-code` | Also prints the setup code, after the line `The setup code contains your key. Treat it like a password.` |
 | `input test` | Sends a signed `inCall` for 30 seconds from the sender `Busy Light test` to the running plugin on `127.0.0.1`, using the configured key, and prints the response or the error. |
@@ -523,11 +527,11 @@ Build 1 form details not in the table above:
 
 The CLI follows the same logging rules as the plugin (section 12).
 
-1. `status`: the status line of section 12 (or the Unknown line, or from build 3.2 `Status: Not working (the Working switch is off).` while the Working switch is off), `The override switch is on.` when it is, `Updated {time}.`, one line per source `{name} ({type name}): {state}{ (error)}{, n events}, checked {time}.` (states in words: checking, connected, sign-in needed, not reachable; type names: iCloud, Google Calendar, Microsoft 365, Calendar URL), `  Instructions to send your Microsoft 365 administrator: {help}` after a refused source, the Microsoft code line while a code is waiting, and `Light: not used.`, `Light: no bulb chosen yet.` or `Light: {label at }{host}{, last sent {color} at {time}, answered|no answer}.` No state file exits 1.
+1. `status`: the status line of section 12 (or the Unknown line, or from build 3.2 `Status: Not working (the Working switch is off).` while the Working switch is off), `The override switch is on.` when it is, `Updated {time}.`, one line per source `{name} ({type name}): {state}{ (error)}{, n events}, checked {time}.` (states in words: checking, connected, sign-in needed, not reachable; type names: iCloud, Google Calendar, Microsoft 365, Calendar URL), `  Instructions to send your Microsoft 365 administrator: {help}` after a refused source, the Microsoft code line while a code is waiting, and `Light: not used.`, `Light: no bulb chosen yet.` or `Light: {label at }{host}{, last sent {color} at {time}, answered|no answer}.`, from build 3.2 one `Light:` line per entry of `lights` (10.1 item 5). No state file exits 1.
 2. `check`: one line per source `{name} ({type name}): {state}{ (error)}{, n events in the window}.`, then for a connected source `  Teams: {availability}, {activity}{, out of office}.` and one `  Now: {start} to {end}, {showAs}.` per active event (or `  Nothing on this calendar right now.`), then the status line. It never starts a Microsoft sign-in (it prints `  Run "homebridge-busy-light login {name}" to sign in.`), does not write the state file, and does not print the plugin's retry lines. It exits 1 unless every source connects, and with no calendars.
 3. `login`: with several Microsoft sources the name (or id) is required. It prints the Microsoft lines of section 12 and exits 0 only when signed in.
 4. `lights`: `Searching for LIFX bulbs...`, then `{label}: serial number {serial}, IP address {ip}` per bulb, or the "no bulb" line and exit 1.
-5. `light`: an argument that is `#RRGGBB` or `off` is the color; the rest is the bulb. An IPv4 address is sent tagged; a name or serial is found by discovery and sent untagged; no bulb uses `lifx.host`, the remembered bulb or discovery as the plugin would, whether or not `lifx.enabled` is on, and never writes `light.json`. It prints `The LIFX bulb at {host} answered.` or the "bulb silent" line (exit 1).
+5. `light`: an argument that is `#RRGGBB` or `off` is the color; the rest is the bulb. An IPv4 address is sent tagged; a name or serial is found by discovery and sent untagged; no bulb uses `lifx.host`, the remembered bulb or discovery as the plugin would, whether or not `lifx.enabled` is on, and never writes `light.json`. It prints `The LIFX bulb at {host} answered.` or the "bulb silent" line (exit 1). From build 3.2, with no bulb given it sends to every bulb the plugin would choose (13.2, 13.3), at the same moment, and prints one of those lines per bulb, in the order of `lifx.bulbs`; it exits 1 when any bulb did not answer.
 6. `help` (also `--help`, `-h`) prints the usage; an unknown command prints it and exits 1.
 7. `input` (from build 3): `Status input: on, port {port}.` or `Status input: off (port {port} when on).`; `On a Call switch: on, turns itself off after {n} hours.` or `On a Call switch: off.`; `Instance id: {id}.` or `Instance id: none yet (it is created when the status input first starts).`; one `Address: http://{host}:{port}` per address, the host name first; then `Apps reporting now:` and one line per sender, `  {sender}: {Display name}{ from {app}}{, signed|, plain key}, last heard {time}, active|cleared|expired.` (the switch's sender without the authentication part; `cleared` from build 3.2, as the `Cleared` badge of 11.3 I), or `  No app has reported in the last 12 hours.` The key is never printed. `input --setup-code` without the input on, a key and an instance id prints `There is no setup code yet: turn on the status input in the plugin settings, save, and restart Homebridge.` and exits 1. `input test` prints `Busy Light received the test: {answer}` or `The test failed ({error}, HTTP {code}): {message}` and exits 1; with the status input off it prints `The status input is off. Turn it on in the plugin settings, save, and restart Homebridge.` and exits 1.
 
@@ -547,7 +551,7 @@ The CLI follows the same logging rules as the plugin (section 12).
 | `/microsoft/calendars` | `{ "id", "tenantId", "clientId" }` | `{ "calendars": [MicrosoftCalendar] }` or `{ "error": "notSignedIn" \| "network" }` or `{ "error": "refused", "reason", "help" }` |
 | `/microsoft/disconnect` | `{ "id" }` | `{ "ok": true }` (deletes that source's token file) |
 | `/lifx/discover` | none | `{ "bulbs": [{ "label", "serial", "ip" }] }` (empty when none answer) |
-| `/lifx/test` | `{ "serial"? , "host"?, "brightness" }` | `{ "answered": true \| false }` |
+| `/lifx/test` | `{ "bulbs": [{ "serial"?, "host"? }], "brightness" }` (from build 3.2; `{ "serial"?, "host"?, "brightness" }` before, still read as one bulb) | `{ "answered": true \| false, "results": [{ "label", "host", "answered" }] }` |
 | `/reset` | none | `{ "ok": true }`, or `{ "ok": false }` when `busy-light/` cannot be written |
 | `/input/info` | none | `{ "hostname": "homebridge.local", "addresses": ["192.168.4.10"], "port", "id", "addressChange" }` (`hostname` as 18.11, or null; non-internal IPv4 addresses of the host; `id` from `instance.json`, created there if missing; `addressChange` `{ "from", "to" }` or null, 18.11 item 6; the page builds the address and setup code) |
 | `/input/test` | `{ "port", "key" }` | `{ "ok": true }` or `{ "error": "notListening" \| "unauthorized" \| "other", "message" }`: sends a signed `inCall` for 30 seconds from `Busy Light test` to `127.0.0.1:{port}` |
@@ -558,7 +562,7 @@ The CLI follows the same logging rules as the plugin (section 12).
 2. `/url/test` fetches the address once under the rules of 5.2 and counts today's events. `host` is the host name only. Too many redirects is `http`, with the last redirect's status as `code`.
 3. The Microsoft sign-in runs inside the UI server process, with the device code flow of 4.3 and the token store of 4.4: one pending flow per source id, held in memory, ended by `done`, `expired`, `refused`, `/microsoft/cancel` or after 15 minutes. Only one code is issued per `/microsoft/start` (the three-code limit of 4.3 item 5 is for the plugin's own unattended flow). On `done` the token file `busy-light/microsoft-{id}.json` is written exactly as the plugin writes it, and the plugin picks it up within one tick (4.4 item 6). Refusals use the reason and help address of 4.3.1. `/microsoft/poll` asks Microsoft only when the page calls it (every 3 seconds), at most once per polling interval, 5 seconds longer after each `slow_down`; the server runs no timers of its own, and a pending flow older than 15 minutes is dropped on the next Microsoft request. A token that cannot be written answers `expired`, so Connect gives a new code. An `id` that is not a valid source id is `network` (the id names a file), and a tenant or client ID that is not a GUID is `refused` with the "not recognised" reason without asking Microsoft.
 4. `/microsoft/calendars` uses the stored token: `GET /v1.0/me/calendars?$select=id,name,isDefaultCalendar,owner` (follow `@odata.nextLink` on `https://graph.microsoft.com/` up to five pages), then one `calendarView` per calendar for today, selecting only the fields of 5.3. `shared` is true when the calendar's `owner.address` differs from the default calendar's. This needs `Calendars.Read` only. A refresh made here is kept in memory and never written to (or, when refused, deleted from) the token file: a token refreshed for `Calendars.Read` alone would take Teams status away from the plugin. The calendars are read even when the source's `useCalendar` is off.
-5. `/lifx/discover` is the discovery of 13.2 item 1 and changes nothing. `/lifx/test` sends red, then green, then the Available color, each held 1 second, with acknowledgements (13.1), to the bulb by serial (untagged) or by host (tagged), and reports whether every packet was answered. It never writes `light.json`; the plugin's next send restores the status color. The Available color is the one saved in `config.json` (read only), or the default; the request carries no color. A `serial` with a `host` is sent untagged to that host, a `host` alone is sent tagged, and a `serial` alone is found by discovery first (not found: `answered` false). With neither, the bulb is the one the plugin would choose: discovery, then the saved `lifx.bulb` by serial or name, or the only bulb found (none, or several and none named: `answered` false).
+5. `/lifx/discover` is the discovery of 13.2 item 1 and changes nothing. `/lifx/test` sends red, then green, then the Available color, each held 1 second, with acknowledgements (13.1), to the bulb by serial (untagged) or by host (tagged), and reports whether every packet was answered. It never writes `light.json`; the plugin's next send restores the status color. The Available color is the one saved in `config.json` (read only), or the default; the request carries no color. A `serial` with a `host` is sent untagged to that host, a `host` alone is sent tagged, and a `serial` alone is found by discovery first (not found: `answered` false). With neither, the bulb is the one the plugin would choose: discovery, then the saved `lifx.bulb` by serial or name, or the only bulb found (none, or several and none named: `answered` false). From build 3.2 the request lists the bulbs, each tested as above and all at the same moment, each on its own (13.3); `results` has one entry per bulb in the order given, with its `label` from discovery when the server found it there (else null), the `host` it was sent to (null when not found) and whether it answered; `answered` is true only when every bulb answered. With no bulbs listed, the bulbs are those the plugin would choose, by the saved `lifx.bulbs` (or `lifx.bulb`) or the only bulb found.
 6. `/reset` deletes every file in `busy-light/` (tokens, state, `light.json`) and leaves a `reset-pending` marker there; the platform removes every cached accessory on its next start and deletes the marker. The page then replaces the platform block with the defaults through `updatePluginConfig()`; the host's SAVE persists it.
 7. The page never sends the server a value it did not need for that one call, and the server writes nothing to `config.json`: every configuration change goes through the page's `updatePluginConfig()` and the host's SAVE.
 8. The UI server writes no log lines; every outcome goes back to the page in the response.
@@ -579,7 +583,7 @@ For build 2, `reference/` held the sibling code and shell documents copied into 
 4. **Calendars**: heading, one line of help, one card per source (11.3 C), then the ADD CALENDAR button, which opens the shell's chooser tiles with four choices (Outlook or Microsoft 365 then shows its two options inline, 11.3 C). A new card opens expanded and its Name field takes focus.
 5. **Status from other apps** (from build 3): heading, help with its link, the checkbox and what it shows when ticked, then "Apps reporting now" and the On a Call switch (11.3 I).
 6. **Colors**: heading, two lines of help, one card holding a row for each status the setup can produce, in the precedence order of 6.3, a line to show the others, and from build 3.2 Warn before meetings (11.3 D).
-7. **Lights**: heading, the LIFX bulb card, then "Other lights in the Home app" (no card): the sensors checklist and a three-step automation example, and from build 3.2 the Working switch checkbox (11.3 E).
+7. **Lights**: heading, the LIFX bulbs card (from build 3.2; the LIFX bulb card before), then "Other lights in the Home app" (no card): the sensors checklist and a three-step automation example, and from build 3.2 the Working switch checkbox (11.3 E).
 8. **Settings**: heading and a single collapsed Advanced disclosure (11.3 F).
 9. Closing line, then the credit footer with `assets/busy-light-footer.svg` inlined at 20 px.
 
@@ -595,7 +599,7 @@ Busy Light additions:
 2. Source state pills use the host's success (Connected), secondary (Checking, Not saved yet), warning (Sign-in needed) and danger (Not reachable) subtle variables.
 3. A new card needs an id before it is saved, for its Microsoft token file: `cal-` followed by `Date.now().toString(36)` and four random base-36 characters from `Math.random()`. The id is written into the block and never changes, including on rename (9.1 item 2).
 4. Secret fields (App-specific password, Secret address in iCal format) are password inputs with Show and Hide. They hold what `getPluginConfig()` returned; drafts never hold them (shell rule).
-5. Connect, Test and Search are the only actions that reach the network, and only when pressed; the bulb search also runs once when "Use a LIFX bulb" is ticked. Opening the page calls only `/version` and `/status`, and `/input/info` when the status input is saved on (11.3 I shows the addresses whenever its box is ticked).
+5. Connect, Test and Search are the only actions that reach the network, and only when pressed; the bulb search also runs once when "Use LIFX bulbs" (before build 3.2, "Use a LIFX bulb") is ticked. Opening the page calls only `/version` and `/status`, and `/input/info` when the status input is saved on (11.3 I shows the addresses whenever its box is ticked).
 6. Each card's state pill comes from the state file's entry with the same id. A card that is not in the saved configuration shows "Not saved yet" instead. Changes on the page apply after Save and a Homebridge restart; the Right now row always describes the running plugin.
 7. The Microsoft code view replaces the card body in place and hands back to the card when it ends, as Generac's Connect flow does. Polling `/microsoft/poll` every 3 seconds stops when the view closes.
 8. Calendar cards open and close from their header, which is one button with the shell's disclosure glyph. Saved cards start closed; a new card opens expanded. There is no per-card help toggle: 11.3 C defines the header without one.
@@ -718,23 +722,24 @@ Microsoft 365 card:
 **E. Lights**
 
 - Heading: `Lights`
-- LIFX card title: `LIFX bulb`
-- Checkbox: `Use a LIFX bulb`. Ticking it starts a search at once.
+- LIFX card title: `LIFX bulbs` (from build 3.2, C8 of the build prompt; one card for every bulb)
+- Checkbox: `Use LIFX bulbs`. Ticking it starts a search at once.
 - Searching: `Looking for LIFX bulbs on your network…`
-- One found: `Found {label} ({ip}). Busy Light will use it.`
-- Several found: `Found {n} bulbs. Choose one:` then one radio per bulb, `{label} ({ip})`. The choice is saved as the bulb's serial number in `lifx.bulb`.
+- One found: `Found {label} ({ip}). Busy Light will use it.` With `lifx.bulbs` empty it is ticked by itself, as before build 3.2: its serial number is saved in `lifx.bulbs`. When `lifx.bulbs` names other bulbs and not this one, it is listed with its checkbox, unticked, below their lines (the next item), with no heading line.
+- Several found: `Found {n} bulbs. Choose the ones to use:` then one checkbox per bulb, `{label} ({ip})`, ticked for each bulb in `lifx.bulbs`. The choice is saved as the bulbs' serial numbers in `lifx.bulbs`, in the order found, and `lifx.bulb` is dropped. A bulb saved by its name is ticked when its name matches and saved by its serial number from then on.
+- With "Use LIFX bulbs" on and several found, none ticked is a field error on the list (H): `Choose at least one bulb, or turn off Use LIFX bulbs.`
 - None found: `No LIFX bulb found. Check that it is on and on the same network as Homebridge.`
-- The saved bulb not among those found: `{label} was not found just now. It may be switched off.`
-- With "Use a LIFX bulb" on, no IP address under Advanced, and no search yet in this visit (from build 3), the results line comes from the state file's `light` (10.1), read through `/status`:
+- The saved bulb not among those found: `{label} was not found just now. It may be switched off.` From build 3.2, one line per saved bulb not found; each stays ticked in `lifx.bulbs`.
+- With "Use LIFX bulbs" on, no IP address under Advanced, and no search yet in this visit (from build 3), the results line comes from the state file's `light` (10.1), read through `/status`; from build 3.2 one line per entry of `lights`:
   - With a `label` and `host` and `answered` true: `Busy Light is using {label} ({host}).`
   - With a `label` and `host` and `answered` false: `Busy Light is using {label} ({host}), but it did not answer last time.`
   - With no light in the state file (the plugin has not found one, or has not run since LIFX was turned on): `Busy Light has not found a bulb yet. Search again to look for one.`
   - `{label}` is the host when the state file has no label. `answered` null (nothing sent yet) reads as answering; only false gives the second line. A `light` that is off or has no host gives the third. Nothing shows until the first `/status` answer, and each answer redraws the line in place until a search replaces it.
 - Text button `Search again`, below the results line. A search replaces the line with its results.
 - `Brightness (percent)` (1 to 100)
-- Button `Test light` (busy `Testing…`), help `Shows red, then green, on the bulb.`; results `The bulb answered.` and `No answer from the bulb. Check that it is on and on the same network as Homebridge.`
+- Button `Test light` (busy `Testing…`), help `Shows red, then green, on each bulb chosen.` (from build 3.2; before it, the help named one bulb); it tests every ticked bulb (or every address under Advanced) at the same moment. With one bulb the results are `The bulb answered.` and `No answer from the bulb. Check that it is on and on the same network as Homebridge.`; with several, one result per bulb, in order: `{label} answered.` (success tone) or `No answer from {label}. Check that it is on and on the same network as Homebridge.` (danger tone). `{label}` is the bulb's name, or its address when it has none.
 - Advanced disclosure inside the card:
-  - `Bulb not found? Enter its IP address.` as the help of `Bulb IP address` (placeholder `e.g. 192.168.1.50`), followed by `Only needed when the search cannot reach the bulb, for example when Homebridge runs in Docker without host networking.` When filled in, the search results are hidden and the line `Busy Light will use the bulb at {ip}.` shows instead.
+  - `Bulb not found? Enter its IP address.` as the help of `Bulb IP address` (placeholder `e.g. 192.168.1.50`), followed by `Only needed when the search cannot reach the bulbs, for example when Homebridge runs in Docker without host networking. Separate several addresses with commas.` (from build 3.2; before it, the help named one bulb and had no second sentence). When filled in, the search results are hidden and the line `Busy Light will use the bulb at {ip}.` shows instead, once per address.
   - `Send the color again every (seconds)` with help `Recovers a bulb that was switched off at the wall. 0 sends only when the status changes.`
 - Subheading: `Other lights in the Home app`
 - Text: `Busy Light cannot control other HomeKit lights itself. It adds sensors to the Home app, and an automation there sets the light.`
@@ -769,7 +774,7 @@ Microsoft 365 card:
 - When (from build 3.2): a time that is not today carries its day: `tomorrow at {time}`, `{weekday} at {time}` within the next 6 days, and `{Month day} at {time}` beyond. Today it is `{time}` alone. Weekdays and months are named in English, as the rest of the page is (Monday, October 16). Days are counted by the calendar in the browser's time zone, and the plugin counts them in the host's (section 12).
 - Failures of the host itself: `Could not load the configuration.`, `Could not update the configuration.`
 - Draft banner (shell rule M1, as in `homebridge-notify-switch` 11.3): `You have unsaved changes from earlier. Restore them?` with the buttons `Restore` and `Discard`
-- Summary box (shell rule F4, as in `homebridge-notify-switch` 11.3): `Fix these before saving:`, one entry per issue reading `{Card name}: {message}` (a calendar's name, or `Status from other apps`, `Colors`, `LIFX bulb` or `Settings` for the fields outside a calendar card), collapsed past three entries to `{n} fields need attention` (`1 field needs attention`) with the toggle `Show all`, then `Hide`
+- Summary box (shell rule F4, as in `homebridge-notify-switch` 11.3): `Fix these before saving:`, one entry per issue reading `{Card name}: {message}` (a calendar's name, or `Status from other apps`, `Colors`, `LIFX bulbs` (from build 3.2) or `Settings` for the fields outside a calendar card), collapsed past three entries to `{n} fields need attention` (`1 field needs attention`) with the toggle `Show all`, then `Hide`
 
 **H. Validation** (on blur; the summary box lists the same messages)
 
@@ -780,7 +785,8 @@ Microsoft 365 card:
 - Tenant or client ID: `Enter it as 00000000-0000-0000-0000-000000000000.`
 - Color: `Enter a color as #RRGGBB, for example #FF0000.`
 - Numbers: `Enter a whole number from {min} to {max}.`
-- Bulb IP address: `Enter an IP address such as 192.168.1.50, or a host name.`
+- Bulb IP address: `Enter an IP address such as 192.168.1.50, or a host name.` (from build 3.2, when any of its comma separated addresses is not one)
+- LIFX bulbs on, several found and none ticked (from build 3.2): `Choose at least one bulb, or turn off Use LIFX bulbs.`
 - Microsoft 365 with both checkboxes off: `Turn on Use Teams status, Use Outlook calendars, or both.`
 - A second Microsoft 365 card with Use Teams status on: `Only one Microsoft 365 calendar can use Teams status.`
 - Calendars to use, after Connect, none ticked: `Choose at least one calendar.`
@@ -823,7 +829,7 @@ Lines, verbatim (`{}` are values):
 
 | When | Level | Line |
 | --- | --- | --- |
-| Startup | info | `Busy Light {version}: {n} calendars, light {on at host\|on\|off}, {m} sensors.` (`on` while the bulb is still being found) |
+| Startup | info | `Busy Light {version}: {n} calendars, light {on at host\|on ({n} bulbs)\|on\|off}, {m} sensors.` (`on` while the bulb is still being found; from build 3.2 `on ({n} bulbs)` when more than one bulb is chosen) |
 | No sources | warn | `No calendars are set up yet. Open the plugin settings to add one.` |
 | Status change | info | `Status: {Display name} ({source}, until {when}).` The parenthesis is omitted when there is no reason, and `until` when there is no time. `{when}` (from build 3.2) is `{h:mm AM/PM}` today, else `tomorrow at {h:mm AM/PM}`, `{weekday} at {h:mm AM/PM}` within the next 6 days, or `{Month day} at {h:mm AM/PM}`, as 11.3 G. Not written for `notWorking` (6.6). |
 | Unknown | warn | `Status unknown: none of your calendars could be read.` |
@@ -837,12 +843,12 @@ Lines, verbatim (`{}` are values):
 | Microsoft done | info | `{name}: signed in to Microsoft 365.` |
 | Microsoft refused | warn | `{name}: Microsoft did not allow the sign-in: {reason}. This needs your Microsoft 365 administrator. Instructions to send them: {help address}` |
 | Microsoft gave up | warn | `{name}: the sign-in code was not used. Restart Homebridge or run "homebridge-busy-light login" to try again.` |
-| Bulbs found | info | `LIFX bulbs found: {label (ip), label (ip)}. Using {label}.` |
+| Bulbs found | info | `LIFX bulbs found: {label (ip), label (ip)}. Using {label, label}.` (from build 3.2 the bulbs in use, in the order of `lifx.bulbs`) |
 | No bulb | warn | `No LIFX bulb was found on the network. Check that it is on, or enter its IP address in the plugin settings.` |
-| Several bulbs | warn | `More than one LIFX bulb was found: {labels}. Enter the name of the one to use in the plugin settings.` |
-| Bulb not named | warn | `No LIFX bulb named {bulb} was found. Bulbs found: {label (ip), label (ip)}.` |
-| Bulb silent | warn | `The LIFX bulb at {host} did not answer.` (once, then debug until it answers) |
-| Bulb back | info | `The LIFX bulb at {host} is answering again.` |
+| Several bulbs | warn | `More than one LIFX bulb was found: {labels}. Choose the bulbs to use in the plugin settings.` (from build 3.2) |
+| Bulb not named | warn | `No LIFX bulb named {bulb} was found. Bulbs found: {label (ip), label (ip)}.` (from build 3.2 for each bulb of `lifx.bulbs` not found, alone, while others are) |
+| Bulb silent | warn | `The LIFX bulb at {host} did not answer.` (once, then debug until it answers; from build 3.2 for each bulb on its own) |
+| Bulb back | info | `The LIFX bulb at {host} is answering again.` (from build 3.2 for each bulb on its own) |
 | Validation | error or warn | `{path}: {message}` |
 | Input started | info | `Status input is listening on port {port}.` |
 | Input failed | error | `Status input could not start: port {port} is already in use.` (or `: {short reason}.` for any other failure) |
@@ -881,19 +887,29 @@ LIFX LAN protocol over UDP port 56700. No LIFX account, no cloud.
 3. SetPower, type 117, 42 bytes: level (uint16 at 36, 0 or 65535) and duration (uint32 at 38).
 4. A color is sent as SetColor then SetPower on. `off` is SetPower off. Duration is 1000 ms on a status change and 0 on a refresh.
 5. Each packet sets `ack_required` and waits up to 500 ms for an Acknowledgement (type 45) with the same sequence, trying three times. The bulb "answered" when the last packet of the send was acknowledged. Replies are matched by type and sequence on the client's own port, not by the source field, so a bulb that does not echo the source still counts as answering.
-6. One socket is opened per send and closed afterwards.
+6. One socket is opened per send and closed afterwards; from build 3.2, one per bulb per send (13.3).
 7. Once a bulb's serial number is known (13.2), packets to it are sent untagged (`0x1400`) with the serial as the target. Before that, or for a bulb given only by IP, they are sent tagged with a zero target.
 8. The meeting warning (from build 3.2, 6.7) is sent as SetPower on with no duration, then SetColor of the In a meeting color with a duration equal to the time left until the meeting starts, in milliseconds: the bulb fades by itself. Before them, when the Available color is `off`, SetColor of the In a meeting color at 1 percent brightness with no duration, so the bulb comes on dim; when the status became Available in the same step, SetColor of the Available color with no duration, so the fade starts from it. Each packet is acknowledged as in item 5, and the bulb answered when the last was.
 
-### 13.2 Finding the bulb
+### 13.2 Finding the bulbs
 
-1. Discovery: bind a UDP socket with broadcast enabled, send GetService (type 2, tagged, zero target) to `255.255.255.255` and to the broadcast address of every non-internal IPv4 interface, three times 500 ms apart, and collect StateService replies (type 3) for 2 seconds. Each reply's header target is the bulb's serial number (the first 6 bytes, written as 12 hex digits) and its sender address is the bulb's IP. Then ask each bulb found for its name with GetLabel (type 23) and read StateLabel (type 25, 32 bytes, UTF-8, zero padded). Only StateService replies for service 1 (UDP) count. A serial in `lifx.bulb` may be written with colons or in upper case.
-2. Choosing, at startup when `lifx.enabled` is on:
-   1. `lifx.host` set: use that address, no discovery. This is the fallback for networks where broadcast does not reach the bulbs.
-   2. Otherwise discover. With `lifx.bulb` set, use the bulb whose name matches without regard to case, or whose serial matches. With `lifx.bulb` empty and exactly one bulb found, use it. With several found and no `lifx.bulb`, use none and write the "several bulbs" line. With none found, write the "no bulb" line.
-3. The chosen bulb's serial, name and last IP are kept in `busy-light/light.json` (`{ "serial", "label", "host" }`, mode 600), and that IP is tried first at the next start so a restart does not wait on discovery: the remembered bulb is used at startup when it fits `lifx.bulb`, and if its first send is not acknowledged, discovery runs at once. The CLI reads `light.json` but never writes it.
-4. Discovery runs again, at most once every 5 minutes, while no bulb is chosen or the chosen bulb has not answered three sends in a row. This is what lets the bulb change IP address without any reserved address in the router. When discovery finds the chosen bulb at a new address, the color is sent there at once. From build 3.2, a chosen bulb with a serial number is never replaced by a different bulb unless `lifx.bulb` names that bulb: when discovery does not find the chosen bulb, it is kept, whatever else answers (it may be switched off at the wall), and discovery keeps looking for it by its serial number, so a new IP address is still found. Only while no bulb has ever been chosen (none this run, and none remembered in `light.json` that fits `lifx.bulb`) does discovery pick one by the rules of item 2. Build 3.1 applied the rules of item 2 afresh when the chosen bulb went silent, so with `lifx.bulb` empty a kitchen bulb that answered could take over from the office bulb for good.
-5. The "bulbs found" line is written when the set of bulbs or the chosen bulb changes, not on every discovery.
+1. Discovery: bind a UDP socket with broadcast enabled, send GetService (type 2, tagged, zero target) to `255.255.255.255` and to the broadcast address of every non-internal IPv4 interface, three times 500 ms apart, and collect StateService replies (type 3) for 2 seconds. Each reply's header target is the bulb's serial number (the first 6 bytes, written as 12 hex digits) and its sender address is the bulb's IP. Then ask each bulb found for its name with GetLabel (type 23) and read StateLabel (type 25, 32 bytes, UTF-8, zero padded). Only StateService replies for service 1 (UDP) count. A serial in `lifx.bulbs` (or `lifx.bulb`) may be written with colons or in upper case.
+2. Choosing, at startup when `lifx.enabled` is on. From build 3.2 the bulbs wanted are `lifx.bulbs`, or a saved `lifx.bulb` as a list of one (9.1 item 6):
+   1. `lifx.host` set: use each address in it, separated by commas, as a bulb, with no discovery. This is the fallback for networks where broadcast does not reach the bulbs.
+   2. Otherwise, with bulbs wanted: use every remembered bulb (item 3) that one of them names, and discover when any of them is not remembered. Each bulb wanted is the bulb found whose name matches it without regard to case, or whose serial matches. A bulb wanted that is not found writes the "bulb not named" line for it alone while others are found (and the "no bulb" line when none is found at all), and is looked for again (item 4); the others are used meanwhile.
+   3. With no bulbs wanted: the remembered bulb when there is exactly one, else discovery. Exactly one bulb found is used. With several found, none is used and the "several bulbs" line is written. With none found, the "no bulb" line.
+3. The chosen bulbs' serials, names and last IPs are kept in `busy-light/light.json` (from build 3.2 `{ "bulbs": [{ "serial", "label", "host" }] }`, in the order of `lifx.bulbs`; before, one `{ "serial", "label", "host" }` object, which is still read as a list of one; mode 600), and those IPs are tried first at the next start so a restart does not wait on discovery: a remembered bulb is used at startup when it fits (item 2), and if its first send is not acknowledged, discovery runs at once. The CLI reads `light.json` but never writes it.
+4. Discovery runs again, at most once every 5 minutes, while no bulb is chosen, a bulb wanted has not been found, or any chosen bulb has not answered three sends in a row. This is what lets a bulb change IP address without any reserved address in the router. When discovery finds a chosen bulb at a new address, the color is sent there at once. From build 3.2, a chosen bulb with a serial number is never replaced by a different bulb unless `lifx.bulbs` names that bulb: when discovery does not find the chosen bulb, it is kept, whatever else answers (it may be switched off at the wall), and discovery keeps looking for it by its serial number, so a new IP address is still found. The rule holds for every bulb in the list on its own. Only while no bulb has ever been chosen (none this run, and none remembered in `light.json` that fits) does discovery pick one by the rules of item 2. Build 3.1 applied the rules of item 2 afresh when the chosen bulb went silent, so with `lifx.bulb` empty a kitchen bulb that answered could take over from the office bulb for good.
+5. The "bulbs found" line is written when the set of bulbs or the chosen bulbs change, not on every discovery.
+
+### 13.3 Several bulbs (from build 3.2)
+
+C8 of the build prompt: the owner has two bulbs, Floor and Status Light, and every chosen bulb shows the status together.
+
+1. Every send (a status change, a refresh, the meeting warning's fade, the Working switch turning the light off, a bulb chosen later) goes to every chosen bulb at the same moment, each on its own socket (13.1 item 6), with its own acknowledgements and tries. One silent bulb never delays, blocks or retries another: the bulbs that answer show the color as soon as their packets are acknowledged, and a silent bulb's tries and rediscovery run beside them.
+2. Each bulb keeps its own count of sends in a row without an answer, its own "bulb silent" and "bulb back" lines, and its own `lastSent`, `lastSentAt` and `answered` in the state file's `lights` (10.1 item 5). Rediscovery (13.2 item 4) runs when any chosen bulb has missed three sends, at most once every 5 minutes; when it finds a bulb at a new address, only that bulb is sent the color again.
+3. Brightness and the refresh interval are one setting for every bulb. The meeting warning's fade lasts until the meeting starts on every bulb, by the clock, so a bulb that answers after rediscovery fades over the time left.
+4. A bulb chosen later (8.2 item 4) is sent the current color with the others, so every bulb shows the same color from then on.
 
 ## 14. Assets and branding
 
@@ -941,6 +957,7 @@ All tests use `node:test`, run from `build-test/`, and never open a socket. From
 31. Meeting warning (build 3.2, 6.7), with a fake clock and a fake socket: the SetColor and its duration; Available Off (dim, then the fade); a cancelled meeting during the fade; back-to-back meetings; another status showing; the warning off; a slow calendar check; the Meeting Soon sensor.
 32. Statuses shown (build 3.2, 11.3 D): `statusInput.reported` in the state file and in `inputs.json` across a restart; on the page, calendars only, the On a Call switch, the status input alone adding In a call only, an app's report adding its status, and a report older than 30 days not.
 33. Settings page (build 3.2): the Copy button on each address line; Cleared and Expired; the Working switch checkbox; Warn before meetings; the Colors help line; Right now with Not working, the meeting warning and days; and that a message on leaving a field waits until the pointer is released, so a click on a button below an empty required field lands.
+34. Several bulbs (build 3.2, 13.3), with a fake clock and a fake socket: two bulbs chosen are both sent every color, the refresh, the meeting warning's fade and the Working switch's off; one silent bulb does not delay the other's send; an old `lifx.bulb` configuration and an old single-object `light.json` read as one bulb; several found and none chosen writes the "several bulbs" line and sends nothing; one of two chosen bulbs missing is kept, retried, and never replaced by another that answers (13.2 item 4), with the "bulb not named" line for it alone; comma separated addresses in `lifx.host`; the state file's `lights`, the CLI `status` and `light` per bulb, and the startup and "bulbs found" lines. On the page: `lifx.bulbs` written as serial numbers with `lifx.bulb` dropped, one bulb found ticked by itself, a saved bulb missing beside others found, the none ticked error and its summary entry, the bulbs in use from `lights` (and from an old `light`), and Test light with one result per bulb.
 
 Test helpers (`test/helpers.ts`) provide a fake `fetch` that throws on any address it was not given, a simulated network of LIFX bulbs on a fake socket, a fake clock, and a logger that records every line. Fixtures under `test/fixtures/` are synthetic; every event title in them starts with "Synthetic", and the redaction tests check that no log line contains one.
 
@@ -951,7 +968,7 @@ Test helpers (`test/helpers.ts`) provide a fake `fetch` that throws on any addre
 3. Build 2: the settings page of section 11 on the shared shell (no separate prototype), the UI server of 10.3, `customUi`, the build 2 configuration of 9.1 items 13 to 16, version `0.1.0-beta.2`. Then on the Pi: `git pull`, `npm ci`, `npm run build`, restart, and a Chrome pass on the page in both themes and at phone width. Built October 8, 2026: every network path and the bulb were exercised with fakes only, and the page was rendered and clicked through in a scratch Homebridge UI 5.29.0 with a synthetic configuration and no network, in both themes at 1280 and 390 pixels.
 4. Build 3: the status input of section 18 (the status API and the On a Call switch), a check interval per calendar, color presets on the settings page, and the bulb in use shown when the page opens, version `0.1.0-beta.3`. Then on the Pi: the same update as build 2, then the status input from a Mac on the home network. Built October 8, 2026: the HTTP server, HomeKit and the bulb were exercised with fakes only (no socket opened), and the page was rendered and clicked through in a scratch Homebridge UI 5.29.0 with a synthetic configuration and no network.
 5. Build 3.1: what the pass on the Pi on October 8, 2026, found: Busy Light found by name through multicast DNS (18.11), the setup code masked, intervals as durations, only the statuses the setup can produce on the Colors list and the sensors, and the Outlook published calendar link as the recommended Microsoft 365 setup, version `0.1.0-beta.4`. The configuration format does not change. `0.1.0-beta.4` was the first version published to npm.
-6. Build 3.2 (October 9, 2026): the fixes from a code review and a test pass after the first public beta (recurring events read without freezing Homebridge, a moved occurrence, the boundary timer, the bulb choice, and smaller ones), the day in `until` times, Cleared senders, the Working switch, the meeting warning, the narrower statuses shown, copy buttons for the addresses, and the README header, version `0.1.0-beta.5`. The configuration gains `workingSwitch` and `meetingWarningSeconds`, both off when absent. After merging, the owner creates the GitHub release `v0.1.0-beta.5`; the release workflow publishes it through npm trusted publishing with provenance, its only path from this build.
+6. Build 3.2 (October 9, 2026): the fixes from a code review and a test pass after the first public beta (recurring events read without freezing Homebridge, a moved occurrence, the boundary timer, the bulb choice, and smaller ones), the day in `until` times, Cleared senders, the Working switch, the meeting warning, the narrower statuses shown, copy buttons for the addresses, several LIFX bulbs (added to the build by the owner on October 9, 2026), and the README header, version `0.1.0-beta.5`. The configuration gains `workingSwitch` and `meetingWarningSeconds`, both off when absent, and `lifx.bulbs` in place of `lifx.bulb`, which is still read. After merging, the owner creates the GitHub release `v0.1.0-beta.5`; the release workflow publishes it through npm trusted publishing with provenance, its only path from this build.
 7. Build 4 (the former build 3): README with masked screenshots, and a reinstall from npm through the Homebridge UI.
 8. Soak, r/homebridge tester post, `1.0.0`, then the Homebridge verification request.
 
@@ -1111,6 +1128,13 @@ Test helpers (`test/helpers.ts`) provide a fake `fetch` that throws on any addre
 - 2026-10-09 (build 3.2): "Intervals" in the docs scope of the build prompt is read as a README section, "How often Busy Light checks": a table of the four intervals the page sets (Check status every, Reload calendars every, Check for changes every, Send the color again every) and the statement that none of them delays the light at a meeting's start or end or the meeting warning's beginning (8.1 item 3). It replaces the single line at the end of Configuration. "Light only during meetings" is its own section (C7), so the Contents list can point at it.
 - 2026-10-09 (build 3.2): `docs/status-input.md` describes `notWorking` under both `POST /v1/status` (the overall status in the answer) and `GET /v1/status`, says that sending it is `400 invalid_status`, and that `reason` is null with it, as with `unknown`.
 - 2026-10-09 (build 3.2): The release workflow's header says how the dist-tag follows the release: a pre-release publishes under `beta`, any other release under `latest`. A release created with the label None is not a pre-release, so `v0.1.0-beta.5` publishes under `latest`; the tag check against `package.json` is unchanged.
+- 2026-10-09 (build 3.2): Several bulbs (C8, added to the build by the owner on October 9, 2026, as follow-up commits for scope items 1, 4, 10, 12, 14 and 15 rather than rewrites of them). `lifx.bulbs` reuses the list messages of 9.1 (`must be a list`, `must be text, ignored`) rather than a new one. A `lifx.host` with one bad part is ignored as a whole, with the existing message, so a typo never sends to half the bulbs silently.
+- 2026-10-09 (build 3.2): The state file's `lights` keeps one entry while no bulb is chosen, shaped as `light` was (`enabled` false when LIFX is off, a null `host` while none is found), so a reader can tell LIFX off from no bulb yet without the configuration; with bulbs chosen it has one entry per bulb.
+- 2026-10-09 (build 3.2): With no bulbs wanted, a single remembered bulb is used at startup as before; several remembered bulbs (the list was emptied by hand) are not, and discovery decides, since the owner chose none of them.
+- 2026-10-09 (build 3.2): On the page, one bulb found with `lifx.bulbs` naming others and not it is listed with an unticked checkbox under the lines of the missing bulbs, with no heading line, rather than replacing them as the single radio choice did: the copy has no line for one bulb to choose from, and a found bulb must not displace a saved one that is only switched off (13.2 item 4). The none ticked error applies only when several were found in this visit, since that is when the choice is on the page.
+- 2026-10-09 (build 3.2): `/lifx/test` takes a list of bulbs and answers one result per bulb, and still reads the single bulb of build 2 and build 3. With an address under Advanced, Test light tests each address. The results use the existing one-bulb strings when one bulb is tested, as C8 asks, and the new per-bulb strings otherwise; the address stands in for a bulb with no name.
+- 2026-10-09 (build 3.2): `Busy Light will use the bulb at {ip}.` shows once per address under Advanced rather than as a new plural line, and the field keeps its label, `Bulb IP address`.
+- 2026-10-09 (build 3.2): The CLI `light` with no bulb given exits 1 when any bulb did not answer, as it does for one bulb.
 - Open (build 3.2): calendars are read from 24 hours before now to 24 hours after (section 5), so an `until` time is never more than a day away and reads as a time today or `tomorrow at {time}`; the weekday and date forms of 11.3 G are in place for when the window grows. Whether to read further ahead, so that a Friday afternoon can say `until Monday at 9:00 AM`, is a question for Alex (it costs more reading and changes the `events` count of 10.1). Until then the window stays as it was, marked `TODO(alex)` at `WINDOW_MS` in `src/calendar.ts`.
 - Open (build 3): check each color preset on Floor during the Pi pass, noting any the bulb renders poorly (orange and yellow especially). Alex decided on October 8, 2026 to keep the values as they are until then. The configuration keeps whatever hex the user saved.
 

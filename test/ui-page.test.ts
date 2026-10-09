@@ -967,7 +967,7 @@ describe('settings page: Lights (SPEC 11.3 E)', () => {
     answers.set('/lifx/discover', { bulbs: [DESK, FLOOR] });
     buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
     await settle();
-    assert.deepEqual(lines(root), ['Found 2 bulbs. Choose one:']);
+    assert.deepEqual(lines(root), [copy.LIGHTS.foundSeveral(2)]);
     const radios = lifxCard(root).querySelectorAll('input[type="radio"]');
     assert.deepEqual(radios.map((r) => text(r.parentNode!)), ['Desk (192.168.4.51)', 'Floor (192.168.4.50)']);
     assert.equal(page.config.lifx.bulb, '', 'nothing is chosen for the user');

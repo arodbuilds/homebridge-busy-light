@@ -164,8 +164,8 @@ describe('settings page validation (SPEC 11.3 H)', () => {
     assert.deepEqual(validate(c), []);
     c.lifx.enabled = true;
     assert.deepEqual(validate(c).map((i) => `${i.label}|${i.message}`), [
-      'LIFX bulb|Enter a whole number from 1 to 100.',
-      'LIFX bulb|Enter an IP address such as 192.168.1.50, or a host name.',
+      'LIFX bulbs|Enter a whole number from 1 to 100.',
+      'LIFX bulbs|Enter an IP address such as 192.168.1.50, or a host name.',
     ]);
   });
 });

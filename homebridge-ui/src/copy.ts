@@ -268,11 +268,12 @@ export type SensorKey = keyof typeof SENSOR_NAMES;
 /** SPEC 11.3 E. */
 export const LIGHTS = {
   heading: 'Lights',
-  lifxTitle: 'LIFX bulb',
-  useLifx: 'Use a LIFX bulb',
+  /** From build 3.2 one card for every bulb (C8). */
+  lifxTitle: 'LIFX bulbs',
+  useLifx: 'Use LIFX bulbs',
   searching: 'Looking for LIFX bulbs on your network…',
   foundOne: (label: string, ip: string): string => `Found ${label} (${ip}). Busy Light will use it.`,
-  foundSeveral: (n: number | string): string => `Found ${n} bulbs. Choose one:`,
+  foundSeveral: (n: number | string): string => `Found ${n} bulbs. Choose the ones to use:`,
   bulbChoice: (label: string, ip: string): string => `${label} (${ip})`,
   none: 'No LIFX bulb found. Check that it is on and on the same network as Homebridge.',
   savedMissing: (label: string): string => `${label} was not found just now. It may be switched off.`,
@@ -284,13 +285,17 @@ export const LIGHTS = {
   brightness: 'Brightness (percent)',
   testLight: 'Test light',
   testing: 'Testing…',
-  testHelp: 'Shows red, then green, on the bulb.',
+  testHelp: 'Shows red, then green, on each bulb chosen.',
   answered: 'The bulb answered.',
   noAnswer: 'No answer from the bulb. Check that it is on and on the same network as Homebridge.',
+  /** Test light with several bulbs: one result per bulb (from build 3.2). */
+  bulbAnswered: (label: string): string => `${label} answered.`,
+  bulbNoAnswer: (label: string): string => `No answer from ${label}. Check that it is on and on the same network as Homebridge.`,
   ipLead: 'Bulb not found? Enter its IP address.',
   ip: 'Bulb IP address',
   ipPlaceholder: 'e.g. 192.168.1.50',
-  ipHelp: 'Only needed when the search cannot reach the bulb, for example when Homebridge runs in Docker without host networking.',
+  ipHelp: 'Only needed when the search cannot reach the bulbs, for example when Homebridge runs in Docker without host networking. '
+    + 'Separate several addresses with commas.',
   usingIp: (ip: string): string => `Busy Light will use the bulb at ${ip}.`,
   refresh: 'Send the color again every (seconds)',
   refreshHelp: 'Recovers a bulb that was switched off at the wall. 0 sends only when the status changes.',
@@ -458,4 +463,6 @@ export const VALIDATION = {
   microsoftNeither: 'Turn on Use Teams status, Use Outlook calendars, or both.',
   microsoftTeamsTwice: 'Only one Microsoft 365 calendar can use Teams status.',
   chooseCalendar: 'Choose at least one calendar.',
+  /** LIFX bulbs on, several found and none ticked (from build 3.2). */
+  chooseBulb: 'Choose at least one bulb, or turn off Use LIFX bulbs.',
 };

@@ -228,7 +228,7 @@
         }
       },
       "lifx": {
-        "title": "LIFX bulb",
+        "title": "LIFX bulbs",
         "type": "object",
         "properties": {
           "enabled": {
@@ -236,14 +236,17 @@
             "type": "boolean",
             "default": false
           },
-          "bulb": {
-            "title": "Bulb name",
-            "description": "Leave empty if you have one LIFX bulb: it is found automatically. With several, enter the bulb's name from the LIFX app. The log lists the bulbs found.",
-            "type": "string"
+          "bulbs": {
+            "title": "Bulbs",
+            "description": "Leave empty if you have one LIFX bulb: it is found automatically. With several, add the name of each bulb to use, from the LIFX app. The log lists the bulbs found.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "host": {
             "title": "Bulb IP address",
-            "description": "Optional. Only needed when the bulb cannot be found automatically, for example when Homebridge runs in Docker without host networking.",
+            "description": "Only needed when the search cannot reach the bulbs, for example when Homebridge runs in Docker without host networking. Separate several addresses with commas.",
             "type": "string"
           },
           "brightness": {
@@ -587,11 +590,11 @@
     },
     {
       "type": "fieldset",
-      "title": "LIFX bulb",
+      "title": "LIFX bulbs",
       "items": [
         "lifx.enabled",
         {
-          "key": "lifx.bulb",
+          "key": "lifx.bulbs",
           "condition": {
             "functionBody": "return model.lifx && model.lifx.enabled === true;"
           }
