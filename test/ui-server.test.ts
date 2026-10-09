@@ -423,12 +423,17 @@ function hues(host: string): number[] {
   return net.sent.filter((s) => s.to === host && parseHeader(s.buf)!.type === MSG.SetColor).map((s) => s.buf.readUInt16LE(37));
 }
 
+/** Whether /lifx/test reports every bulb answered: the single bulb of build 2 and build 3 is still read (SPEC 10.3 item 5). */
+async function tested(h: ReturnType<typeof handlers>, body: Record<string, unknown>): Promise<boolean> {
+  return ((await call(h, '/lifx/test', body)) as { answered: boolean }).answered;
+}
+
 test('/lifx/test sends red, green and the saved Available color, by serial untagged or by host tagged', async () => {
   net.bulbs = [FLOOR];
   const configPath = path.join(storage, 'config.json');
   fs.writeFileSync(configPath, JSON.stringify({ platforms: [{ platform: 'BusyLight', colors: { available: '#0000ff' } }] }));
   const h = handlers({ configPath });
-  assert.deepEqual(await call(h, '/lifx/test', { serial: 'D0:73:D5:00:00:01', host: FLOOR.host, brightness: 50 }), { answered: true });
+  assert.equal(await tested(h, { serial: 'D0:73:D5:00:00:01', host: FLOOR.host, brightness: 50 }), true);
   assert.deepEqual(hues(FLOOR.host), [0, 21845, 43690], 'red, green, then the saved Available color (blue)');
   const packets = net.sent.filter((s) => s.to === FLOOR.host).map((s) => parseHeader(s.buf)!);
   assert.ok(packets.every((p) => !p.tagged && p.serial === FLOOR.serial), 'untagged to the serial');
@@ -436,45 +441,69 @@ test('/lifx/test sends red, green and the saved Available color, by serial untag
   assert.equal(brightness, Math.round(65535 / 2), 'at the brightness given');
 
   net.sent = [];
-  assert.deepEqual(await call(handlers(), '/lifx/test', { host: FLOOR.host, brightness: 100 }), { answered: true });
+  assert.equal(await tested(handlers(), { host: FLOOR.host, brightness: 100 }), true);
   assert.ok(net.sent.every((s) => parseHeader(s.buf)!.tagged), 'an IP address alone sends tagged');
   assert.deepEqual(hues(FLOOR.host), [0, 21845, 21845], 'the default Available color is green');
 
   net.sent = [];
-  assert.deepEqual(await call(h, '/lifx/test', { serial: FLOOR.serial, brightness: 100 }), { answered: true }, 'a serial alone is found first');
+  assert.equal(await tested(h, { serial: FLOOR.serial, brightness: 100 }), true, 'a serial alone is found first');
   assert.ok(net.typesTo('255.255.255.255').includes(MSG.GetService));
 
   FLOOR.answers = false;
   try {
-    assert.deepEqual(await call(h, '/lifx/test', { host: FLOOR.host, brightness: 100 }), { answered: false });
+    assert.equal(await tested(h, { host: FLOOR.host, brightness: 100 }), false);
   } finally {
     FLOOR.answers = true;
   }
-  assert.deepEqual(await call(h, '/lifx/test', { serial: 'd073d5ffffff', brightness: 100 }), { answered: false }, 'not on the network');
+  assert.equal(await tested(h, { serial: 'd073d5ffffff', brightness: 100 }), false, 'not on the network');
   assert.equal(fs.existsSync(path.join(dir(), 'light.json')), false, 'light.json is never written');
 });
 
-test('/lifx/test with no bulb chosen on the page uses the bulb the plugin would: the saved lifx.bulb, or the only one', async () => {
+test('/lifx/test with no bulb chosen on the page uses the bulb the plugin would: the saved lifx.bulb (as a list of one), or the only one', async () => {
   // A build 1 configuration: lifx.bulb and lifx.host empty, and the bulb found by discovery.
   const configPath = path.join(storage, 'config.json');
   const save = (lifx: Record<string, unknown>) => fs.writeFileSync(configPath, JSON.stringify({ platforms: [{ platform: 'BusyLight', lifx }] }));
   save({ enabled: true, bulb: '', host: '' });
   const h = handlers({ configPath });
   net.bulbs = [FLOOR];
-  assert.deepEqual(await call(h, '/lifx/test', { brightness: 100 }), { answered: true }, 'the only bulb');
+  assert.equal(await tested(h, { brightness: 100 }), true, 'the only bulb');
   assert.ok(net.sent.filter((s) => s.to === FLOOR.host).every((s) => !parseHeader(s.buf)!.tagged && parseHeader(s.buf)!.serial === FLOOR.serial));
   assert.deepEqual(hues(FLOOR.host), [0, 21845, 21845]);
 
   net.bulbs = [FLOOR, DESK];
   net.sent = [];
-  assert.deepEqual(await call(h, '/lifx/test', { brightness: 100 }), { answered: false }, 'several bulbs and none named');
+  assert.equal(await tested(h, { brightness: 100 }), false, 'several bulbs and none named');
   assert.deepEqual(hues(FLOOR.host), []);
   save({ enabled: true, bulb: 'floor', host: '' });
-  assert.deepEqual(await call(h, '/lifx/test', { brightness: 100 }), { answered: true }, 'a build 1 bulb name');
+  assert.equal(await tested(h, { brightness: 100 }), true, 'a build 1 bulb name');
   assert.deepEqual(hues(FLOOR.host), [0, 21845, 21845]);
   assert.deepEqual(hues(DESK.host), []);
   net.bulbs = [];
-  assert.deepEqual(await call(handlers(), '/lifx/test', { brightness: 100 }), { answered: false }, 'no bulb on the network');
+  assert.equal(await tested(handlers(), { brightness: 100 }), false, 'no bulb on the network');
+});
+
+test('/lifx/test with several bulbs tests each at the same moment and answers one result per bulb (SPEC 10.3 item 5, from build 3.2)', async () => {
+  net.bulbs = [FLOOR, DESK];
+  const h = handlers();
+  const both = await call(h, '/lifx/test', { bulbs: [{ serial: DESK.serial, host: DESK.host }, { serial: FLOOR.serial }], brightness: 100 });
+  assert.deepEqual(both, { answered: true, results: [
+    { label: null, host: DESK.host, answered: true }, { label: 'Floor', host: FLOOR.host, answered: true },
+  ] }, 'in the order given; a serial alone is found by discovery, with its name');
+  assert.deepEqual([hues(FLOOR.host), hues(DESK.host)], [[0, 21845, 21845], [0, 21845, 21845]]);
+  DESK.answers = false;
+  try {
+    assert.deepEqual(await call(h, '/lifx/test', { bulbs: [{ host: DESK.host }, { host: FLOOR.host }, { serial: 'd073d5ffffff' }], brightness: 100 }),
+      { answered: false, results: [
+        { label: null, host: DESK.host, answered: false }, { label: null, host: FLOOR.host, answered: true }, { label: null, host: null, answered: false },
+      ] }, 'one silent bulb, one answering, one not on the network');
+  } finally {
+    DESK.answers = true;
+  }
+  const configPath = path.join(storage, 'config.json');
+  fs.writeFileSync(configPath, JSON.stringify({ platforms: [{ platform: 'BusyLight', lifx: { enabled: true, bulbs: ['Desk', FLOOR.serial] } }] }));
+  assert.deepEqual(((await call(handlers({ configPath }), '/lifx/test', { brightness: 100 })) as { results: unknown[] }).results, [
+    { label: 'Desk', host: DESK.host, answered: true }, { label: 'Floor', host: FLOOR.host, answered: true },
+  ], 'with none given, the saved lifx.bulbs');
 });
 
 test('/reset deletes every file in busy-light/ and leaves only the marker (SPEC 10.3 item 6)', async () => {

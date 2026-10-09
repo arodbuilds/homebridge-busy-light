@@ -35,7 +35,7 @@ function resetDialog(app: App, opened: boolean): HTMLElement {
     ui.icloud.clear();
     ui.tests.clear();
     ui.microsoft.clear();
-    ui.lifx = { searching: false, bulbs: null, testing: false, answered: null };
+    ui.lifx = { searching: false, bulbs: null, names: {}, testing: false, results: null };
     app.replaceConfig(emptyConfig(), { draft: false });
     const done = document.querySelector<HTMLElement>('.bl-reset-done');
     if (done) {

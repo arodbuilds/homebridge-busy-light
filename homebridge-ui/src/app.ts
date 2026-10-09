@@ -42,7 +42,10 @@ export interface StatusData {
   override: boolean;
   sources: StatusSource[];
   signIn: unknown;
-  light: { enabled: boolean; label: string | null; host: string | null; found: string | null; answered?: boolean | null } | null;
+  /** Before build 3.2: the one bulb. Read through `lightsOf`. */
+  light?: LightEntry | null;
+  /** From build 3.2: one entry per chosen bulb, or one as `light` was while none is (SPEC 10.1 item 5). */
+  lights?: LightEntry[];
   /** `reported` (from build 3.2): when each status was last reported through the status API (SPEC 18.7 item 8). */
   statusInput?: { enabled: boolean; port: number; listening: boolean; error: string | null; id: string | null; reported?: Partial<Record<StatusKey, string>> };
   inputs?: StatusInputEntry[];
@@ -129,6 +132,23 @@ export interface MicrosoftState extends ListState {
   busyLabel: string | null;
 }
 
+/** A bulb in the state file (SPEC 10.1 item 5). */
+export interface LightEntry {
+  enabled: boolean;
+  label: string | null;
+  host: string | null;
+  found: string | null;
+  answered?: boolean | null;
+}
+
+/** The bulbs of a state file: `lights`, or a `light` from before build 3.2 as one entry. */
+export function lightsOf(status: Pick<StatusData, 'lights' | 'light'>): LightEntry[] {
+  if (Array.isArray(status.lights)) {
+    return status.lights;
+  }
+  return status.light ? [status.light] : [];
+}
+
 export interface LifxBulb {
   label: string;
   serial: string;
@@ -140,7 +160,10 @@ export interface LifxState {
   /** The bulbs from the last search on this page load, or null before one. */
   bulbs: LifxBulb[] | null;
   testing: boolean;
-  answered: boolean | null;
+  /** The names of the bulbs found by any search in this visit, by serial number, for a saved bulb missing from a later one. */
+  names: Record<string, string>;
+  /** Test light's answer: one result per bulb tested (from build 3.2), or null before a test. */
+  results: { label: string; answered: boolean }[] | null;
 }
 
 /** What the page draws beyond the configuration and /status. A redraw keeps all of it. */
@@ -179,6 +202,8 @@ export interface App {
   readonly ui: UiState;
   /** A value changed: push the block to the host, keep the draft and revalidate. */
   changed(): void;
+  /** Something the checks read besides the configuration changed (a bulb search): check again, with no push. */
+  revalidate(): void;
   /** Redraw one section. */
   rerender(section: Section): void;
   /** Marks a field touched so its error shows inline, and redraws the inline messages. */

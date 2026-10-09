@@ -1,11 +1,11 @@
 /**
- * Lights (SPEC 11.3 E): the LIFX bulb card, with the bulb found by a search when "Use a LIFX bulb" is ticked and saved
- * as its serial number in `lifx.bulb`, Test light, and the IP address as the exception under Advanced; then "Other
- * lights in the Home app": the sensors to create and the three steps of a Home automation.
+ * Lights (SPEC 11.3 E): the LIFX bulbs card, with the bulbs found by a search when "Use LIFX bulbs" is ticked and saved
+ * as their serial numbers in `lifx.bulbs` (from build 3.2, several), Test light, and the IP addresses as the exception
+ * under Advanced; then "Other lights in the Home app": the sensors to create and the three steps of a Home automation.
  */
 
 import { callServer } from '../api.js';
-import type { App, LifxBulb } from '../app.js';
+import { lightsOf, type App, type LifxBulb } from '../app.js';
 import { card, cardName } from '../card.js';
 import { LIGHTS, SENSOR_NAMES, SHELL, STATUS_NAMES, type StatusKey } from '../copy.js';
 import {
@@ -25,7 +25,7 @@ export function serialOf(value: string): string | null {
   return hex.length === 12 && /^[0-9a-f:\s-]+$/i.test(value.trim()) ? hex : null;
 }
 
-/** Whether a bulb is the one `lifx.bulb` names: by serial number, or by name without regard to case (SPEC 13.2). */
+/** Whether a bulb is the one an entry of `lifx.bulbs` names: by serial number, or by name without regard to case (SPEC 13.2). */
 export function isChosen(wanted: string, bulb: LifxBulb): boolean {
   const serial = serialOf(wanted);
   return wanted.trim() !== '' && ((serial !== null && serial === bulb.serial) || bulb.label.toLowerCase() === wanted.trim().toLowerCase());
@@ -35,28 +35,58 @@ function bulbName(bulb: LifxBulb): string {
   return bulb.label || bulb.serial;
 }
 
+/** The addresses under Advanced, separated by commas. */
+function hostsOf(app: App): string[] {
+  return app.config.lifx.host.split(',').map((h) => h.trim()).filter((h) => h !== '');
+}
+
 async function search(app: App): Promise<void> {
   const lifx = app.ui.lifx;
   if (lifx.searching) {
     return;
   }
   lifx.searching = true;
-  lifx.answered = null;
+  lifx.results = null;
   app.rerender('lights');
   const answer = await callServer<{ bulbs: LifxBulb[] }>('/lifx/discover');
   lifx.searching = false;
-  lifx.bulbs = answer && Array.isArray(answer.bulbs) ? answer.bulbs : [];
-  // One bulb, and no other bulb asked for by name or serial among those found: Busy Light uses it, by its serial number.
-  const chosen = lifx.bulbs.find((b) => isChosen(app.config.lifx.bulb, b));
-  if (lifx.bulbs.length === 1 && !chosen) {
-    app.config.lifx.bulb = lifx.bulbs[0].serial;
+  const bulbs = answer && Array.isArray(answer.bulbs) ? answer.bulbs : [];
+  lifx.bulbs = bulbs;
+  for (const b of bulbs) {
+    if (b.label) {
+      lifx.names[b.serial] = b.label;
+    }
+  }
+  const config = app.config.lifx;
+  // A bulb saved by its name (by hand, or by build 1) is written as its serial number from now on.
+  const bySerial = config.bulbs.map((w) => bulbs.find((b) => isChosen(w, b))?.serial ?? w);
+  if (config.bulbs.length === 0 && bulbs.length === 1) {
+    // One bulb and none named: Busy Light uses it, by its serial number.
+    config.bulbs = [bulbs[0].serial];
     app.changed();
-  } else if (chosen && app.config.lifx.bulb !== chosen.serial) {
-    // A bulb saved by its name (build 1) is written as its serial number from now on.
-    app.config.lifx.bulb = chosen.serial;
+  } else if (bySerial.some((v, i) => v !== config.bulbs[i])) {
+    config.bulbs = bySerial;
     app.changed();
+  } else {
+    app.revalidate();
   }
   app.rerender('lights');
+}
+
+/** The bulbs Test light tests: each address under Advanced, or each ticked bulb (by serial, at the address found). */
+function testTargets(app: App): { body: Record<string, unknown>; labels: string[] } {
+  const config = app.config.lifx;
+  const hosts = hostsOf(app);
+  if (hosts.length > 0 && hosts.every(isHost)) {
+    return { body: { bulbs: hosts.map((host) => ({ host })) }, labels: hosts };
+  }
+  const found = app.ui.lifx.bulbs ?? [];
+  const bulbs = config.bulbs.map((w) => {
+    const bulb = found.find((b) => isChosen(w, b));
+    const serial = serialOf(w) ?? bulb?.serial ?? null;
+    return { target: { ...(serial ? { serial } : {}), ...(bulb ? { host: bulb.ip } : {}) }, label: bulb ? bulbName(bulb) : w };
+  });
+  return { body: { bulbs: bulbs.map((b) => b.target) }, labels: bulbs.map((b) => b.label) };
 }
 
 async function testLight(app: App): Promise<void> {
@@ -64,96 +94,128 @@ async function testLight(app: App): Promise<void> {
   if (lifx.testing) {
     return;
   }
-  const config = app.config.lifx;
-  const payload: Record<string, unknown> = { brightness: config.brightness };
-  const host = config.host.trim();
-  const found = lifx.bulbs?.find((b) => isChosen(config.bulb, b));
-  const serial = serialOf(config.bulb) ?? found?.serial ?? null;
-  if (host && isHost(host)) {
-    payload.host = host;
-  } else {
-    if (serial) {
-      payload.serial = serial;
-    }
-    if (found) {
-      payload.host = found.ip;
-    }
-  }
+  const { body, labels } = testTargets(app);
   lifx.testing = true;
-  lifx.answered = null;
+  lifx.results = null;
   app.rerender('lights');
-  const answer = await callServer<{ answered: boolean }>('/lifx/test', payload);
+  const answer = await callServer<{ answered: boolean; results?: { label: string | null; host: string | null; answered: boolean }[] }>(
+    '/lifx/test', { ...body, brightness: app.config.lifx.brightness });
   lifx.testing = false;
-  lifx.answered = answer?.answered === true;
+  const results = Array.isArray(answer?.results) ? answer.results : [];
+  lifx.results = results.length > 0
+    ? results.map((r, i) => ({ label: r.label || labels[i] || r.host || '', answered: r.answered === true }))
+    : [{ label: '', answered: answer?.answered === true }];
   app.rerender('lights');
+}
+
+/** Test light's results (SPEC 11.3 E): the one-bulb strings for one bulb, one line per bulb for several. */
+function testResults(app: App): HTMLElement | null {
+  const results = app.ui.lifx.results;
+  if (!results) {
+    return null;
+  }
+  if (results.length === 1) {
+    return results[0].answered ? statusBox('success', LIGHTS.answered) : statusBox('danger', LIGHTS.noAnswer);
+  }
+  return el('div', { class: 'bl-lifx-results-list' }, ...results.map((r) => (r.answered
+    ? statusBox('success', LIGHTS.bulbAnswered(r.label)) : statusBox('danger', LIGHTS.bulbNoAnswer(r.label)))));
 }
 
 /**
- * Before any search in this visit (SPEC 11.3 E): the bulb the running plugin uses, from the state file's `light`, so
- * the page does not read as if no bulb were set up. Nothing until the first /status answer.
+ * Before any search in this visit (SPEC 11.3 E): the bulbs the running plugin uses, one line each from the state
+ * file's `lights` (or an older `light`), so the page does not read as if no bulb were set up. Nothing until the first
+ * /status answer.
  */
-function inUse(app: App): HTMLElement | null {
+function inUse(app: App): HTMLElement[] {
   if (app.status === undefined) {
-    return null;
+    return [];
   }
-  const light = app.status?.light;
-  if (!light || !light.enabled || !light.host) {
-    return paragraph(LIGHTS.noBulbYet, 'bl-lifx-line bl-lifx-in-use');
+  const lights = app.status ? lightsOf(app.status).filter((l) => l.enabled && l.host) : [];
+  if (lights.length === 0) {
+    return [paragraph(LIGHTS.noBulbYet, 'bl-lifx-line bl-lifx-in-use')];
   }
-  const label = light.label || light.host;
-  return paragraph(light.answered === false ? LIGHTS.usingBulbSilent(label, light.host) : LIGHTS.usingBulb(label, light.host),
-    'bl-lifx-line bl-lifx-in-use');
+  return lights.map((light) => {
+    const host = light.host!;
+    const label = light.label || host;
+    return paragraph(light.answered === false ? LIGHTS.usingBulbSilent(label, host) : LIGHTS.usingBulb(label, host), 'bl-lifx-line bl-lifx-in-use');
+  });
 }
 
-/** The search results (SPEC 11.3 E): searching, one, several or none, and the saved bulb missing; hidden behind an IP address. */
+/**
+ * The label a saved bulb is shown by when it is missing: its name, or for a serial the name an earlier search in this
+ * visit found, or the name the state file has for a single bulb.
+ */
+function savedLabel(app: App, wanted: string): string {
+  const serial = serialOf(wanted);
+  if (serial && app.ui.lifx.names[serial]) {
+    return app.ui.lifx.names[serial];
+  }
+  if (serial && app.status) {
+    // The state file has names, not serial numbers: a single bulb's name stands for a single saved serial.
+    const lights = lightsOf(app.status).filter((l) => l.label);
+    if (lights.length === 1 && app.config.lifx.bulbs.length === 1) {
+      return lights[0].label!;
+    }
+  }
+  return wanted.trim();
+}
+
+/** One checkbox per bulb found, ticked for each bulb in `lifx.bulbs`. */
+function bulbChoices(app: App, bulbs: LifxBulb[], legend: string | null): HTMLElement {
+  const config = app.config.lifx;
+  return el('fieldset', { class: 'bl-lifx-choice', 'data-path': 'lifx.bulbs' },
+    legend ? el('legend', { class: 'bl-lifx-line' }, legend) : null,
+    ...bulbs.map((bulb) => {
+      const id = uniqueId('bulb');
+      const box = el('input', { id, class: 'form-check-input', type: 'checkbox', value: bulb.serial });
+      box.checked = config.bulbs.some((w) => isChosen(w, bulb));
+      box.addEventListener('change', () => {
+        const others = config.bulbs.filter((w) => !isChosen(w, bulb));
+        // Saved in the order found, then any saved bulb not found now.
+        const ticked = bulbs.filter((b) => (b === bulb ? box.checked : others.some((w) => isChosen(w, b)))).map((b) => b.serial);
+        config.bulbs = [...ticked, ...others.filter((w) => !bulbs.some((b) => isChosen(w, b)))];
+        app.touch('lifx.bulbs');
+        app.changed();
+        app.rerender('lights');
+      });
+      return el('div', { class: 'form-check' }, box, el('label', { class: 'form-check-label', for: id }, LIGHTS.bulbChoice(bulbName(bulb), bulb.ip)));
+    }),
+    // None ticked while several were found (SPEC 11.3 H).
+    el('div', { class: 'invalid-feedback' }),
+  );
+}
+
+/** The search results (SPEC 11.3 E): searching, one, several or none, and each saved bulb missing; hidden behind an address. */
 function results(app: App): Child[] {
   const config = app.config.lifx;
   const lifx = app.ui.lifx;
-  if (config.host.trim()) {
-    return [paragraph(LIGHTS.usingIp(config.host.trim()), 'bl-lifx-line bl-lifx-ip')];
+  const hosts = hostsOf(app);
+  if (hosts.length > 0) {
+    return hosts.map((host) => paragraph(LIGHTS.usingIp(host), 'bl-lifx-line bl-lifx-ip'));
   }
   const out: Child[] = [];
   if (lifx.searching) {
     out.push(paragraph(LIGHTS.searching, 'bl-lifx-line bl-lifx-searching'));
   } else if (lifx.bulbs !== null) {
     const bulbs = lifx.bulbs;
-    const chosen = bulbs.find((b) => isChosen(config.bulb, b));
-    if (config.bulb.trim() && !chosen) {
-      const label = app.status?.light?.label && serialOf(config.bulb) ? app.status.light.label : config.bulb.trim();
-      out.push(paragraph(LIGHTS.savedMissing(label), 'bl-lifx-line bl-lifx-missing'));
+    const missing = config.bulbs.filter((w) => !bulbs.some((b) => isChosen(w, b)));
+    for (const w of missing) {
+      out.push(paragraph(LIGHTS.savedMissing(savedLabel(app, w)), 'bl-lifx-line bl-lifx-missing'));
     }
     if (bulbs.length === 0) {
-      if (!config.bulb.trim()) {
+      if (config.bulbs.length === 0) {
         out.push(paragraph(LIGHTS.none, 'bl-lifx-line bl-lifx-none'));
       }
+    } else if (bulbs.length === 1 && config.bulbs.some((w) => isChosen(w, bulbs[0]))) {
+      out.push(paragraph(LIGHTS.foundOne(bulbName(bulbs[0]), bulbs[0].ip), 'bl-lifx-line bl-lifx-one'));
     } else if (bulbs.length === 1) {
-      if (chosen) {
-        out.push(paragraph(LIGHTS.foundOne(bulbName(chosen), chosen.ip), 'bl-lifx-line bl-lifx-one'));
-      }
+      // One found that is not among the saved bulbs: it can be ticked beside them, with no heading line (SPEC 17).
+      out.push(bulbChoices(app, bulbs, null));
     } else {
-      const name = uniqueId('bulb');
-      out.push(el('fieldset', { class: 'bl-lifx-choice', 'data-path': 'lifx.bulb' },
-        el('legend', { class: 'bl-lifx-line' }, LIGHTS.foundSeveral(bulbs.length)),
-        ...bulbs.map((bulb) => {
-          const id = uniqueId('radio');
-          const radio = el('input', { id, class: 'form-check-input', type: 'radio', name, value: bulb.serial });
-          radio.checked = chosen === bulb;
-          radio.addEventListener('change', () => {
-            if (radio.checked) {
-              app.config.lifx.bulb = bulb.serial;
-              app.changed();
-              app.rerender('lights');
-            }
-          });
-          return el('div', { class: 'form-check' }, radio, el('label', { class: 'form-check-label', for: id }, LIGHTS.bulbChoice(bulbName(bulb), bulb.ip)));
-        }),
-      ));
+      out.push(bulbChoices(app, bulbs, LIGHTS.foundSeveral(bulbs.length)));
     }
   } else {
-    const line = inUse(app);
-    if (line) {
-      out.push(line);
-    }
+    out.push(...inUse(app));
   }
   if (!lifx.searching) {
     out.push(el('div', { class: 'bl-actions bl-lifx-actions' }, linkButton(LIGHTS.searchAgain, () => void search(app), 'bl-search-again')));
@@ -215,21 +277,18 @@ function lifxCard(app: App): HTMLElement {
       }, { path: 'lifx.brightness', min: LIMITS.brightness[0], max: LIMITS.brightness[1] }))),
       disclosure(SHELL.advanced, [grid(
         gridCell(6, textField(LIGHTS.ip, config.host, (v) => {
-          const before = config.host.trim() !== '';
           config.host = v;
           app.changed();
-          if (before !== (v.trim() !== '')) {
-            // The search results give way to the address line, and back.
-            refreshResults(app);
-          }
-        }, { path: 'lifx.host', placeholder: LIGHTS.ipPlaceholder, help: `${LIGHTS.ipLead} ${LIGHTS.ipHelp}`, inputmode: 'decimal' })),
+          // The search results give way to one line per address, and back (SPEC 11.3 E).
+          refreshResults(app);
+        }, { path: 'lifx.host', placeholder: LIGHTS.ipPlaceholder, help: `${LIGHTS.ipLead} ${LIGHTS.ipHelp}` })),
         gridCell(6, numberField(LIGHTS.refresh, config.refreshSeconds, (v) => {
           config.refreshSeconds = v;
           app.changed();
         }, { path: 'lifx.refreshSeconds', min: LIMITS.refreshSeconds[0], max: LIMITS.refreshSeconds[1], help: LIGHTS.refreshHelp })),
       )], { cls: 'bl-lifx-advanced', open: config.host.trim() !== '' || config.refreshSeconds !== DEFAULTS.lifx.refreshSeconds }),
     ],
-    results: lifx.answered === null ? null : lifx.answered ? statusBox('success', LIGHTS.answered) : statusBox('danger', LIGHTS.noAnswer),
+    results: testResults(app),
     footerLeft: [el('span', { class: 'form-text bl-test-help' }, LIGHTS.testHelp)],
     footerRight: test,
     cls: 'bl-lifx-card',

@@ -934,7 +934,7 @@ describe('settings page: Lights (SPEC 11.3 E)', () => {
   const lifxCard = (root: FakeElement): FakeElement => root.querySelector('#section-lights .bl-lifx-card')!;
   const lines = (root: FakeElement): string[] => lifxCard(root).querySelectorAll('.bl-lifx-results .bl-lifx-line').map((l) => text(l));
 
-  it('ticking Use a LIFX bulb searches at once; one bulb is used and written as its serial number', async () => {
+  it('ticking Use LIFX bulbs searches at once; one bulb is used and written as its serial number in lifx.bulbs', async () => {
     const { root, page } = mount();
     assert.deepEqual(lifxCard(root).querySelectorAll('input').length, 1, 'only the checkbox while it is off');
     answers.set('/lifx/discover', { bulbs: [FLOOR] });
@@ -943,8 +943,8 @@ describe('settings page: Lights (SPEC 11.3 E)', () => {
     await settle();
     assert.deepEqual(requests.map((r) => r.path), ['/lifx/discover']);
     assert.deepEqual(lines(root), ['Found Floor (192.168.4.50). Busy Light will use it.']);
-    assert.equal(page.config.lifx.bulb, 'd073d5000001');
-    assert.deepEqual(lastBlock().lifx, { enabled: true, bulb: 'd073d5000001', host: '', brightness: 100, refreshSeconds: 300 });
+    assert.deepEqual(page.config.lifx.bulbs, ['d073d5000001']);
+    assert.deepEqual(lastBlock().lifx, { enabled: true, bulbs: ['d073d5000001'], host: '', brightness: 100, refreshSeconds: 300 });
     assert.deepEqual(buttons(lifxCard(root).querySelector('.bl-lifx-actions')), [copy.LIGHTS.searchAgain]);
   });
 
@@ -962,20 +962,34 @@ describe('settings page: Lights (SPEC 11.3 E)', () => {
     assert.deepEqual(lines(root), ['Found Floor (192.168.4.50). Busy Light will use it.']);
   });
 
-  it('several bulbs: one radio each, and the choice is written as its serial number', async () => {
+  it('several bulbs: one checkbox each; the ticked ones are written as serial numbers in the order found, and none ticked is an error', async () => {
     const { root, page } = mount({ platform: 'BusyLight', lifx: { enabled: true } });
     answers.set('/lifx/discover', { bulbs: [DESK, FLOOR] });
     buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
     await settle();
-    assert.deepEqual(lines(root), [copy.LIGHTS.foundSeveral(2)]);
-    const radios = lifxCard(root).querySelectorAll('input[type="radio"]');
-    assert.deepEqual(radios.map((r) => text(r.parentNode!)), ['Desk (192.168.4.51)', 'Floor (192.168.4.50)']);
-    assert.equal(page.config.lifx.bulb, '', 'nothing is chosen for the user');
-    radios[1].checked = true;
-    radios[1].dispatchEvent(new FakeEvent('change', true));
+    assert.deepEqual(lines(root), ['Found 2 bulbs. Choose the ones to use:']);
+    const boxes = () => lifxCard(root).querySelectorAll('.bl-lifx-choice input[type="checkbox"]');
+    assert.deepEqual(boxes().map((r) => text(r.parentNode!)), ['Desk (192.168.4.51)', 'Floor (192.168.4.50)']);
+    assert.deepEqual(page.config.lifx.bulbs, [], 'nothing is chosen for the user');
+    assert.deepEqual(page.issues().map((i) => `${i.label}: ${i.message}`), ['LIFX bulbs: Choose at least one bulb, or turn off Use LIFX bulbs.'],
+      'several found and none ticked (SPEC 11.3 E and H)');
+    tick(boxes()[1], true);
     await settle();
-    assert.equal(page.config.lifx.bulb, 'd073d5000001');
-    assert.equal(lifxCard(root).querySelectorAll('input[type="radio"]')[1].checked, true);
+    assert.deepEqual(page.config.lifx.bulbs, ['d073d5000001']);
+    assert.deepEqual(page.issues(), []);
+    tick(boxes()[0], true);
+    await settle();
+    assert.deepEqual(lastBlock().lifx, { enabled: true, bulbs: ['d073d5000002', 'd073d5000001'], host: '', brightness: 100, refreshSeconds: 300 },
+      'both, in the order found');
+    assert.deepEqual(boxes().map((b) => b.checked), [true, true]);
+    tick(boxes()[0], false);
+    tick(boxes()[1], false);
+    await settle();
+    assert.deepEqual(page.config.lifx.bulbs, []);
+    assert.equal(feedback(root, 'lifx.bulbs'), VALIDATION.chooseBulb, 'shown under the list once a box was unticked');
+    tick(field(root, 'lifx.enabled'), false);
+    await settle();
+    assert.deepEqual(page.issues(), [], 'no error with LIFX off');
   });
 
   it('none found, the saved bulb missing, and a build 1 name written as its serial when found', async () => {
@@ -984,20 +998,20 @@ describe('settings page: Lights (SPEC 11.3 E)', () => {
     buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
     await settle();
     assert.deepEqual(lines(root), [copy.LIGHTS.none]);
-    const named = mount({ platform: 'BusyLight', lifx: { enabled: true, bulb: 'floor' } });
+    const named = mount({ platform: 'BusyLight', lifx: { enabled: true, bulbs: ['floor'] } });
     buttonNamed(lifxCard(named.root), copy.LIGHTS.searchAgain).click();
     await settle();
     assert.deepEqual(lines(named.root), ['floor was not found just now. It may be switched off.']);
     answers.set('/lifx/discover', { bulbs: [DESK, FLOOR] });
     buttonNamed(lifxCard(named.root), copy.LIGHTS.searchAgain).click();
     await settle();
-    assert.equal(named.page.config.lifx.bulb, 'd073d5000001', 'the name matched without regard to case');
-    assert.equal(lifxCard(named.root).querySelectorAll('input[type="radio"]').find((r) => r.checked)!.value, 'd073d5000001');
+    assert.deepEqual(named.page.config.lifx.bulbs, ['d073d5000001'], 'the name matched without regard to case');
+    assert.equal(lifxCard(named.root).querySelectorAll('.bl-lifx-choice input[type="checkbox"]').find((r) => r.checked)!.value, 'd073d5000001');
     void page;
   });
 
   it('an IP address under Advanced hides the search and says which bulb is used; it is validated', async () => {
-    const { root } = mount({ platform: 'BusyLight', lifx: { enabled: true, bulb: 'd073d5000001' } });
+    const { root } = mount({ platform: 'BusyLight', lifx: { enabled: true, bulbs: ['d073d5000001'] } });
     const advanced = lifxCard(root).querySelector('details')!;
     assert.equal(advanced.open, false);
     assert.equal(text(advanced.querySelector('summary')), copy.SHELL.advanced);
@@ -1005,6 +1019,10 @@ describe('settings page: Lights (SPEC 11.3 E)', () => {
     fill(root, 'lifx.host', '192.168.4.99');
     assert.deepEqual(lines(root), ['Busy Light will use the bulb at 192.168.4.99.']);
     assert.equal(lifxCard(root).querySelector('.bl-search-again'), null);
+    fill(root, 'lifx.host', '192.168.4.99, 192.168.4.21');
+    assert.deepEqual(lines(root), ['Busy Light will use the bulb at 192.168.4.99.', 'Busy Light will use the bulb at 192.168.4.21.'], 'one line per address');
+    fill(root, 'lifx.host', '192.168.4.99, 999.1.1.1');
+    assert.equal(feedback(root, 'lifx.host'), VALIDATION.host, 'any address that is not one');
     fill(root, 'lifx.host', '999.1.1.1');
     assert.equal(feedback(root, 'lifx.host'), VALIDATION.host);
     fill(root, 'lifx.host', '');
@@ -1026,13 +1044,65 @@ describe('settings page: Lights (SPEC 11.3 E)', () => {
     assert.deepEqual(buttons(lifxCard(root).querySelector('.ns-footer-right')), [copy.LIGHTS.testing]);
     await settle();
     assert.equal(text(lifxCard(root).querySelector('.ns-card-results')), copy.LIGHTS.answered);
-    assert.deepEqual(requests.find((r) => r.path === '/lifx/test')!.payload, { brightness: 60, serial: 'd073d5000001', host: '192.168.4.50' });
+    assert.deepEqual(requests.find((r) => r.path === '/lifx/test')!.payload, { brightness: 60, bulbs: [{ serial: 'd073d5000001', host: '192.168.4.50' }] });
     fill(root, 'lifx.host', '192.168.4.99');
     answers.set('/lifx/test', { answered: false });
     buttonNamed(lifxCard(root), copy.LIGHTS.testLight).click();
     await settle();
     assert.equal(text(lifxCard(root).querySelector('.ns-card-results')), copy.LIGHTS.noAnswer);
-    assert.deepEqual(requests.filter((r) => r.path === '/lifx/test')[1].payload, { brightness: 60, host: '192.168.4.99' });
+    assert.deepEqual(requests.filter((r) => r.path === '/lifx/test')[1].payload, { brightness: 60, bulbs: [{ host: '192.168.4.99' }] });
+  });
+
+  // Build 3.2: several bulbs (C8, SPEC 11.3 E).
+
+  it('Test light with two bulbs ticked tests both and shows one result per bulb', async () => {
+    const { root } = mount({ platform: 'BusyLight', lifx: { enabled: true, bulbs: ['d073d5000002', 'd073d5000001'] } });
+    answers.set('/lifx/discover', { bulbs: [DESK, FLOOR] });
+    buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
+    await settle();
+    answers.set('/lifx/test', { answered: false,
+      results: [{ label: 'Desk', host: DESK.ip, answered: true }, { label: null, host: FLOOR.ip, answered: false }] });
+    assert.equal(text(lifxCard(root).querySelector('.bl-test-help')), 'Shows red, then green, on each bulb chosen.');
+    buttonNamed(lifxCard(root), copy.LIGHTS.testLight).click();
+    await settle();
+    assert.deepEqual(requests.find((r) => r.path === '/lifx/test')!.payload, { brightness: 100, bulbs: [
+      { serial: 'd073d5000002', host: DESK.ip }, { serial: 'd073d5000001', host: FLOOR.ip },
+    ] });
+    assert.deepEqual(lifxCard(root).querySelectorAll('.ns-card-results .alert').map((a) => [text(a), a.getAttribute('class')!.includes('alert-success')]), [
+      ['Desk answered.', true],
+      ['No answer from Floor. Check that it is on and on the same network as Homebridge.', false],
+    ], 'the page names a bulb the server did not label');
+  });
+
+  it('an old lifx.bulb opens with its bulb ticked; one found beside a missing saved bulb can be ticked; the bulbs in use from lights', async () => {
+    answers.set('/status', state({ lights: [
+      { enabled: true, label: 'Floor', host: FLOOR.ip, found: 'remembered', answered: true },
+      { enabled: true, label: 'Status Light', host: '192.168.4.21', found: 'discovered', answered: false },
+    ] }));
+    const { root, page } = mount({ platform: 'BusyLight', calendars: [ICLOUD_SOURCE], lifx: { enabled: true, bulb: 'd073d5000001' } });
+    page.startPolling();
+    await flush();
+    assert.deepEqual(lines(root),
+      ['Busy Light is using Floor (192.168.4.50).', 'Busy Light is using Status Light (192.168.4.21), but it did not answer last time.']);
+    assert.deepEqual(page.config.lifx.bulbs, ['d073d5000001'], 'the old lifx.bulb, as a list of one');
+    answers.set('/lifx/discover', { bulbs: [DESK, FLOOR] });
+    buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
+    await settle();
+    assert.deepEqual(lifxCard(root).querySelectorAll('.bl-lifx-choice input').map((b) => b.checked), [false, true], 'Floor ticked');
+    fill(root, 'name', 'Busy Light');
+    await settle();
+    assert.deepEqual(lastBlock().lifx, { enabled: true, bulbs: ['d073d5000001'], host: '', brightness: 100, refreshSeconds: 300 },
+      'lifx.bulbs written and lifx.bulb dropped');
+    // Floor switched off at the wall, and only Desk answers: Floor stays chosen, and Desk can be ticked beside it.
+    answers.set('/lifx/discover', { bulbs: [DESK] });
+    buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
+    await settle();
+    assert.deepEqual(lines(root), ['Floor was not found just now. It may be switched off.'], 'no heading line for one bulb to tick');
+    assert.deepEqual(lifxCard(root).querySelectorAll('.bl-lifx-choice input').map((b) => [text(b.parentNode!), b.checked]), [['Desk (192.168.4.51)', false]]);
+    assert.deepEqual(page.config.lifx.bulbs, ['d073d5000001'], 'not replaced by the bulb found');
+    tick(lifxCard(root).querySelector('.bl-lifx-choice input')!, true);
+    await settle();
+    assert.deepEqual(page.config.lifx.bulbs, ['d073d5000002', 'd073d5000001'], 'the found bulb, then the saved one not found');
   });
 
   it('the sensors to create, named from the platform name, the other seven under Show all statuses, and the three steps', async () => {
@@ -1958,8 +2028,9 @@ describe('settings page: the owner\'s configuration, opened and saved back (buil
     // Any change pushes the whole block; put the name back as it was, as Save would write it.
     fill(root, 'name', 'Busy Light');
     await settle();
-    assert.deepEqual(lastBlock(), { ...OWNER, meetingWarningSeconds: 0, workingSwitch: { enabled: false } },
-      'written back with the same values, intervals in seconds, and the build 3.2 settings off');
+    const { bulb, ...lifx } = OWNER.lifx;
+    assert.deepEqual(lastBlock(), { ...OWNER, lifx: { ...lifx, bulbs: [bulb] }, meetingWarningSeconds: 0, workingSwitch: { enabled: false } },
+      'written back with the same values, intervals in seconds, the build 3.2 settings off, and Floor in lifx.bulbs in place of lifx.bulb');
     const read = parseConfig(lastBlock());
     assert.deepEqual(read.issues, [], 'the plugin reads the block with no issues');
     assert.deepEqual(read.config, parseConfig(OWNER).config);

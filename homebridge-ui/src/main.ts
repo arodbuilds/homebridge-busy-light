@@ -60,7 +60,7 @@ export function emptyUiState(): UiState {
   return {
     chooserOpen: false, chooserOutlook: false, outlookCards: new Set(),
     expanded: new Set(), removeOpen: null, icloud: new Map(), tests: new Map(), microsoft: new Map(),
-    lifx: { searching: false, bulbs: null, testing: false, answered: null },
+    lifx: { searching: false, bulbs: null, names: {}, testing: false, results: null },
     input: { info: null, loading: false, failed: false, testing: false, result: null, copied: null, replaceOpen: false, revealed: false },
     resetOpen: false, resetDone: false, issuesExpanded: false, colorsExpanded: false,
   };
@@ -246,7 +246,7 @@ export class Page implements App {
         listsShown.add(s.id);
       }
     }
-    return { listsShown };
+    return { listsShown, lifxFound: this.ui.lifx.bulbs?.length ?? 0 };
   }
 
   issues(): UiIssue[] {
@@ -352,7 +352,7 @@ export class Page implements App {
     this.push();
   }
 
-  private revalidate(): void {
+  revalidate(): void {
     const issues = this.issues();
     this.markIssues(issues);
     setSaveEnabled(issues.length === 0);

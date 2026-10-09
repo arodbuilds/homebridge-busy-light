@@ -46,8 +46,12 @@ export interface UiSource {
 
 export interface UiLifx {
   enabled: boolean;
-  /** A bulb's serial number as the page writes it, or a name as build 1 wrote it. */
-  bulb: string;
+  /**
+   * The bulbs to use (SPEC 9.1 item 6, from build 3.2): serial numbers as the page writes them, or names as written by
+   * hand or by build 1. A saved `lifx.bulb` is read as a list of one, and is not written back.
+   */
+  bulbs: string[];
+  /** One or more addresses, separated by commas. */
   host: string;
   brightness: number;
   refreshSeconds: number;
@@ -101,7 +105,7 @@ export const DEFAULTS = {
     outOfOffice: '#B400FF', doNotDisturb: '#FF0000', inCall: '#FF0000', inMeeting: '#FF0000', busy: '#FF6A00', tentative: '#FFD000',
     away: '#FFD000', available: '#00FF00', offline: 'off',
   } as Record<StatusKey, string>,
-  lifx: { enabled: false, bulb: '', host: '', brightness: 100, refreshSeconds: 300 } as UiLifx,
+  lifx: { enabled: false, bulbs: [] as string[], host: '', brightness: 100, refreshSeconds: 300 } as UiLifx,
   sensors: ['available', 'busyAny', 'outOfOffice'] as SensorKey[],
   overrideSwitch: false,
   pollSeconds: 30,
@@ -254,7 +258,7 @@ export function emptyConfig(): UiConfig {
     name: DEFAULTS.name,
     calendars: [],
     colors: { ...DEFAULTS.colors },
-    lifx: { ...DEFAULTS.lifx },
+    lifx: { ...DEFAULTS.lifx, bulbs: [] },
     sensors: [...DEFAULTS.sensors],
     overrideSwitch: DEFAULTS.overrideSwitch,
     pollSeconds: DEFAULTS.pollSeconds,
@@ -304,7 +308,8 @@ export function readConfig(raw: unknown): UiConfig {
   const lifx = isObject(raw.lifx) ? raw.lifx : {};
   c.lifx = {
     enabled: bool(lifx.enabled, DEFAULTS.lifx.enabled),
-    bulb: str(lifx.bulb),
+    bulbs: Array.isArray(lifx.bulbs) ? lifx.bulbs.filter((b): b is string => typeof b === 'string' && b.trim() !== '').map((b) => b.trim())
+      : str(lifx.bulb).trim() ? [str(lifx.bulb).trim()] : [],
     host: str(lifx.host),
     brightness: num(lifx.brightness, DEFAULTS.lifx.brightness),
     refreshSeconds: num(lifx.refreshSeconds, DEFAULTS.lifx.refreshSeconds),
@@ -396,7 +401,9 @@ export function exportConfig(c: UiConfig): Record<string, unknown> {
     name: c.name.trim(),
     calendars: [...c.calendars.map(exportSource), ...c.otherCalendars],
     colors,
-    lifx: { enabled: c.lifx.enabled, bulb: c.lifx.bulb.trim(), host: c.lifx.host.trim(), brightness: c.lifx.brightness, refreshSeconds: c.lifx.refreshSeconds },
+    // From build 3.2 lifx.bulbs, in place of lifx.bulb, which is dropped (SPEC 9.1 item 6).
+    lifx: { enabled: c.lifx.enabled, bulbs: c.lifx.bulbs.map((b) => b.trim()).filter((b) => b !== ''), host: c.lifx.host.trim(),
+      brightness: c.lifx.brightness, refreshSeconds: c.lifx.refreshSeconds },
     sensors: SENSOR_KEYS.filter((k) => c.sensors.includes(k)),
     overrideSwitch: c.overrideSwitch,
     pollSeconds: c.pollSeconds,
