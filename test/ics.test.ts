@@ -256,6 +256,9 @@ test('generated series of every frequency read as walking them in full, across d
     'FREQ=YEARLY;BYMONTH=10;BYDAY=2TH', 'FREQ=YEARLY;BYWEEKNO=41;BYDAY=TH', 'FREQ=YEARLY;BYYEARDAY=281,282', 'FREQ=HOURLY;INTERVAL=5',
     'FREQ=HOURLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9,10,11', 'FREQ=MINUTELY;INTERVAL=45', 'FREQ=DAILY;UNTIL=20261009T000000Z', 'FREQ=DAILY;COUNT=400',
     'FREQ=WEEKLY;BYDAY=TH;COUNT=30', 'FREQ=WEEKLY;BYDAY=TH;UNTIL=20261231', 'FREQ=MONTHLY;COUNT=12',
+    // From the review before the pull request: monthly rules with BYMONTH, and yearly days a start may not be on.
+    'FREQ=MONTHLY;BYMONTH=3,6,9,12;BYDAY=-1FR', 'FREQ=MONTHLY;BYMONTH=10,11', 'FREQ=MONTHLY;INTERVAL=2;BYMONTH=1,4,10;BYMONTHDAY=8,9',
+    'FREQ=MONTHLY;BYMONTH=10;BYDAY=TH;BYSETPOS=2', 'FREQ=YEARLY;BYMONTH=10;BYMONTHDAY=8,9', 'FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29',
   ];
   // Starts far enough back for the walk to start late, and near enough for the full walk it is compared with to stay
   // quick: a month's last day, a daylight saving day in UTC (with an EXDATE), and for monthly and yearly series a
@@ -287,6 +290,29 @@ test('generated series of every frequency read as walking them in full, across d
     }
   }
   assert.ok(compared > 400);
+});
+
+// The review before the pull request (SPEC 5.4 item 3.2): ical.js steps a monthly rule through its BYMONTH list by
+// position, whatever month the walk starts in, and a yearly rule started on a day that is not one of its own reads
+// that day's month and day again, so neither is started late.
+
+test('a monthly rule with BYMONTH keeps every occurrence: the last Friday of each quarter, and twice a year on the 15th (SPEC 5.4 item 3.2)', () => {
+  const series = (start: string, rule: string) => ['BEGIN:VCALENDAR', 'VERSION:2.0', 'BEGIN:VEVENT', 'UID:by-month', 'SUMMARY:Synthetic review',
+    `DTSTART:${start}`, `DTEND:${start.slice(0, 9)}140000Z`, `RRULE:${rule}`, 'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+  const quarter = series('20150327T130000Z', 'FREQ=MONTHLY;BYMONTH=3,6,9,12;BYDAY=-1FR');
+  assert.deepEqual(walkInFull(quarter, at(2026, 3, 26, 12), at(2026, 3, 28, 12)).map((e) => e.start), [at(2026, 3, 27, 13)]);
+  assert.deepEqual(read(quarter, at(2026, 3, 27, 12)).map((e) => e.start), [at(2026, 3, 27, 13)], 'Friday March 27, 2026');
+  const halfYear = series('20150615T130000Z', 'FREQ=MONTHLY;BYMONTH=6,12');
+  assert.deepEqual(walkInFull(halfYear, at(2026, 6, 14, 12), at(2026, 6, 16, 12)).map((e) => e.start), [at(2026, 6, 15, 13)]);
+  assert.deepEqual(read(halfYear, at(2026, 6, 15, 12)).map((e) => e.start), [at(2026, 6, 15, 13)], 'June 15, 2026');
+});
+
+test('a yearly February 29 rule whose start is not on it gains no March 1 (SPEC 5.4 item 3.2)', () => {
+  const text = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'BEGIN:VEVENT', 'UID:leap-day', 'SUMMARY:Synthetic leap day', 'DTSTART:20180726T090000Z',
+    'DTEND:20180726T100000Z', 'RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+  assert.deepEqual(walkInFull(text, at(2027, 2, 28, 12), at(2027, 3, 2, 12)), [], 'nothing in 2027, a year without February 29');
+  assert.deepEqual(read(text, at(2027, 3, 1, 12)), []);
+  assert.deepEqual(read(text, at(2028, 2, 29, 12)).map((e) => e.start), [at(2028, 2, 29, 9)], 'February 29, 2028');
 });
 
 test('a weekly Friday meeting whose next occurrence moved to Thursday shows on Thursday, and not on Friday (SPEC 5.4 item 2)', () => {

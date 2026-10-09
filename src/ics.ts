@@ -164,6 +164,17 @@ function daysInMonth(year: number, monthIndex: number): number {
   return new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
 }
 
+/**
+ * True when DTSTART is on the rule's own months and days (BYMONTH, BYMONTHDAY, a negative day counted from the end of
+ * its month), or the rule names none.
+ */
+function onOwnDays(rule: Recur, start: Time): boolean {
+  const months = rule.parts?.BYMONTH;
+  const days = rule.parts?.BYMONTHDAY;
+  const length = daysInMonth(start.year, start.month - 1);
+  return (!months || months.includes(start.month)) && (!days || days.some((d) => d === start.day || length + d + 1 === start.day));
+}
+
 /** True when the rule has no BYxxx part: each period gives exactly one occurrence, at DTSTART's wall-clock time. */
 function isSimple(rule: Recur): boolean {
   return Object.keys(rule.parts ?? {}).length === 0;
@@ -221,6 +232,12 @@ function startNear(rule: Recur, start: Time, limit: number): Time | undefined {
     return k >= 1 ? timeLike(start, floating(start) + k * period) : undefined;
   }
   if (freq !== 'MONTHLY' && freq !== 'YEARLY') {
+    return undefined;
+  }
+  // ical.js steps a monthly rule through its BYMONTH list by position, whatever month the walk starts in, and a rule
+  // started on a day that is not one of its own reads that day again; both are walked from DTSTART, at a few
+  // occurrences a year (found by the review before the pull request).
+  if ((freq === 'MONTHLY' && rule.parts?.BYMONTH) || !onOwnDays(rule, start)) {
     return undefined;
   }
   const months = freq === 'MONTHLY' ? interval : 12 * interval;
