@@ -247,6 +247,22 @@ export class LightController {
    * row, sends discovery out again, and the color goes to the bulb's new address straight away.
    */
   async send(color: string, durationMs: number): Promise<boolean | null> {
+    const { client, config } = this.options;
+    return this.deliver(color, (to) => client.sendColor(to.host, to.serial, color, config.brightness, durationMs));
+  }
+
+  /**
+   * The meeting warning's fade (SPEC 6.7, 13.1 item 8) to the In a meeting color, lasting until `until` by the clock, so
+   * a resend after rediscovery fades over the time left. `from` as `LifxClient.sendFade`.
+   */
+  async sendFade(fade: { from: string | null; to: string; until: number }): Promise<boolean | null> {
+    const { client, config } = this.options;
+    return this.deliver(fade.to, (to) => client.sendFade(to.host, to.serial,
+      { from: fade.from, to: fade.to, durationMs: Math.max(0, fade.until - this.now()) }, config.brightness));
+  }
+
+  /** Sends to the chosen bulb, with the rediscovery of `send`. `lastSent` records `color`. */
+  private async deliver(color: string, sendTo: (to: Chosen) => Promise<boolean>): Promise<boolean | null> {
     if (!this.enabled) {
       return null;
     }
@@ -254,22 +270,22 @@ export class LightController {
     if (!this.chosen) {
       return null;
     }
-    let answered = await this.sendOnce(color, durationMs);
+    let answered = await this.sendOnce(color, sendTo);
     const firstTry = this.untried;
     this.untried = false;
     if (!answered && this.chosen && this.chosen.found !== 'configured' && (firstTry || (this.silent >= SILENT_SENDS && this.discoveryDue()))) {
       const before = this.chosen.host;
       await this.discover();
       if (this.chosen && this.chosen.host !== before) {
-        answered = await this.sendOnce(color, durationMs);
+        answered = await this.sendOnce(color, sendTo);
       }
     }
     return answered;
   }
 
-  private async sendOnce(color: string, durationMs: number): Promise<boolean> {
+  private async sendOnce(color: string, sendTo: (to: Chosen) => Promise<boolean>): Promise<boolean> {
     const chosen = this.chosen!;
-    const answered = await this.options.client.sendColor(chosen.host, chosen.serial, color, this.options.config.brightness, durationMs);
+    const answered = await sendTo(chosen);
     this.lastSent = color;
     this.lastSentAt = this.now();
     this.answered = answered;

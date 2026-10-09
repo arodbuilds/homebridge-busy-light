@@ -255,12 +255,37 @@ export class LifxClient {
    */
   async sendColor(host: string, serial: string | null, color: string, brightnessPercent: number, durationMs: number): Promise<boolean> {
     const hsb = hexToHsb(color);
-    const build: ((seq: number) => Buffer)[] = hsb
-      ? [
-        (seq) => buildSetColor(hsb, brightnessPercent, durationMs, { serial, sequence: seq, ackRequired: true }),
-        (seq) => buildSetPower(true, durationMs, { serial, sequence: seq, ackRequired: true }),
-      ]
-      : [(seq) => buildSetPower(false, durationMs, { serial, sequence: seq, ackRequired: true })];
+    const opts = (seq: number) => ({ serial, sequence: seq, ackRequired: true });
+    return this.sendPackets(host, hsb
+      ? [(seq) => buildSetColor(hsb, brightnessPercent, durationMs, opts(seq)), (seq) => buildSetPower(true, durationMs, opts(seq))]
+      : [(seq) => buildSetPower(false, durationMs, opts(seq))]);
+  }
+
+  /**
+   * The meeting warning (SPEC 6.7, 13.1 item 8): SetPower on, then one SetColor of `to` lasting `durationMs`, so the bulb
+   * fades by itself. Before them, with `from` `off`, SetColor of `to` at 1 percent brightness, so the bulb comes on
+   * dim; with `from` a color, SetColor of it, so the fade starts there. True when the last packet was acknowledged.
+   */
+  async sendFade(host: string, serial: string | null, fade: { from: string | null; to: string; durationMs: number },
+    brightnessPercent: number): Promise<boolean> {
+    const to = hexToHsb(fade.to);
+    if (!to) {
+      return false;
+    }
+    const opts = (seq: number) => ({ serial, sequence: seq, ackRequired: true });
+    const start = fade.from === null ? null : fade.from === 'off' ? { hsb: to, percent: 1 } : { hsb: hexToHsb(fade.from), percent: brightnessPercent };
+    const build: ((seq: number) => Buffer)[] = [];
+    if (start?.hsb) {
+      const hsb = start.hsb;
+      build.push((seq) => buildSetColor(hsb, start.percent, 0, opts(seq)));
+    }
+    build.push((seq) => buildSetPower(true, 0, opts(seq)));
+    build.push((seq) => buildSetColor(to, brightnessPercent, Math.max(0, Math.round(fade.durationMs)), opts(seq)));
+    return this.sendPackets(host, build);
+  }
+
+  /** Sends packets in order, each acknowledged with up to three tries. True when the last was acknowledged. */
+  private async sendPackets(host: string, build: ((seq: number) => Buffer)[]): Promise<boolean> {
     const socket = this.socket();
     const acks = new Set<number>();
     const waiters = new Map<number, () => void>();

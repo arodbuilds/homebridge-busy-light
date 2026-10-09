@@ -32,7 +32,8 @@ export const WORKING_SWITCH_MODEL = 'Working switch';
 
 /** UUIDs come from the key, never the display name, so renaming keeps rooms and automations (SPEC 7 item 3). */
 export function sensorUuidSeed(key: SensorKey): string {
-  return `busy-light:sensor:${key}`;
+  // The Meeting Soon sensor's seed is written as the build prompt gave it (SPEC 7 item 3).
+  return key === 'meetingSoon' ? 'busy-light:sensor:meeting-soon' : `busy-light:sensor:${key}`;
 }
 
 export const OVERRIDE_UUID_SEED = 'busy-light:override';
@@ -121,6 +122,7 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
       override: this.overrideAccessory?.context.override === true,
       working: this.workingAccessory ? this.workingAccessory.context.working !== false : true,
       onStatus: (status) => this.showStatus(status),
+      onMeetingSoon: (on) => this.showMeetingSoon(on),
     });
     const id = this.engine.inputServerStatus().id;
     this.engine.inputServerStatus = () => ({ listening: false, error: null, id, ...record });
@@ -366,13 +368,26 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
     return this.callAccessory;
   }
 
-  /** Every sensor follows the status; unknown turns them all off. */
+  /** Every sensor follows the status; unknown and not working turn them all off. Meeting Soon follows the warning. */
   showStatus(status: Status): void {
     const C = this.api.hap.Characteristic;
     for (const [key, service] of this.sensors) {
+      if (key === 'meetingSoon') {
+        if (status === 'unknown' || status === 'notWorking') {
+          service.updateCharacteristic(C.OccupancyDetected, C.OccupancyDetected.OCCUPANCY_NOT_DETECTED);
+        }
+        continue;
+      }
       service.updateCharacteristic(C.OccupancyDetected,
         sensorOn(key, status) ? C.OccupancyDetected.OCCUPANCY_DETECTED : C.OccupancyDetected.OCCUPANCY_NOT_DETECTED);
     }
+  }
+
+  /** The Meeting Soon sensor detects occupancy during the meeting warning (SPEC 6.7 item 5, 7). */
+  showMeetingSoon(on: boolean): void {
+    const C = this.api.hap.Characteristic;
+    this.sensors.get('meetingSoon')?.updateCharacteristic(C.OccupancyDetected,
+      on ? C.OccupancyDetected.OCCUPANCY_DETECTED : C.OccupancyDetected.OCCUPANCY_NOT_DETECTED);
   }
 
   /** The sensors currently in use, by key (for tests). */

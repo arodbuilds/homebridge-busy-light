@@ -6,7 +6,7 @@
 import type { App } from '../app.js';
 import { RIGHT_NOW, STATUS_NAMES } from '../copy.js';
 import { el, paragraph } from '../dom.js';
-import { formatWhen, parseDate, relativeTime } from '../format.js';
+import { formatTime, formatWhen, parseDate, relativeTime } from '../format.js';
 
 /** A state file older than this means the plugin has stopped writing it (SPEC 10.1: at least once a minute). */
 export const STALE_MS = 5 * 60 * 1000;
@@ -23,6 +23,11 @@ export function swatch(color: string): HTMLElement {
 export function reasonLine(status: NonNullable<App['status']>): string {
   if (status.override) {
     return RIGHT_NOW.override;
+  }
+  // During the meeting warning the status stays Available, and says when the meeting starts (SPEC 6.7, 11.3 B).
+  const meetingAt = parseDate(status.meetingWarning?.meetingAt);
+  if (status.status === 'available' && meetingAt) {
+    return RIGHT_NOW.meetingAt(formatTime(meetingAt));
   }
   const until = parseDate(status.reason?.until);
   const source = status.reason?.source;

@@ -159,6 +159,8 @@ test('defaults agree with the plugin defaults', () => {
   assert.equal(props.callSwitch.properties!.enabled.default, d.callSwitch.enabled);
   assert.equal(props.callSwitch.properties!.hours.default, d.callSwitch.hours);
   assert.equal(props.workingSwitch.properties!.enabled.default, d.workingSwitch.enabled);
+  assert.equal(props.meetingWarningSeconds.default, d.meetingWarningSeconds);
+  assert.deepEqual(props.meetingWarningSeconds.oneOf!.map((o) => o.enum[0]), [0, 60, 120, 180, 300]);
   assert.equal(item.useTeamsStatus.default, true);
   assert.equal(item.useCalendar.default, true);
 });

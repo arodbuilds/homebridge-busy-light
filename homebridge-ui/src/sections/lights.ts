@@ -236,9 +236,22 @@ function lifxCard(app: App): HTMLElement {
   });
 }
 
-/** Whether a per-status sensor's status can happen with the configuration on the page (SPEC 11.3 D); the roll-ups always can. */
+/**
+ * Whether a per-status sensor's status can happen with the configuration on the page (SPEC 11.3 D); the roll-ups
+ * always can, and Meeting Soon once the meeting warning is on (11.3 E, from build 3.2).
+ */
 function sensorCanHappen(app: App, key: (typeof SENSOR_KEYS)[number]): boolean {
+  if (key === 'meetingSoon') {
+    return app.config.meetingWarningSeconds > 0;
+  }
   return key in STATUS_NAMES ? canHappen(app, key as StatusKey) : true;
+}
+
+/** A sensor's help: Meeting Soon always says what it detects; one that cannot happen says so. */
+function sensorHelp(app: App, key: (typeof SENSOR_KEYS)[number]): string | undefined {
+  const lines = [key === 'meetingSoon' ? LIGHTS.meetingSoonHelp : null, sensorCanHappen(app, key) ? null : LIGHTS.nothingReports]
+    .filter((l): l is string => l !== null);
+  return lines.length ? lines.join(' ') : undefined;
 }
 
 function sensorBox(app: App, key: (typeof SENSOR_KEYS)[number]): HTMLElement {
@@ -246,7 +259,7 @@ function sensorBox(app: App, key: (typeof SENSOR_KEYS)[number]): HTMLElement {
   return checkboxField(LIGHTS.sensor(name, SENSOR_NAMES[key]), app.config.sensors.includes(key), (v) => {
     app.config.sensors = SENSOR_KEYS.filter((k) => (k === key ? v : app.config.sensors.includes(k)));
     app.changed();
-  }, { path: `sensors.${key}`, help: sensorCanHappen(app, key) ? undefined : LIGHTS.nothingReports });
+  }, { path: `sensors.${key}`, help: sensorHelp(app, key) });
 }
 
 export function renderLights(app: App, container: HTMLElement): void {

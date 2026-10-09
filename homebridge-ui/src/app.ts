@@ -43,6 +43,8 @@ export interface StatusData {
   light: { enabled: boolean; label: string | null; host: string | null; found: string | null; answered?: boolean | null } | null;
   statusInput?: { enabled: boolean; port: number; listening: boolean; error: string | null; id: string | null };
   inputs?: StatusInputEntry[];
+  /** The meeting warning while it is on (SPEC 6.7, from build 3.2). */
+  meetingWarning?: { meetingAt: string } | null;
 }
 
 /** What /input/info answers (SPEC 10.3). */

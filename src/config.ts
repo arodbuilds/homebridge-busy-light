@@ -128,6 +128,8 @@ export interface BusyLightConfig {
   statusInput: StatusInputConfig;
   callSwitch: CallSwitchConfig;
   workingSwitch: WorkingSwitchConfig;
+  /** Seconds of warning before a calendar meeting (SPEC 6.7, 9.1 item 21): 0 (none), 60, 120, 180 or 300. */
+  meetingWarningSeconds: number;
 }
 
 export interface ConfigIssue {
@@ -150,6 +152,8 @@ export const DEFAULT_INPUT_PORT = 8582;
 export const MIN_INPUT_PORT = 1024;
 export const MAX_INPUT_PORT = 65535;
 export const DEFAULT_CALL_HOURS = 3;
+/** The meeting warning's choices, in seconds (SPEC 9.1 item 21); 0 is none. */
+export const MEETING_WARNING_SECONDS: readonly number[] = [0, 60, 120, 180, 300];
 export const MIN_CALL_HOURS = 1;
 export const MAX_CALL_HOURS = 12;
 /** The status input key's rule (SPEC 18.8 item 1). */
@@ -171,6 +175,7 @@ export function defaultConfig(): BusyLightConfig {
     statusInput: { enabled: false, port: DEFAULT_INPUT_PORT, key: '', allowPlainKey: true },
     callSwitch: { enabled: false, hours: DEFAULT_CALL_HOURS },
     workingSwitch: { enabled: false },
+    meetingWarningSeconds: 0,
   };
 }
 
@@ -645,6 +650,18 @@ function readWorkingSwitch(raw: unknown, issues: Issues): WorkingSwitchConfig {
   return working;
 }
 
+/** SPEC 9.1 item 21: one of the choices; anything else is no warning, with a warning line. */
+function readMeetingWarning(raw: unknown, issues: Issues): number {
+  if (isMissing(raw)) {
+    return 0;
+  }
+  if (typeof raw !== 'number' || !MEETING_WARNING_SECONDS.includes(raw)) {
+    issues.warn('meetingWarningSeconds', 'must be 0, 60, 120, 180 or 300');
+    return 0;
+  }
+  return raw;
+}
+
 function readSensors(raw: unknown, issues: Issues): SensorKey[] {
   if (isMissing(raw)) {
     return [...DEFAULT_SENSORS];
@@ -685,6 +702,7 @@ export function parseConfig(raw: unknown): { config: BusyLightConfig; issues: Co
   config.statusInput = readStatusInput(block.statusInput, issues);
   config.callSwitch = readCallSwitch(block.callSwitch, issues);
   config.workingSwitch = readWorkingSwitch(block.workingSwitch, issues);
+  config.meetingWarningSeconds = readMeetingWarning(block.meetingWarningSeconds, issues);
   return { config, issues: issues.list };
 }
 

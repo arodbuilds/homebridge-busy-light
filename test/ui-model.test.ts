@@ -39,7 +39,7 @@ describe('settings page model (SPEC section 9)', () => {
       platform: 'BusyLight', name: plugin.name, calendars: [], colors: plugin.colors, lifx: plugin.lifx, sensors: plugin.sensors,
       overrideSwitch: plugin.overrideSwitch, pollSeconds: plugin.pollSeconds, calendarSeconds: plugin.calendarSeconds,
       ignoreAllDayBusy: plugin.ignoreAllDayBusy, outOfOfficeWords: plugin.outOfOfficeWords, debug: plugin.debug,
-      statusInput: plugin.statusInput, callSwitch: plugin.callSwitch,
+      statusInput: plugin.statusInput, callSwitch: plugin.callSwitch, meetingWarningSeconds: plugin.meetingWarningSeconds,
     });
     assert.deepEqual(readConfig(undefined), emptyConfig());
     assert.deepEqual(LIMITS, {

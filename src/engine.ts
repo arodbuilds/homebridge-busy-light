@@ -16,7 +16,7 @@ import { SourceRunner } from './sources.js';
 import { readInstanceId } from './status-api.js';
 import { writeState } from './state.js';
 import type { AddressChange, StateFile } from './state.js';
-import { freshData, nextBoundary, resolve } from './status.js';
+import { freshData, meetingAhead, nextBoundary, resolve } from './status.js';
 import type { InputReport, Reason, Resolution } from './status.js';
 
 /** Time and timers, replaced in tests. */
@@ -94,6 +94,8 @@ export interface EngineOptions {
   working?: boolean;
   /** Called on every status change, to update the sensors. */
   onStatus?: (status: Status) => void;
+  /** Called when the meeting warning begins or ends, for the Meeting Soon sensor (SPEC 6.7). */
+  onMeetingSoon?: (on: boolean) => void;
 }
 
 /** The status input server's part of the state file (SPEC 10.1); the platform supplies it while the server runs. */
@@ -120,6 +122,8 @@ export class BusyLightEngine {
   override: boolean;
   /** False while the Working switch is off (SPEC 6.6). */
   working: boolean;
+  /** The meeting warning while it is on (SPEC 6.7): the meeting's start. */
+  meetingWarning: { meetingAt: number } | null = null;
 
   private readonly config: BusyLightConfig;
   private readonly clock: Clock;
@@ -312,6 +316,12 @@ export class BusyLightEngine {
       : { status: 'notWorking', reason: null };
     const changed = result.status !== this.status;
     this.reason = result.reason;
+    // SPEC 6.7: the meeting warning, while the status is Available and a calendar meeting is that close.
+    const ahead = result.status === 'available' ? this.meetingAhead(now) : null;
+    const warning = ahead !== null && ahead - now <= this.config.meetingWarningSeconds * 1000 ? { meetingAt: ahead } : null;
+    const hadWarning = this.meetingWarning !== null;
+    const warningChanged = (warning?.meetingAt ?? null) !== (this.meetingWarning?.meetingAt ?? null);
+    this.meetingWarning = warning;
     if (changed) {
       this.status = result.status;
       if (result.status === 'unknown') {
@@ -323,12 +333,30 @@ export class BusyLightEngine {
         this.log.info(statusLine(STATUS_NAMES[result.status], result.reason, now));
       }
       this.options.onStatus?.(result.status);
+      if (warningChanged) {
+        this.options.onMeetingSoon?.(warning !== null);
+      }
       this.writeState();
-      if (result.status !== 'unknown') {
+      if (warning) {
+        // Available began inside the warning time: the fade starts from the Available color (SPEC 6.7 item 3).
+        await this.sendWarning(warning, now, true);
+      } else if (result.status !== 'unknown') {
         await this.send(result.status, CHANGE_DURATION_MS, now);
       }
-    } else if (result.status !== 'unknown' && (resend || this.refreshDue(now))) {
-      await this.send(result.status, resend ? CHANGE_DURATION_MS : 0, now);
+    } else if (result.status !== 'unknown') {
+      if (warningChanged) {
+        this.options.onMeetingSoon?.(warning !== null);
+        this.writeState();
+      }
+      if (warning && (warningChanged || resend)) {
+        await this.sendWarning(warning, now, resend);
+      } else if (!warning && hadWarning) {
+        // The warning ended before the meeting: the normal apply replaces the fade at once (SPEC 6.7 item 4).
+        await this.send(result.status, CHANGE_DURATION_MS, now);
+      } else if (!warning && (resend || this.refreshDue(now))) {
+        // No refresh during the warning, which would end the fade (SPEC 6.7 item 6).
+        await this.send(result.status, resend ? CHANGE_DURATION_MS : 0, now);
+      }
     }
     // From the clock after the send, which an offline bulb can hold up for seconds (SPEC 8.1 item 3).
     const after = Math.max(this.clock.now(), now);
@@ -351,6 +379,33 @@ export class BusyLightEngine {
     return this.light.enabled && every > 0 && this.lastSendAt !== null && now - this.lastSendAt >= every;
   }
 
+  /**
+   * SPEC 6.7 item 1: the start of the next meeting when the status is Available and the next change is to In a
+   * meeting, while the settings allow a warning (on, the In a meeting color not off, working); null otherwise.
+   */
+  private meetingAhead(now: number): number | null {
+    if (this.config.meetingWarningSeconds <= 0 || !this.working || this.config.colors.inMeeting === 'off') {
+      return null;
+    }
+    const fresh = freshData(this.sources.map((s) => s.data()), now);
+    return meetingAhead(this.override, fresh.presence, fresh.events, now, this.resolveOptions, this.reports(now));
+  }
+
+  /**
+   * The meeting warning's fade (SPEC 6.7 item 3): to the In a meeting color, until the meeting starts. With the Available
+   * color off the bulb comes on dim first; `fromAvailable` sets the Available color first, when the bulb may not show it.
+   */
+  private async sendWarning(warning: { meetingAt: number }, now: number, fromAvailable: boolean): Promise<void> {
+    if (!this.light.enabled) {
+      return;
+    }
+    this.lastSendAt = now;
+    const available = this.config.colors.available;
+    this.log.debug(`Meeting warning: fading over ${Math.round((warning.meetingAt - now) / 1000)} seconds.`);
+    await this.light.sendFade({ from: available === 'off' ? 'off' : fromAvailable ? available : null, to: this.config.colors.inMeeting,
+      until: warning.meetingAt });
+  }
+
   /** Sends a status's color; not working turns the light off, whatever the Offline color (SPEC 6.6 item 1). */
   private async send(status: Exclude<Status, 'unknown'>, durationMs: number, now: number): Promise<void> {
     if (!this.light.enabled) {
@@ -369,7 +424,13 @@ export class BusyLightEngine {
       return;
     }
     const events = freshData(this.sources.map((s) => s.data()), now).events;
-    const next = nextBoundary(events, now, this.resolveOptions);
+    let next = nextBoundary(events, now, this.resolveOptions);
+    // The beginning of a meeting warning is timed the same way (SPEC 6.7 item 2).
+    const ahead = this.meetingAhead(now);
+    const begins = ahead === null ? null : ahead - this.config.meetingWarningSeconds * 1000;
+    if (begins !== null && begins > now && (next === null || begins < next)) {
+      next = begins;
+    }
     if (next === null) {
       this.boundaryTimer.clear();
       return;
@@ -400,6 +461,7 @@ export class BusyLightEngine {
         : null,
       light: this.light.state(),
       statusInput: { enabled: this.config.statusInput.enabled, port: this.config.statusInput.port, ...this.inputServerStatus() },
+      meetingWarning: this.meetingWarning ? { meetingAt: new Date(this.meetingWarning.meetingAt).toISOString() } : null,
       inputs: this.inputs.list(this.clock.now()).map((e) => ({
         sender: e.sender,
         status: e.status,

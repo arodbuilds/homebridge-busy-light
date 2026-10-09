@@ -479,6 +479,19 @@ test('rule 20: the Working switch, off by default; a workingSwitch that is not a
   assert.deepEqual(parseConfig({ workingSwitch: true }).config.workingSwitch, { enabled: false });
 });
 
+test('rule 21: the meeting warning, off by default; 60, 120, 180 or 300 seconds, anything else off with a warning', () => {
+  assert.equal(parseConfig({}).config.meetingWarningSeconds, 0);
+  for (const seconds of [0, 60, 120, 180, 300]) {
+    const { config, issues } = parseConfig({ meetingWarningSeconds: seconds });
+    assert.deepEqual([config.meetingWarningSeconds, issues], [seconds, []]);
+  }
+  for (const seconds of [30, 90, 600, -60, '120', true]) {
+    const { config, issues } = parseConfig({ meetingWarningSeconds: seconds });
+    assert.equal(config.meetingWarningSeconds, 0, String(seconds));
+    assert.deepEqual(lines(issues), ['warn meetingWarningSeconds: must be 0, 60, 120, 180 or 300'], String(seconds));
+  }
+});
+
 test('rule 19: any source may have its own calendarSeconds from 60 to 600; invalid falls back to the platform with a warning', () => {
   const { config, issues } = parseConfig({
     calendarSeconds: 300,

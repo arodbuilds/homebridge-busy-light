@@ -637,3 +637,175 @@ test('not working at startup: the off line once, and it wins over Unknown (SPEC 
   assert.ok(!log.lines('warn').some((l) => l.startsWith('Status unknown')));
   assert.deepEqual(net.sent.map((s) => parseHeader(s.buf)!.type), [MSG.SetPower]);
 });
+
+// Build 3.2: the meeting warning (SPEC 6.7), with a fake clock and a fake socket.
+
+/** The colors and powers sent to the bulb, in order: hue, brightness and duration of a SetColor, level and duration of a SetPower. */
+type Packet = ['color', number, number, number] | ['power', number, number];
+function packets(): Packet[] {
+  return net.sent.filter((s) => s.to === DOOR.host).flatMap((s): Packet[] => {
+    const h = parseHeader(s.buf)!;
+    if (h.type === MSG.SetColor) {
+      return [['color', s.buf.readUInt16LE(37), s.buf.readUInt16LE(41), s.buf.readUInt32LE(45)]];
+    }
+    return h.type === MSG.SetPower ? [['power', s.buf.readUInt16LE(36), s.buf.readUInt32LE(38)]] : [];
+  });
+}
+const RED = 0;
+const GREEN = 21845;
+const FULL = 65535;
+
+function warned(feed: () => string, extra: Record<string, unknown> = {}, statuses: Status[] = []): BusyLightEngine {
+  const e = make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }], lifx: { enabled: true, host: DOOR.host, refreshSeconds: 60 },
+    meetingWarningSeconds: 120, ...extra }, statuses);
+  net.bulbs = [{ ...DOOR }];
+  fake.on('https://calendar.example.com/', () => text(feed()));
+  return e;
+}
+
+test('the warning is one SetColor to the In a meeting color lasting until the start, sent when it begins (SPEC 6.7)', async () => {
+  const start = T0 + 10 * MIN;
+  const e = warned(() => icsOf([['meeting', start, start + 30 * MIN]]));
+  e.start();
+  await settle();
+  await e.idle();
+  assert.equal(e.status, 'available');
+  assert.deepEqual(packets(), [['color', GREEN, FULL, 1000], ['power', FULL, 1000]]);
+  net.sent = [];
+  await clock.advance(8 * MIN - 1);
+  assert.ok(packets().length > 0 && packets().every((p) => (p[0] === 'color' ? p[1] === GREEN && p[3] === 0 : p[1] === FULL && p[2] === 0)),
+    'before the warning, only the refreshes of the Available color');
+  net.sent = [];
+  await clock.advance(1);
+  await e.idle();
+  assert.equal(e.status, 'available', 'the status stays Available');
+  assert.deepEqual(e.meetingWarning, { meetingAt: start });
+  assert.deepEqual(packets(), [['power', FULL, 0], ['color', RED, FULL, 120_000]], 'one fade of 2 minutes: the bulb fades by itself');
+  assert.deepEqual(readState(dir)!.meetingWarning, { meetingAt: new Date(start).toISOString() });
+  net.sent = [];
+  await clock.advance(2 * MIN - 1);
+  assert.deepEqual(packets(), [], 'no stream of packets, and no refresh during the fade');
+  await clock.advance(1);
+  await e.idle();
+  assert.equal(e.status, 'inMeeting');
+  assert.equal(e.meetingWarning, null);
+  assert.deepEqual(packets(), [['color', RED, FULL, 1000], ['power', FULL, 1000]], 'the start changes the status as usual');
+  assert.equal(readState(dir)!.meetingWarning, null);
+});
+
+test('with Available Off, the bulb comes on dim at the In a meeting color and the same SetColor fades it up (SPEC 6.7 item 3)', async () => {
+  const start = T0 + 10 * MIN;
+  const e = warned(() => icsOf([['meeting', start, start + 30 * MIN]]), { colors: { available: 'off' }, lifx: { enabled: true, host: DOOR.host,
+    brightness: 80 } });
+  e.start();
+  await settle();
+  await e.idle();
+  assert.deepEqual(packets(), [['power', 0, 1000]], 'off while Available');
+  net.sent = [];
+  await clock.advance(8 * MIN);
+  await e.idle();
+  assert.deepEqual(packets().slice(-3), [['color', RED, Math.round(FULL / 100), 0], ['power', FULL, 0], ['color', RED, Math.round(FULL * 0.8), 120_000]]);
+  assert.deepEqual(packets().slice(0, -3).filter((p) => !(p[0] === 'power' && p[1] === 0)), [], 'before it, only refreshes of off');
+});
+
+test('a meeting cancelled during the fade: the Available color comes back at once (SPEC 6.7 item 4)', async () => {
+  const start = T0 + 10 * MIN;
+  let cancelled = false;
+  const e = warned(() => icsOf(cancelled ? [] : [['meeting', start, start + 30 * MIN]]), { calendarSeconds: 60 });
+  e.start();
+  await settle();
+  await clock.advance(8 * MIN + 30_000);
+  await e.idle();
+  assert.deepEqual(e.meetingWarning, { meetingAt: start });
+  cancelled = true;
+  net.sent = [];
+  await clock.advance(30_000);
+  await e.idle();
+  assert.equal(e.meetingWarning, null);
+  assert.equal(e.status, 'available');
+  assert.deepEqual(packets(), [['color', GREEN, FULL, 1000], ['power', FULL, 1000]], 'the normal apply replaces the fade');
+  net.sent = [];
+  await clock.advance(5 * MIN);
+  assert.ok(packets().every((p) => p[0] !== 'color' || p[1] === GREEN), 'nothing fades to red later');
+});
+
+test('a call starting during the fade replaces it at once (SPEC 6.7 item 4)', async () => {
+  const start = T0 + 10 * MIN;
+  const e = warned(() => icsOf([['meeting', start, start + 30 * MIN]]), inputOn);
+  e.start();
+  await settle();
+  await clock.advance(9 * MIN);
+  await e.idle();
+  assert.ok(e.meetingWarning);
+  net.sent = [];
+  await e.report(call());
+  assert.equal(e.status, 'inCall');
+  assert.equal(e.meetingWarning, null);
+  assert.deepEqual(packets(), [['color', RED, FULL, 1000], ['power', FULL, 1000]]);
+});
+
+test('no warning between back-to-back meetings, and none while another status shows (SPEC 6.7 item 1)', async () => {
+  const first = T0 + 10 * MIN;
+  const e = warned(() => icsOf([['first', first, first + 30 * MIN], ['second', first + 30 * MIN, first + 60 * MIN],
+    ['maybe', first + 70 * MIN, first + 100 * MIN, ['STATUS:TENTATIVE']], ['third', first + 100 * MIN, first + 120 * MIN]]));
+  e.start();
+  await settle();
+  await clock.advance(first + 30 * MIN - clock.t);
+  await e.idle();
+  assert.equal(e.status, 'inMeeting');
+  net.sent = [];
+  await clock.advance(70 * MIN);
+  await e.idle();
+  assert.equal(e.status, 'inMeeting', 'the third meeting, after the tentative one');
+  const fades = packets().filter((p) => p[0] === 'color' && p[3] > 1000);
+  assert.deepEqual(fades, [], 'no fade before the second meeting (back to back) or the third (tentative showed)');
+});
+
+test('a short gap between meetings: the warning begins with Available, from the Available color (SPEC 6.7 items 2 and 3)', async () => {
+  const end = T0 + 10 * MIN;
+  const e = warned(() => icsOf([['first', T0 - 20 * MIN, end], ['second', end + MIN, end + 30 * MIN]]));
+  e.start();
+  await settle();
+  await e.idle();
+  assert.equal(e.status, 'inMeeting');
+  net.sent = [];
+  await clock.advance(10 * MIN);
+  await e.idle();
+  assert.equal(e.status, 'available');
+  assert.deepEqual(e.meetingWarning, { meetingAt: end + MIN });
+  assert.deepEqual(packets().slice(-3), [['color', GREEN, FULL, 0], ['power', FULL, 0], ['color', RED, FULL, 60_000]]);
+  assert.ok(packets().slice(0, -3).every((p) => p[0] === 'power' || (p[1] === RED && p[3] === 0)), 'before it, only refreshes of red');
+});
+
+test('the warning off sends no fade, and an In a meeting color of Off has nothing to fade to (SPEC 6.7 item 1)', async () => {
+  for (const extra of [{ meetingWarningSeconds: 0 }, { colors: { inMeeting: 'off' } }]) {
+    net.sent = [];
+    const start = T0 + 10 * MIN;
+    clock.t = T0;
+    const e = warned(() => icsOf([['meeting', start, start + 30 * MIN]]), extra);
+    e.start();
+    await settle();
+    await clock.advance(10 * MIN);
+    await e.idle();
+    assert.equal(e.meetingWarning, null);
+    assert.deepEqual(packets().filter((p) => p[0] === 'color' && p[3] > 1000), [], JSON.stringify(extra));
+    e.stop();
+  }
+});
+
+test('the warning begins on time while a calendar check waits on a slow server (SPEC 6.7 item 2, 8.1 item 3)', async () => {
+  const start = T0 + 5 * MIN;
+  const e = make({ calendars: [{ type: 'url', name: 'Rota', url: FEED, calendarSeconds: 60 }], lifx: { enabled: true, host: DOOR.host },
+    meetingWarningSeconds: 60 });
+  net.bulbs = [{ ...DOOR }];
+  const feed = icsOf([['meeting', start, start + 30 * MIN]]);
+  fake.on('https://calendar.example.com/', (_call, index) => (index === 0 ? text(feed) : new Promise<Response>(() => undefined)));
+  e.start();
+  await settle();
+  await clock.advance(4 * MIN - 1);
+  assert.equal(e.meetingWarning, null);
+  await clock.advance(1);
+  await e.idle();
+  assert.deepEqual(e.meetingWarning, { meetingAt: start }, 'begun on time while the second check waits');
+  assert.deepEqual(packets().slice(-2), [['power', FULL, 0], ['color', RED, FULL, 60_000]]);
+});

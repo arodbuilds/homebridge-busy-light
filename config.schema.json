@@ -280,7 +280,8 @@
             "busy",
             "tentative",
             "away",
-            "offline"
+            "offline",
+            "meetingSoon"
           ]
         },
         "default": [
@@ -658,6 +659,10 @@
         {
           "value": "offline",
           "name": "Offline"
+        },
+        {
+          "value": "meetingSoon",
+          "name": "Meeting Soon"
         }
       ]
     },

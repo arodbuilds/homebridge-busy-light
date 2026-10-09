@@ -170,6 +170,13 @@ describe('settings page: Right now (SPEC 11.3 B)', () => {
     assert.equal(await line({ status: 'inCall', reason: { source: 'Teams', until: day(1, 10) } }), 'Until tomorrow at 10:00 AM, from Teams.');
   });
 
+  it('during the meeting warning: Available, and when the meeting starts (SPEC 6.7, 11.3 B)', async () => {
+    const row = await rightNow(state({ status: 'available', reason: { source: null, until: '2026-10-08T15:02:00.000Z' },
+      meetingWarning: { meetingAt: '2026-10-08T15:02:00.000Z' } }));
+    assert.equal(text(row.querySelector('.bl-now-name')), 'Available');
+    assert.equal(text(row.querySelector('.bl-now-line')), 'A meeting starts at 3:02 PM.');
+  });
+
   it('not working: the Off swatch, Not working and its line (SPEC 6.6, 11.3 B)', async () => {
     const row = await rightNow(state({ status: 'notWorking', reason: null }));
     assert.equal(text(row.querySelector('.bl-now-name')), 'Not working');
@@ -1012,9 +1019,9 @@ describe('settings page: Lights (SPEC 11.3 E)', () => {
     assert.equal(all.open, false);
     // From build 3.1, the statuses a calendar-only setup cannot produce come last, with their help (SPEC 11.3 E).
     assert.deepEqual(labels(all), ['Door In a Meeting', 'Door Tentative', 'Door In a Call', 'Door Do Not Disturb', 'Door Busy in Teams', 'Door Away',
-      'Door Offline']);
+      'Door Offline', 'Door Meeting Soon']);
     assert.deepEqual(all.querySelectorAll('.form-check').map((c) => text(c.querySelector('.form-text'))),
-      ['', '', ...Array(5).fill(copy.LIGHTS.nothingReports)]);
+      ['', '', ...Array(5).fill(copy.LIGHTS.nothingReports), `${copy.LIGHTS.meetingSoonHelp} ${copy.LIGHTS.nothingReports}`]);
     assert.deepEqual(section.querySelectorAll('.bl-sensors input').slice(0, 3).map((i) => i.checked), [true, true, true]);
     tick(all.querySelectorAll('input')[0], true);
     tick(section.querySelectorAll('.bl-sensors input')[0], false);
@@ -1622,10 +1629,17 @@ describe('settings page: the per-status sensors and the statuses the setup can p
   const sensors = (root: FakeElement): Array<[string, string]> => root.querySelectorAll('#section-lights details.bl-all-sensors .form-check')
     .map((c) => [text(c.querySelector('.form-check-label')), text(c.querySelector('.form-text'))]);
 
-  it('with the status input on, every status can happen: section 7 order, no help', () => {
+  it('with the status input on, every status can happen: section 7 order, no help; Meeting Soon last while the warning is off', () => {
     const { root } = mount({ platform: 'BusyLight', statusInput: { enabled: true, key: 'c'.repeat(43) } });
     assert.deepEqual(sensors(root), [['Busy Light In a Meeting', ''], ['Busy Light In a Call', ''], ['Busy Light Do Not Disturb', ''],
-      ['Busy Light Busy in Teams', ''], ['Busy Light Tentative', ''], ['Busy Light Away', ''], ['Busy Light Offline', '']]);
+      ['Busy Light Busy in Teams', ''], ['Busy Light Tentative', ''], ['Busy Light Away', ''], ['Busy Light Offline', ''],
+      ['Busy Light Meeting Soon', `${copy.LIGHTS.meetingSoonHelp} ${copy.LIGHTS.nothingReports}`]]);
+  });
+
+  it('with the meeting warning on, Meeting Soon can happen, with its help (SPEC 11.3 E, from build 3.2)', () => {
+    const { root } = mount({ platform: 'BusyLight', meetingWarningSeconds: 120 });
+    assert.deepEqual(sensors(root).slice(0, 3), [['Busy Light In a Meeting', ''], ['Busy Light Tentative', ''],
+      ['Busy Light Meeting Soon', copy.LIGHTS.meetingSoonHelp]]);
   });
 
   it('the On a Call switch moves In a Call up, live; a status that cannot happen can still be ticked', async () => {
@@ -1781,7 +1795,7 @@ describe('settings page: the owner\'s configuration, opened and saved back (buil
     // Any change pushes the whole block; put the name back as it was, as Save would write it.
     fill(root, 'name', 'Busy Light');
     await settle();
-    assert.deepEqual(lastBlock(), OWNER, 'written back with the same values, intervals in seconds');
+    assert.deepEqual(lastBlock(), { ...OWNER, meetingWarningSeconds: 0 }, 'written back with the same values, intervals in seconds, and no warning');
     const read = parseConfig(lastBlock());
     assert.deepEqual(read.issues, [], 'the plugin reads the block with no issues');
     assert.deepEqual(read.config, parseConfig(OWNER).config);

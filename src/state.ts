@@ -66,6 +66,8 @@ export interface StateFile {
   /** From build 3; absent in a state file written by build 2. */
   statusInput?: StatusInputState;
   inputs?: InputStateEntry[];
+  /** The meeting warning while it is on, the meeting's start as an ISO time (SPEC 6.7, from build 3.2). */
+  meetingWarning?: { meetingAt: string } | null;
 }
 
 export function stateFile(storageDir: string): string {

@@ -260,6 +260,7 @@ export const SENSOR_NAMES = {
   tentative: 'Tentative',
   away: 'Away',
   offline: 'Offline',
+  meetingSoon: 'Meeting Soon',
 } as const;
 
 export type SensorKey = keyof typeof SENSOR_NAMES;

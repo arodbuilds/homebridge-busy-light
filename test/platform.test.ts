@@ -125,10 +125,11 @@ test('every sensor of section 7, with stable UUIDs from the key', () => {
   const { api } = launch({ name: 'Door', sensors: [...SENSOR_KEYS] });
   assert.deepEqual(api.registered.map((a) => a.displayName), [
     'Door Available', 'Door Busy', 'Door Out of Office', 'Door In a Meeting', 'Door In a Call', 'Door Do Not Disturb',
-    'Door Busy in Teams', 'Door Tentative', 'Door Away', 'Door Offline',
+    'Door Busy in Teams', 'Door Tentative', 'Door Away', 'Door Offline', 'Door Meeting Soon',
   ]);
   assert.deepEqual(api.registered.map((a) => a.UUID), SENSOR_KEYS.map(uuid));
   assert.equal(uuid('available'), hap.uuid.generate('busy-light:sensor:available'));
+  assert.equal(uuid('meetingSoon'), hap.uuid.generate('busy-light:sensor:meeting-soon'), 'as SPEC 7 item 3 gives it');
 });
 
 test('renaming keeps the accessories and their UUIDs', () => {
@@ -487,4 +488,22 @@ test('the Working switch answers HomeKit at once, without waiting for the bulb',
   assert.equal(applied, false, 'the switch must not wait for the bulb');
   await platform.engine!.idle();
   assert.equal(platform.engine!.status, 'notWorking');
+});
+
+test('the Meeting Soon sensor detects occupancy during the meeting warning (SPEC 6.7 item 5)', async () => {
+  const start = T0 + 10 * 60_000;
+  fake.on('https://calendar.example.com/', () => text(icsOf([['meeting', start, start + 1_800_000]])));
+  const clock = new FakeClock(T0);
+  const { platform, api } = launch({ sensors: ['available', 'meetingSoon'], meetingWarningSeconds: 180,
+    calendars: [{ type: 'url', name: 'Rota', url: 'https://calendar.example.com/a.ics' }] }, [], clock);
+  await settle();
+  await platform.engine!.idle();
+  assert.equal(api.registered.find((a) => a.UUID === uuid('meetingSoon'))!.displayName, 'Busy Light Meeting Soon');
+  assert.deepEqual([detected(platform, 'available'), detected(platform, 'meetingSoon')], [true, false]);
+  await clock.advance(7 * 60_000);
+  await platform.engine!.idle();
+  assert.deepEqual([detected(platform, 'available'), detected(platform, 'meetingSoon')], [true, true], 'still Available, and the meeting is soon');
+  await clock.advance(3 * 60_000);
+  await platform.engine!.idle();
+  assert.deepEqual([detected(platform, 'available'), detected(platform, 'meetingSoon')], [false, false]);
 });
