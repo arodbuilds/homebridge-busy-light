@@ -9,7 +9,7 @@
   "homepage": "https://github.com/arodbuilds/homebridge-busy-light#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/arodbuilds/homebridge-busy-light.git"
+    "url": "git+https://github.com/arodbuilds/homebridge-busy-light.git"
   },
   "bugs": {
     "url": "https://github.com/arodbuilds/homebridge-busy-light/issues"
