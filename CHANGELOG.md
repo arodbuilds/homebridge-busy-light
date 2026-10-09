@@ -4,10 +4,11 @@ All notable changes to Busy Light are recorded here. Versions follow [semantic v
 
 ## 0.1.0-beta.5 (2026-10-09)
 
-The fixes from a code review and a test pass after the first public beta, the day in "until" times, and the owner's requests: a Working switch, a warning before meetings, and copy buttons for the addresses. A configuration written by an earlier beta loads and behaves as before, with the Working switch and the meeting warning off.
+The fixes from a code review and a test pass after the first public beta, the day in "until" times, and the owner's requests: several LIFX bulbs, a Working switch, a warning before meetings, and copy buttons for the addresses. A configuration written by an earlier beta loads and behaves as before, with the Working switch and the meeting warning off, and its one bulb as a list of one.
 
 ### Added
 
+- Several LIFX bulbs: the LIFX bulbs card lists every bulb found with a checkbox, and every bulb ticked shows the status together. Each bulb is sent each color, refresh, fade and off at the same moment and on its own, so one bulb switched off at the wall never delays the others, with its own "did not answer" and "answering again" lines. Test light tests every bulb ticked and shows one result each. Bulb IP addresses under Advanced can be several, separated by commas. `homebridge-busy-light status` prints one `Light:` line per bulb, and `homebridge-busy-light light` with no bulb given sends to every bulb in use.
 - The Working switch: tick "Add a Working switch to the Home app" under Lights and the Home app gets "Busy Light Working". It starts on. Turned off (at the end of the day, for example in a "stop work" scene), the light stays off and every sensor is off whatever your calendars say, Right now says Not working, `homebridge-busy-light status` says `Status: Not working (the Working switch is off).` and the status API answers `notWorking`. Turned on, the status shows again at once. Its state survives restarts (`workingSwitch` in the configuration).
 - Warn before meetings, under Colors (Off by default; 1, 2, 3 or 5 minutes, `meetingWarningSeconds`): before a meeting from your calendars, the bulb fades from the Available color to the In a meeting color, in one command timed to the meeting's start. Right now says "A meeting starts at {time}." meanwhile, and an optional Busy Light Meeting Soon sensor detects occupancy. It starts only when you are Available and the next change is a calendar meeting.
 - A Copy button beside each Address line in Status from other apps.
@@ -18,6 +19,7 @@ The fixes from a code review and a test pass after the first public beta, the da
 
 ### Changed
 
+- `lifx.bulbs`, a list, replaces `lifx.bulb`. A saved `lifx.bulb` is read as a list of one, and the settings page writes `lifx.bulbs` in its place on the next Save. `light.json` and the state file hold a list of bulbs (`lights`); both still read the single bulb of earlier betas. The "several bulbs" line now reads "Choose the bulbs to use in the plugin settings."
 - An "until" time that is not today carries its day, for example "Nothing on your calendars until tomorrow at 9:00 AM.", on the settings page, in the log and in `homebridge-busy-light status`. The state file keeps the time itself.
 - Colors and the sensor list show Do not disturb, Busy, Away and Offline only with Teams status, or once an app has reported that status in the last 30 days. Turning on Status from other apps alone adds In a call only.
 - The README opens like the owner's other plugins: the banner, badges, a status note and a table of contents.
