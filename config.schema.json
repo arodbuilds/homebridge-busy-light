@@ -380,6 +380,56 @@
             "maximum": 12
           }
         }
+      },
+      "workingSwitch": {
+        "title": "Working switch",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "title": "Add a Working switch to the Home app",
+            "description": "Turn it off at the end of the day, for example in a Home scene, and the light stays off whatever your calendars say. Turn it on when you start work.",
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "meetingWarningSeconds": {
+        "title": "Warn before meetings",
+        "description": "The light fades from the Available color to the In a meeting color before a meeting starts.",
+        "type": "integer",
+        "default": 0,
+        "oneOf": [
+          {
+            "title": "Off",
+            "enum": [
+              0
+            ]
+          },
+          {
+            "title": "1 minute",
+            "enum": [
+              60
+            ]
+          },
+          {
+            "title": "2 minutes",
+            "enum": [
+              120
+            ]
+          },
+          {
+            "title": "3 minutes",
+            "enum": [
+              180
+            ]
+          },
+          {
+            "title": "5 minutes",
+            "enum": [
+              300
+            ]
+          }
+        ]
       }
     }
   },
@@ -512,6 +562,13 @@
     },
     {
       "type": "fieldset",
+      "title": "Working switch",
+      "items": [
+        "workingSwitch.enabled"
+      ]
+    },
+    {
+      "type": "fieldset",
       "title": "Colors",
       "description": "A color such as #FF0000, or the word off to turn the light off for that status.",
       "items": [
@@ -523,7 +580,8 @@
         "colors.tentative",
         "colors.away",
         "colors.available",
-        "colors.offline"
+        "colors.offline",
+        "meetingWarningSeconds"
       ]
     },
     {

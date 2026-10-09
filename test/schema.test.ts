@@ -65,7 +65,7 @@ test('headerDisplay is verbatim', () => {
 
 test('every title and description of SPEC 9.2, verbatim', () => {
   const rows = specRows();
-  assert.equal(rows.length, 34);
+  assert.equal(rows.length, 36);
   for (const [field, title, description] of rows) {
     const desc = description || undefined;
     switch (field) {
@@ -115,7 +115,7 @@ test('every field of SPEC section 9 is present', () => {
     }
   }
   assert.ok('id' in item, 'calendars[].id (SPEC 9.1 item 2)');
-  for (const group of ['lifx', 'statusInput', 'callSwitch']) {
+  for (const group of ['lifx', 'statusInput', 'callSwitch', 'workingSwitch']) {
     for (const key of Object.keys(example[group] as Record<string, unknown>)) {
       assert.ok(key in props[group].properties!, `${group}.${key}`);
     }

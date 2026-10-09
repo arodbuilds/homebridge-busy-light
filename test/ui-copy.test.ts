@@ -19,10 +19,14 @@ const copy113 = spec.slice(spec.indexOf('### 11.3 Copy (verbatim)'), spec.indexO
 
 /** The SPEC's placeholders for each function of the copy module, by its path. */
 const PLACEHOLDERS: Record<string, string[]> = {
-  'RIGHT_NOW.until': ['{time}', '{source}'],
+  'RIGHT_NOW.until': ['{when}', '{source}'],
   'RIGHT_NOW.from': ['{source}'],
   'RIGHT_NOW.fromApp': ['{sender}', '{app}'],
-  'RIGHT_NOW.nothingUntil': ['{time}'],
+  'RIGHT_NOW.nothingUntil': ['{when}'],
+  'RIGHT_NOW.meetingAt': ['{time}'],
+  'WHEN.tomorrow': ['{time}'],
+  'WHEN.weekday': ['{weekday}', '{time}'],
+  'WHEN.date': ['{Month day}', '{time}'],
   'RIGHT_NOW.stale': ['{relative time}'],
   'CALENDARS.lastChecked': ['{relative time}'],
   'CALENDARS.removeQuestion': ['{name}'],
@@ -94,7 +98,7 @@ function strings(): Map<string, string> {
   walk({ ...copy }, '');
   // The strings the page builds from two pieces of copy.
   out.set('RIGHT_NOW.from(Teams)', copy.RIGHT_NOW.from(copy.RIGHT_NOW.teams));
-  out.set('RIGHT_NOW.until(Teams)', copy.RIGHT_NOW.until('{time}', copy.RIGHT_NOW.teams));
+  out.set('RIGHT_NOW.until(Teams)', copy.RIGHT_NOW.until('{when}', copy.RIGHT_NOW.teams));
   for (const [key, ending] of Object.entries(copy.SENSOR_NAMES)) {
     out.set(`LIGHTS.sensor(${key})`, copy.LIGHTS.sensor('{name}', ending));
   }
@@ -141,8 +145,9 @@ test('every string SPEC 11.3 quotes is in the copy module', () => {
   // Addresses and the setup code are built from data; `notListening` and `unauthorized` are /input/test error keys;
   // `Home app` is a sender name the plugin writes, which the page shows as data.
   // `calendarSeconds`, `config.json` and the Outlook hosts name data the page reads or compares, not words it shows.
+  // `clear`, `ended` and `statusInput.reported` (build 3.2) name a status input word and state file fields the page reads.
   const notCopy = new RegExp('^(/|lifx\\.|verificationUri$|use$|homebridge-|assets/|busy-light|1:00 PM$|http://|busylight://|notListening$|unauthorized$'
-    + '|Home app$|calendarSeconds$|config\\.json$|outlook\\.(office365|office|live)\\.com$)');
+    + '|Home app$|calendarSeconds$|config\\.json$|outlook\\.(office365|office|live)\\.com$|clear$|ended$|statusInput\\.reported$)');
   const missing = quoted.filter((q) => !notCopy.test(q) && !values.has(q) && !all.includes(q));
   assert.deepEqual(missing, []);
 });
