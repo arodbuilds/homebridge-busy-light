@@ -28,6 +28,7 @@ export const MANUFACTURER = 'Busy Light';
 export const SENSOR_MODEL = 'Status sensor';
 export const OVERRIDE_MODEL = 'Override switch';
 export const CALL_SWITCH_MODEL = 'Call switch';
+export const WORKING_SWITCH_MODEL = 'Working switch';
 
 /** UUIDs come from the key, never the display name, so renaming keeps rooms and automations (SPEC 7 item 3). */
 export function sensorUuidSeed(key: SensorKey): string {
@@ -36,10 +37,11 @@ export function sensorUuidSeed(key: SensorKey): string {
 
 export const OVERRIDE_UUID_SEED = 'busy-light:override';
 export const CALL_SWITCH_UUID_SEED = 'busy-light:call-switch';
+export const WORKING_SWITCH_UUID_SEED = 'busy-light:working-switch';
 
 /** Whether a sensor detects occupancy for a status. Unknown turns every sensor off. */
 export function sensorOn(key: SensorKey, status: Status | null): boolean {
-  return status !== null && status !== 'unknown' && SENSOR_STATUSES[key].includes(status);
+  return status !== null && status !== 'unknown' && status !== 'notWorking' && SENSOR_STATUSES[key].includes(status);
 }
 
 /** Test seams: a clock, a LIFX client, and the status input's server factory (so no test opens a socket). */
@@ -64,6 +66,8 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
   private overrideAccessory: PlatformAccessory | null = null;
   /** The On a Call switch (SPEC 18.9), when enabled. Its context holds `callOnAt`, the time it was turned on. */
   private callAccessory: PlatformAccessory | null = null;
+  /** The Working switch (SPEC 6.6, 7 item 9), when enabled. Its context holds `working`, true while it is on. */
+  private workingAccessory: PlatformAccessory | null = null;
   private readonly callTimer: ClockTimer;
   private readonly clock: Clock;
 
@@ -115,6 +119,7 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
       clock: this.deps.clock,
       lifx: this.deps.lifx,
       override: this.overrideAccessory?.context.override === true,
+      working: this.workingAccessory ? this.workingAccessory.context.working !== false : true,
       onStatus: (status) => this.showStatus(status),
     });
     const id = this.engine.inputServerStatus().id;
@@ -223,6 +228,27 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
       this.callAccessory = accessory;
     }
 
+    if (this.config.workingSwitch.enabled) {
+      const uuid = this.api.hap.uuid.generate(WORKING_SWITCH_UUID_SEED);
+      const name = `${this.config.name} Working`;
+      keep.add(uuid);
+      const accessory = this.accessory(uuid, name);
+      // It starts on (SPEC 7 item 9).
+      accessory.context.working = accessory.context.working !== false;
+      accessory.getService(S.AccessoryInformation)!
+        .setCharacteristic(C.Manufacturer, MANUFACTURER)
+        .setCharacteristic(C.Model, WORKING_SWITCH_MODEL)
+        .setCharacteristic(C.SerialNumber, 'working-switch')
+        .setCharacteristic(C.FirmwareRevision, version);
+      const service = accessory.getService(S.Switch) ?? accessory.addService(S.Switch, name);
+      this.name(service, name);
+      service.updateCharacteristic(C.On, accessory.context.working);
+      service.getCharacteristic(C.On)
+        .onGet(() => accessory.context.working !== false)
+        .onSet((value: CharacteristicValue) => this.setWorking(value === true));
+      this.workingAccessory = accessory;
+    }
+
     const stale = [...this.cached.values()].filter((a) => !keep.has(a.UUID));
     if (stale.length) {
       this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, stale);
@@ -264,6 +290,15 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
       this.api.updatePlatformAccessories([this.overrideAccessory]);
     }
     void this.engine?.setOverride(on);
+  }
+
+  /** The Working switch from HomeKit (SPEC 6.6): stored and answered at once; the status and the bulb follow. */
+  private setWorking(on: boolean): void {
+    if (this.workingAccessory) {
+      this.workingAccessory.context.working = on;
+      this.api.updatePlatformAccessories([this.workingAccessory]);
+    }
+    void this.engine?.setWorking(on);
   }
 
   /**

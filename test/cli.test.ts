@@ -163,6 +163,18 @@ test('status shows an until time with its day when it is not today (SPEC 10.2 it
   assert.equal(out[0], `Status: Available (until tomorrow at ${formatTime(tomorrow)}).`);
 });
 
+test('status says not working while the Working switch is off (SPEC 10.2 item 1)', async () => {
+  writeConfig({});
+  fs.mkdirSync(path.join(storage, 'busy-light'));
+  fs.writeFileSync(path.join(storage, 'busy-light', 'state.json'), JSON.stringify({
+    version: 1, updatedAt: new Date(T0).toISOString(), status: 'notWorking', reason: null, override: false, sources: [], signIn: null,
+    light: { enabled: false, label: null, host: null, found: null, lastSent: null, lastSentAt: null, answered: null },
+  }));
+  const { code, out } = await run('status');
+  assert.equal(code, 0);
+  assert.deepEqual(out.slice(0, 2), ['Status: Not working (the Working switch is off).', `Updated ${formatTime(T0)}.`]);
+});
+
 test('status shows a waiting code and a refusal with the instructions', async () => {
   fs.mkdirSync(path.join(storage, 'busy-light'));
   fs.writeFileSync(path.join(storage, 'busy-light', 'state.json'), JSON.stringify({

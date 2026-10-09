@@ -158,6 +158,7 @@ test('defaults agree with the plugin defaults', () => {
   assert.equal(props.statusInput.properties!.allowPlainKey.default, d.statusInput.allowPlainKey);
   assert.equal(props.callSwitch.properties!.enabled.default, d.callSwitch.enabled);
   assert.equal(props.callSwitch.properties!.hours.default, d.callSwitch.hours);
+  assert.equal(props.workingSwitch.properties!.enabled.default, d.workingSwitch.enabled);
   assert.equal(item.useTeamsStatus.default, true);
   assert.equal(item.useCalendar.default, true);
 });

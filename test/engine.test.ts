@@ -580,3 +580,60 @@ test('the state file carries the status input, the senders with how they authent
   engine!.writeState();
   assert.deepEqual(readState(dir)!.statusInput, { enabled: true, port: 8582, listening: true, error: null, id: 'q3Lr8vT0cXw2mN5a' });
 });
+
+// Build 3.2: the Working switch (SPEC 6.6).
+
+test('not working: the bulb off whatever the Offline color, every status ignored, the override too, and the lines (SPEC 6.6)', async () => {
+  const statuses: Status[] = [];
+  make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }], lifx: { enabled: true, host: DOOR.host, refreshSeconds: 60 },
+    colors: { offline: '#FFFFFF' }, ...inputOn }, statuses);
+  net.bulbs = [{ ...DOOR }];
+  fake.on('https://calendar.example.com/', () => text(icsOf([['meeting', T0 - 30 * MIN, T0 + 30 * MIN]])));
+  await engine!.tick();
+  assert.equal(engine!.status, 'inMeeting');
+  net.sent = [];
+  await engine!.setWorking(false);
+  assert.equal(engine!.status, 'notWorking');
+  assert.deepEqual(statuses, ['inMeeting', 'notWorking'], 'the sensors are told, and turn off');
+  assert.deepEqual(net.sent.map((s) => parseHeader(s.buf)!.type), [MSG.SetPower], 'one packet: power off');
+  assert.equal(net.sent[0].buf.readUInt16LE(36), 0);
+  assert.equal(readState(dir)!.status, 'notWorking');
+  assert.equal(readState(dir)!.reason, null);
+  assert.equal(log.lines('info').at(-1), 'Busy Light Working turned off. The light stays off until it is turned on.');
+  assert.ok(!log.lines('info').some((l) => l.startsWith('Status: Not')), 'no status line for not working');
+
+  // Reports, the override and boundaries change nothing; the report is still kept.
+  await engine!.report(call());
+  await engine!.setOverride(true);
+  await clock.advance(31 * MIN);
+  await engine!.tick();
+  assert.equal(engine!.status, 'notWorking');
+  assert.deepEqual(statuses, ['inMeeting', 'notWorking']);
+  assert.ok(engine!.inputs.list(clock.t).some((e) => e.sender === MAC));
+  assert.ok(net.sent.every((s) => parseHeader(s.buf)!.type === MSG.SetPower && s.buf.readUInt16LE(36) === 0), 'only off, refreshed');
+  assert.ok(net.sent.length >= 2, 'the refresh sends off again');
+
+  // Turned on: resolved at once, with the status line and the bulb's color.
+  net.sent = [];
+  await engine!.setWorking(true);
+  assert.equal(engine!.status, 'doNotDisturb', 'the override applies again');
+  assert.deepEqual(log.lines('info').slice(-2), ['Busy Light Working turned on.', 'Status: Do not disturb.']);
+  assert.equal(lifxColors().length, 1);
+  await engine!.setWorking(true);
+  assert.equal(log.lines('info').filter((l) => l.includes('Working turned on')).length, 1, 'a line only when the state changes');
+});
+
+test('not working at startup: the off line once, and it wins over Unknown (SPEC 6.6)', async () => {
+  const { config } = parseConfig({ platform: 'BusyLight', calendars: [{ type: 'url', name: 'Rota', url: FEED }], lifx: { enabled: true, host: DOOR.host } });
+  net.bulbs = [{ ...DOOR }];
+  fake.on('https://calendar.example.com/', () => networkError('ECONNREFUSED'));
+  engine = new BusyLightEngine({ config, storageDir: dir, log: log.log, version: '0.1.0-beta.5', clock, working: false,
+    lifx: new LifxClient({ socket: net.factory, timings: { replyMs: 40, collectMs: 100 }, interfaces: () => ({}) }) });
+  engine.start();
+  await settle();
+  await engine.idle();
+  assert.equal(engine.status, 'notWorking');
+  assert.deepEqual(log.lines('info').filter((l) => l.includes('Working')), ['Busy Light Working turned off. The light stays off until it is turned on.']);
+  assert.ok(!log.lines('warn').some((l) => l.startsWith('Status unknown')));
+  assert.deepEqual(net.sent.map((s) => parseHeader(s.buf)!.type), [MSG.SetPower]);
+});

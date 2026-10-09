@@ -471,6 +471,14 @@ test('rule 18: the On a Call switch, off by default, with hours from 1 to 12 fal
   assert.deepEqual(lines(parseConfig({ callSwitch: [] }).issues), ['warn callSwitch: must be a set of call switch settings']);
 });
 
+test('rule 20: the Working switch, off by default; a workingSwitch that is not an object is ignored with one warning', () => {
+  assert.deepEqual(parseConfig({}).config.workingSwitch, { enabled: false });
+  assert.deepEqual(parseConfig({ workingSwitch: { enabled: true } }), { config: { ...parseConfig({}).config, workingSwitch: { enabled: true } }, issues: [] });
+  assert.deepEqual(lines(parseConfig({ workingSwitch: { enabled: 'yes' } }).issues), ['warn workingSwitch.enabled: must be true or false']);
+  assert.deepEqual(lines(parseConfig({ workingSwitch: true }).issues), ['warn workingSwitch: must be a set of working switch settings']);
+  assert.deepEqual(parseConfig({ workingSwitch: true }).config.workingSwitch, { enabled: false });
+});
+
 test('rule 19: any source may have its own calendarSeconds from 60 to 600; invalid falls back to the platform with a warning', () => {
   const { config, issues } = parseConfig({
     calendarSeconds: 300,

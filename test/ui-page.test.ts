@@ -170,6 +170,13 @@ describe('settings page: Right now (SPEC 11.3 B)', () => {
     assert.equal(await line({ status: 'inCall', reason: { source: 'Teams', until: day(1, 10) } }), 'Until tomorrow at 10:00 AM, from Teams.');
   });
 
+  it('not working: the Off swatch, Not working and its line (SPEC 6.6, 11.3 B)', async () => {
+    const row = await rightNow(state({ status: 'notWorking', reason: null }));
+    assert.equal(text(row.querySelector('.bl-now-name')), 'Not working');
+    assert.equal(text(row.querySelector('.bl-now-line')), 'The Working switch is off.');
+    assert.ok(row.querySelector('.bl-swatch')!.getAttribute('class')!.includes('bl-swatch-off'));
+  });
+
   it('no calendars saved, no state file yet, and Unknown in the warning tone (no swatch)', async () => {
     let row = await rightNow(state(), { platform: 'BusyLight' });
     assert.equal(text(row), copy.RIGHT_NOW.noCalendars);

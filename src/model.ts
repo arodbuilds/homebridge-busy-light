@@ -18,8 +18,11 @@ export const STATUS_KEYS = [
 
 export type StatusKey = (typeof STATUS_KEYS)[number];
 
-/** A status, or `unknown` when no source has fresh data (SPEC 6.5). Unknown has no color and no sensor. */
-export type Status = StatusKey | 'unknown';
+/**
+ * A status, `unknown` when no source has fresh data (SPEC 6.5), or `notWorking` while the Working switch is off (6.6).
+ * Neither has a color of its own or a sensor.
+ */
+export type Status = StatusKey | 'unknown' | 'notWorking';
 
 export const STATUS_NAMES: Record<StatusKey, string> = {
   outOfOffice: 'Out of office',

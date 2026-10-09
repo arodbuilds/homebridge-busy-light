@@ -107,6 +107,11 @@ export interface CallSwitchConfig {
   hours: number;
 }
 
+/** The Working switch of SPEC 6.6 (9.1 item 20). */
+export interface WorkingSwitchConfig {
+  enabled: boolean;
+}
+
 export interface BusyLightConfig {
   name: string;
   calendars: SourceConfig[];
@@ -122,6 +127,7 @@ export interface BusyLightConfig {
   debug: boolean;
   statusInput: StatusInputConfig;
   callSwitch: CallSwitchConfig;
+  workingSwitch: WorkingSwitchConfig;
 }
 
 export interface ConfigIssue {
@@ -164,6 +170,7 @@ export function defaultConfig(): BusyLightConfig {
     debug: false,
     statusInput: { enabled: false, port: DEFAULT_INPUT_PORT, key: '', allowPlainKey: true },
     callSwitch: { enabled: false, hours: DEFAULT_CALL_HOURS },
+    workingSwitch: { enabled: false },
   };
 }
 
@@ -624,6 +631,20 @@ function readCallSwitch(raw: unknown, issues: Issues): CallSwitchConfig {
   return call;
 }
 
+/** SPEC 9.1 item 20. */
+function readWorkingSwitch(raw: unknown, issues: Issues): WorkingSwitchConfig {
+  const working = defaultConfig().workingSwitch;
+  if (isMissing(raw)) {
+    return working;
+  }
+  if (!isObject(raw)) {
+    issues.warn('workingSwitch', 'must be a set of working switch settings');
+    return working;
+  }
+  working.enabled = readBoolean(raw.enabled, 'workingSwitch.enabled', working.enabled, issues);
+  return working;
+}
+
 function readSensors(raw: unknown, issues: Issues): SensorKey[] {
   if (isMissing(raw)) {
     return [...DEFAULT_SENSORS];
@@ -663,6 +684,7 @@ export function parseConfig(raw: unknown): { config: BusyLightConfig; issues: Co
   config.debug = readBoolean(block.debug, 'debug', config.debug, issues);
   config.statusInput = readStatusInput(block.statusInput, issues);
   config.callSwitch = readCallSwitch(block.callSwitch, issues);
+  config.workingSwitch = readWorkingSwitch(block.workingSwitch, issues);
   return { config, issues: issues.list };
 }
 

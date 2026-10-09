@@ -205,6 +205,21 @@ export function addressChanged(from: string, to: string): string {
   return `Homebridge's address changed from ${from} to ${to}. Apps that use the old address need the new setup code.`;
 }
 
+/** SPEC 12 "Working off" (6.6): the switch turned off, or was restored off at startup. */
+export function workingOff(name: string): string {
+  return `${name} Working turned off. The light stays off until it is turned on.`;
+}
+
+/** SPEC 12 "Working on" (6.6). */
+export function workingOn(name: string): string {
+  return `${name} Working turned on.`;
+}
+
+/** The CLI `status` line while the Working switch is off (SPEC 10.2 item 1), in place of the status line. */
+export function notWorkingLine(): string {
+  return 'Status: Not working (the Working switch is off).';
+}
+
 /** SPEC 12 "Call switch timeout", with the singular noun for 1 (12 item 1). */
 export function callSwitchTimeout(name: string, hours: number): string {
   return `${name} On a Call turned itself off after ${count(hours, 'hour')}.`;

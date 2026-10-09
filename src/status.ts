@@ -58,7 +58,8 @@ export interface Reason {
 }
 
 export interface Resolution {
-  status: Status;
+  /** Never `notWorking`: the Working switch is the engine's, above every rule (SPEC 6.6). */
+  status: Exclude<Status, 'notWorking'>;
   /** Null when the status is unknown. */
   reason: Reason | null;
 }

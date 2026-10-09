@@ -17,7 +17,8 @@ import { LifxClient } from './lifx.js';
 import { LightController, matchesBulb } from './light.js';
 import type { Log } from './log.js';
 import {
-  bulbName, bulbNotNamed, bulbSilent, count, formatTime, microsoftCode, noBulb, noCalendars, statusLine, statusUnknown, validation,
+  bulbName, bulbNotNamed, bulbSilent, count, formatTime, microsoftCode, noBulb, noCalendars, notWorkingLine, statusLine, statusUnknown,
+  validation,
 } from './messages.js';
 import { MicrosoftAuth, TokenStore, tokenFile } from './microsoft.js';
 import { STATUS_NAMES, isStatusKey } from './model.js';
@@ -109,7 +110,9 @@ async function cmdStatus(storage: string, io: CliIo): Promise<number> {
     io.err(`No state file in ${path.join(storage, STORAGE_DIR)}. Is Homebridge running with Busy Light?`);
     return 1;
   }
-  if (state.status && isStatusKey(state.status)) {
+  if (state.status === 'notWorking') {
+    io.out(notWorkingLine());
+  } else if (state.status && isStatusKey(state.status)) {
     const until = state.reason?.until ? Date.parse(state.reason.until) : null;
     io.out(statusLine(STATUS_NAMES[state.status], state.reason ? { source: state.reason.source, until } : null, (io.now ?? Date.now)()));
   } else {

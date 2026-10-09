@@ -170,6 +170,20 @@ test('GET /v1/status says nothing about calendars or events (18.10 item 3): a re
   assert.equal((await signedGet(api, clock.now() + 4)).body.reason, null);
 });
 
+test('while the Working switch is off a sender sees notWorking, which it cannot send (18.10 item 3, SPEC 6.6)', async () => {
+  const api = setup();
+  await engine!.setWorking(false);
+  const report = await send(api, 'POST', '/v1/status', body({ sender: MAC, status: 'inCall' }), plain());
+  assert.deepEqual([report.status, report.body.status], [200, 'notWorking']);
+  const answer = await signedGet(api);
+  assert.equal(answer.body.status, 'notWorking');
+  assert.equal(answer.body.reason, null);
+  assert.equal((answer.body.senders as unknown[]).length, 1, 'the report is kept');
+  assert.equal((await send(api, 'POST', '/v1/status', body({ sender: MAC, status: 'notWorking' }), plain())).body.error, 'invalid_status');
+  await engine!.setWorking(true);
+  assert.equal((await signedGet(api)).body.status, 'inCall');
+});
+
 test('a signature over a body that differs by one byte is refused; parameters in either order are accepted', async () => {
   const api = setup();
   const b = body({ sender: 'A', status: 'busy' });

@@ -9,7 +9,7 @@ import type { Auth, NewReport, Via } from './inputs.js';
 import { LifxClient } from './lifx.js';
 import { LightController } from './light.js';
 import type { Log } from './log.js';
-import { noCalendars, senderCleared, senderExpired, senderReports, startup, statusLine, statusUnknown } from './messages.js';
+import { noCalendars, senderCleared, senderExpired, senderReports, startup, statusLine, statusUnknown, workingOff, workingOn } from './messages.js';
 import { STATUS_NAMES } from './model.js';
 import type { Status } from './model.js';
 import { SourceRunner } from './sources.js';
@@ -17,7 +17,7 @@ import { readInstanceId } from './status-api.js';
 import { writeState } from './state.js';
 import type { AddressChange, StateFile } from './state.js';
 import { freshData, nextBoundary, resolve } from './status.js';
-import type { InputReport, Reason } from './status.js';
+import type { InputReport, Reason, Resolution } from './status.js';
 
 /** Time and timers, replaced in tests. */
 export interface Clock {
@@ -90,6 +90,8 @@ export interface EngineOptions {
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   /** The override switch's state at startup. */
   override?: boolean;
+  /** The Working switch's state at startup (SPEC 6.6); without the switch, working. */
+  working?: boolean;
   /** Called on every status change, to update the sensors. */
   onStatus?: (status: Status) => void;
 }
@@ -116,6 +118,8 @@ export class BusyLightEngine {
   status: Status | null = null;
   reason: Reason | null = null;
   override: boolean;
+  /** False while the Working switch is off (SPEC 6.6). */
+  working: boolean;
 
   private readonly config: BusyLightConfig;
   private readonly clock: Clock;
@@ -136,6 +140,7 @@ export class BusyLightEngine {
     this.clock = options.clock ?? systemClock;
     this.log = options.log;
     this.override = options.override ?? false;
+    this.working = options.working ?? true;
     this.boundaryTimer = new ClockTimer(this.clock);
     this.expiryTimer = new ClockTimer(this.clock);
     const ics = { outOfOfficeWords: this.config.outOfOfficeWords, ownerAddresses: ownerAddresses(this.config) };
@@ -184,6 +189,10 @@ export class BusyLightEngine {
       this.config.sensors.length));
     if (this.sources.length === 0) {
       this.log.warn(noCalendars());
+    }
+    if (!this.working) {
+      // Restored off: the log says why the light is off (SPEC 6.6 item 3).
+      this.log.info(workingOff(this.config.name));
     }
     for (const source of this.sources) {
       source.startSignInIfNeeded();
@@ -254,6 +263,19 @@ export class BusyLightEngine {
     return this.status ?? 'unknown';
   }
 
+  /**
+   * The Working switch turned on or off (SPEC 6.6): its line when the state changes, then the status at once. Off is
+   * `notWorking`, above every rule; on resolves as usual.
+   */
+  setWorking(on: boolean): Promise<void> {
+    if (on !== this.working) {
+      this.working = on;
+      this.log.info(on ? workingOn(this.config.name) : workingOff(this.config.name));
+    }
+    this.writeState();
+    return this.applyStatus();
+  }
+
   /** Turns the override on or off and resolves again at once (SPEC 7 item 5). */
   setOverride(on: boolean): Promise<void> {
     this.override = on;
@@ -284,8 +306,10 @@ export class BusyLightEngine {
       this.log.info(senderExpired(sender));
     }
     const inputsOn = this.config.statusInput.enabled || this.config.callSwitch.enabled;
-    const result = resolve(this.sources.map((s) => s.data()), this.override, now, this.resolveOptions,
-      { on: inputsOn, reports: this.reports(now) });
+    // The Working switch off comes before every rule (SPEC 6.6); reports and boundaries are still tracked.
+    const result: Resolution | { status: 'notWorking'; reason: null } = this.working
+      ? resolve(this.sources.map((s) => s.data()), this.override, now, this.resolveOptions, { on: inputsOn, reports: this.reports(now) })
+      : { status: 'notWorking', reason: null };
     const changed = result.status !== this.status;
     this.reason = result.reason;
     if (changed) {
@@ -294,7 +318,8 @@ export class BusyLightEngine {
         if (this.sources.length > 0) {
           this.log.warn(statusUnknown());
         }
-      } else {
+      } else if (result.status !== 'notWorking') {
+        // Not working has the Working lines instead (SPEC 6.6 item 3).
         this.log.info(statusLine(STATUS_NAMES[result.status], result.reason, now));
       }
       this.options.onStatus?.(result.status);
@@ -326,12 +351,13 @@ export class BusyLightEngine {
     return this.light.enabled && every > 0 && this.lastSendAt !== null && now - this.lastSendAt >= every;
   }
 
+  /** Sends a status's color; not working turns the light off, whatever the Offline color (SPEC 6.6 item 1). */
   private async send(status: Exclude<Status, 'unknown'>, durationMs: number, now: number): Promise<void> {
     if (!this.light.enabled) {
       return;
     }
     this.lastSendAt = now;
-    await this.light.send(this.config.colors[status], durationMs);
+    await this.light.send(status === 'notWorking' ? 'off' : this.config.colors[status], durationMs);
   }
 
   /**

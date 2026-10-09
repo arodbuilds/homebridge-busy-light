@@ -34,7 +34,8 @@ export interface StatusInputEntry {
 export interface StatusData {
   version: 1;
   updatedAt: string;
-  status: StatusKey | 'unknown' | null;
+  /** `notWorking` while the Working switch is off (SPEC 6.6, from build 3.2). */
+  status: StatusKey | 'unknown' | 'notWorking' | null;
   reason: { source: string | null; until: string | null; app?: string } | null;
   override: boolean;
   sources: StatusSource[];

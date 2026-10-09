@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   addressChanged,
   callSwitchTimeout, calendarsNotInUse, inputClockOff, inputFailed, inputNotLocal, inputPlainKeyOff, inputStarted, inputWrongKey,
-  formatTime, formatWhen, listedCalendarGone, repeatLimit, senderCleared, senderExpired, senderReports, statusLine,
+  formatTime, formatWhen, listedCalendarGone, repeatLimit, senderCleared, senderExpired, senderReports, statusLine, workingOff, workingOn,
 } from '../src/messages.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -87,4 +87,9 @@ test('until times carry their day when they are not today (SPEC 12 {when}, 11.3 
   assert.ok(line.endsWith('until {when}).'));
   assert.equal(statusLine('Available', { source: null, until: at(9, 9) }, now), `Status: Available (until tomorrow at ${formatTime(at(9, 9))}).`);
   assert.equal(statusLine('In a meeting', { source: 'Work', until: at(8, 15, 30) }, now), `Status: In a meeting (Work, until ${formatTime(at(8, 15, 30))}).`);
+});
+
+test('the Working lines are verbatim from SPEC section 12', () => {
+  assert.equal(workingOff('Busy Light'), specLine('Working off').replace('{name}', 'Busy Light'));
+  assert.equal(workingOn('Busy Light'), specLine('Working on').replace('{name}', 'Busy Light'));
 });

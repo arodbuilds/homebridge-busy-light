@@ -53,6 +53,15 @@ export function renderRightNow(app: App, container: HTMLElement): void {
   }
   if (status.status === 'unknown') {
     container.appendChild(el('div', { class: 'alert alert-warning py-2 px-3 mb-2 bl-now-unknown', role: 'status' }, RIGHT_NOW.unknown));
+  } else if (status.status === 'notWorking') {
+    // The Working switch is off (SPEC 6.6): the light is off, so the Off swatch.
+    container.appendChild(el('div', { class: 'bl-now bl-now-not-working', role: 'status' },
+      swatch('off'),
+      el('div', { class: 'bl-now-text' },
+        el('div', { class: 'bl-now-name' }, RIGHT_NOW.notWorking),
+        el('div', { class: 'form-text bl-now-line' }, RIGHT_NOW.notWorkingLine),
+      ),
+    ));
   } else {
     container.appendChild(el('div', { class: 'bl-now', role: 'status' },
       swatch(app.saved.colors[status.status]),
