@@ -6,7 +6,7 @@
 import type { App } from '../app.js';
 import { RIGHT_NOW, STATUS_NAMES } from '../copy.js';
 import { el, paragraph } from '../dom.js';
-import { formatTime, parseDate, relativeTime } from '../format.js';
+import { formatWhen, parseDate, relativeTime } from '../format.js';
 
 /** A state file older than this means the plugin has stopped writing it (SPEC 10.1: at least once a minute). */
 export const STALE_MS = 5 * 60 * 1000;
@@ -29,10 +29,12 @@ export function reasonLine(status: NonNullable<App['status']>): string {
   if (source && status.reason?.app && !until) {
     return RIGHT_NOW.fromApp(source, status.reason.app);
   }
+  // The time carries its day when it is not today (SPEC 11.3 B and G).
+  const now = new Date(Date.now());
   if (source) {
-    return until ? RIGHT_NOW.until(formatTime(until), source) : RIGHT_NOW.from(source);
+    return until ? RIGHT_NOW.until(formatWhen(until, now), source) : RIGHT_NOW.from(source);
   }
-  return until ? RIGHT_NOW.nothingUntil(formatTime(until)) : RIGHT_NOW.nothingNow;
+  return until ? RIGHT_NOW.nothingUntil(formatWhen(until, now)) : RIGHT_NOW.nothingNow;
 }
 
 export function renderRightNow(app: App, container: HTMLElement): void {

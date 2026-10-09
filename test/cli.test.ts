@@ -150,6 +150,19 @@ test('status prints the state file in plain words', async () => {
   ]);
 });
 
+test('status shows an until time with its day when it is not today (SPEC 10.2 item 1)', async () => {
+  writeConfig({ calendars: [{ type: 'url', name: 'Rota', url: FEED }] });
+  fs.mkdirSync(path.join(storage, 'busy-light'));
+  const tomorrow = new Date(new Date(T0).getFullYear(), new Date(T0).getMonth(), new Date(T0).getDate() + 1, 9).getTime();
+  fs.writeFileSync(path.join(storage, 'busy-light', 'state.json'), JSON.stringify({
+    version: 1, updatedAt: new Date(T0).toISOString(), status: 'available', reason: { source: null, until: new Date(tomorrow).toISOString() },
+    override: false, sources: [], signIn: null,
+    light: { enabled: false, label: null, host: null, found: null, lastSent: null, lastSentAt: null, answered: null },
+  }));
+  const { out } = await run('status');
+  assert.equal(out[0], `Status: Available (until tomorrow at ${formatTime(tomorrow)}).`);
+});
+
 test('status shows a waiting code and a refusal with the instructions', async () => {
   fs.mkdirSync(path.join(storage, 'busy-light'));
   fs.writeFileSync(path.join(storage, 'busy-light', 'state.json'), JSON.stringify({

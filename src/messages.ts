@@ -66,6 +66,36 @@ export function formatTime(ms: number): string {
     .replace(/[\u202f\u00a0]/g, ' ');
 }
 
+/** Calendar days from one time to another in the host's time zone: 0 the same day, 1 the next, and so on. */
+function calendarDays(from: number, to: number): number {
+  const day = (ms: number) => {
+    const d = new Date(ms);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  };
+  return Math.round((day(to) - day(from)) / 86_400_000);
+}
+
+/**
+ * A time with its day when it is not today (SPEC 12 `{when}`, 11.3 G): `{h:mm AM/PM}` today, `tomorrow at {time}`,
+ * `{weekday} at {time}` within the next 6 days, else `{Month day} at {time}`. Days are counted by the calendar in the
+ * host's time zone; weekdays and months are named in English, as every word around them is.
+ */
+export function formatWhen(ms: number, now: number): string {
+  const time = formatTime(ms);
+  const days = calendarDays(now, ms);
+  if (days === 0) {
+    return time;
+  }
+  if (days === 1) {
+    return `tomorrow at ${time}`;
+  }
+  const date = new Date(ms);
+  if (days > 1 && days <= 6) {
+    return `${date.toLocaleDateString('en-US', { weekday: 'long' })} at ${time}`;
+  }
+  return `${date.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} at ${time}`;
+}
+
 /** `light on at {host}`, `light on` while the bulb is still being found, or `light off`. */
 export function startup(version: string, calendars: number, light: { enabled: boolean; host: string | null }, sensors: number): string {
   const lightPart = !light.enabled ? 'off' : light.host ? `on at ${light.host}` : 'on';
@@ -76,14 +106,17 @@ export function noCalendars(): string {
   return 'No calendars are set up yet. Open the plugin settings to add one.';
 }
 
-/** `Status: In a meeting (Work, until 2:30 PM).` The parenthesis is left out with no reason, `until` with no time. */
-export function statusLine(displayName: string, reason: { source: string | null; until: number | null } | null): string {
+/**
+ * `Status: In a meeting (Work, until 2:30 PM).` The parenthesis is left out with no reason, `until` with no time. The
+ * time carries its day when it is not today, by the clock at `now` (`until tomorrow at 9:00 AM`).
+ */
+export function statusLine(displayName: string, reason: { source: string | null; until: number | null } | null, now = Date.now()): string {
   const parts: string[] = [];
   if (reason?.source) {
     parts.push(reason.source);
   }
   if (reason?.until != null) {
-    parts.push(`until ${formatTime(reason.until)}`);
+    parts.push(`until ${formatWhen(reason.until, now)}`);
   }
   return parts.length ? `Status: ${displayName} (${parts.join(', ')}).` : `Status: ${displayName}.`;
 }

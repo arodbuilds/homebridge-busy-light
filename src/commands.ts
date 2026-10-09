@@ -111,7 +111,7 @@ async function cmdStatus(storage: string, io: CliIo): Promise<number> {
   }
   if (state.status && isStatusKey(state.status)) {
     const until = state.reason?.until ? Date.parse(state.reason.until) : null;
-    io.out(statusLine(STATUS_NAMES[state.status], state.reason ? { source: state.reason.source, until } : null));
+    io.out(statusLine(STATUS_NAMES[state.status], state.reason ? { source: state.reason.source, until } : null, (io.now ?? Date.now)()));
   } else {
     io.out(statusUnknown());
   }
@@ -188,7 +188,7 @@ async function cmdCheck(storage: string, io: CliIo): Promise<number> {
     }
   }
   const result = resolve(runners.map((r) => r.data()), false, now, { ignoreAllDayBusy: config.ignoreAllDayBusy });
-  io.out(result.status === 'unknown' ? statusUnknown() : statusLine(STATUS_NAMES[result.status], result.reason));
+  io.out(result.status === 'unknown' ? statusUnknown() : statusLine(STATUS_NAMES[result.status], result.reason, now));
   for (const runner of runners) {
     runner.stop();
   }

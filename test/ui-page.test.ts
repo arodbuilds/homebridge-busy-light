@@ -157,6 +157,19 @@ describe('settings page: Right now (SPEC 11.3 B)', () => {
     assert.equal(await line({ status: 'doNotDisturb', override: true, reason: null }), 'The override switch is on.');
   });
 
+  it('an until time carries its day when it is not today: tomorrow, a weekday, a date (SPEC 11.3 B and G)', async () => {
+    const line = async (extra: Record<string, unknown>) => text((await rightNow(state(extra))).querySelector('.bl-now-line'));
+    // T is Thursday October 8, 2026; the days are counted in the browser's time zone.
+    const day = (n: number, hour: number) => {
+      const t = new Date(T);
+      return new Date(t.getFullYear(), t.getMonth(), t.getDate() + n, hour).toISOString();
+    };
+    assert.equal(await line({ status: 'available', reason: { source: null, until: day(1, 9) } }), 'Nothing on your calendars until tomorrow at 9:00 AM.');
+    assert.equal(await line({ status: 'available', reason: { source: null, until: day(4, 9) } }), 'Nothing on your calendars until Monday at 9:00 AM.');
+    assert.equal(await line({ reason: { source: 'Work', until: day(8, 9) } }), 'Until October 16 at 9:00 AM, from Work.');
+    assert.equal(await line({ status: 'inCall', reason: { source: 'Teams', until: day(1, 10) } }), 'Until tomorrow at 10:00 AM, from Teams.');
+  });
+
   it('no calendars saved, no state file yet, and Unknown in the warning tone (no swatch)', async () => {
     let row = await rightNow(state(), { platform: 'BusyLight' });
     assert.equal(text(row), copy.RIGHT_NOW.noCalendars);

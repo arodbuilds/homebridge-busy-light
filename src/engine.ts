@@ -295,7 +295,7 @@ export class BusyLightEngine {
           this.log.warn(statusUnknown());
         }
       } else {
-        this.log.info(statusLine(STATUS_NAMES[result.status], result.reason));
+        this.log.info(statusLine(STATUS_NAMES[result.status], result.reason, now));
       }
       this.options.onStatus?.(result.status);
       this.writeState();
