@@ -11,7 +11,8 @@
  * clicks Add calendar with the mouse while a new Outlook card's empty Address has focus, and expects the click to land
  * (SPEC 11.2 item 11); it also has the Working switch checkbox ticked, Warn before meetings set, a Copy button beside
  * an address line clicked, a Cleared sender beside an Expired one, and Right now in the meeting warning, with the
- * Working switch off and with a time on another day, each measured. It checks that secondary text and locked fields
+ * Working switch off and with a time on another day, each measured; and the LIFX bulbs card with a checkbox per bulb
+ * found, a saved bulb missing, and Test light's result for each bulb. It checks that secondary text and locked fields
  * keep 4.5:1 contrast, that nothing is wider than the frame, and that the frame itself never scrolls.
  *
  * It needs Playwright with Chromium and the Homebridge UI's own stylesheet, which are not dependencies of the plugin:
@@ -71,7 +72,7 @@ const CONFIG = {
   statusInput: { enabled: true, key: 'Synthetic-layout-key-0000000000000000000000', allowPlainKey: true },
   callSwitch: { enabled: true, hours: 3 },
   colors: { busy: '#1A2B3C' },
-  lifx: { enabled: true },
+  lifx: { enabled: true, bulbs: ['d073d5000001', 'Status Light'] },
   sensors: ['available', 'busyAny', 'outOfOffice'],
   workingSwitch: { enabled: true },
   meetingWarningSeconds: 120,
@@ -89,7 +90,10 @@ const ANSWERS = {
         error: 'calendar.example.com answered HTTP 404' },
       { id: 'cal-work', name: 'Work', type: 'microsoft', state: 'signInNeeded', lastChecked: null, events: null, error: 'waiting for sign-in' },
     ],
-    light: { enabled: true, label: 'Floor', host: '192.168.4.50', found: 'discovered', lastSent: '#FF0000', lastSentAt: null, answered: true },
+    lights: [
+      { enabled: true, label: 'Floor', host: '192.168.4.50', found: 'discovered', lastSent: '#FF0000', lastSentAt: null, answered: true },
+      { enabled: true, label: 'Status Light', host: '192.168.4.21', found: 'remembered', lastSent: '#FF0000', lastSentAt: null, answered: false },
+    ],
     inputs: [
       { sender: 'CallWatch on Alex’s iMac', status: 'inCall', app: 'Microsoft Teams', via: 'api', auth: 'signed',
         lastHeard: new Date(NOW - 30_000).toISOString(), expiresAt: new Date(NOW + 150_000).toISOString(), active: true, ended: null },
@@ -120,7 +124,8 @@ const ANSWERS = {
     { label: 'Floor', serial: 'd073d5000001', ip: '192.168.4.50' },
     { label: 'Desk', serial: 'd073d5000002', ip: '192.168.4.51' },
   ] },
-  '/lifx/test': { answered: false },
+  '/lifx/test': { answered: false, results: [{ label: 'Floor', host: '192.168.4.50', answered: true },
+    { label: null, host: null, answered: false }] },
 };
 
 /**
@@ -346,7 +351,10 @@ async function run() {
         await frame.waitForSelector('[data-card-id="icloud"] .bl-cal-row:nth-child(3)');
         await click('[data-card-id="cal-google"] .ns-footer-right button');
         await click('#section-lights .bl-search-again');
-        await frame.waitForSelector('#section-lights input[type="radio"]');
+        await frame.waitForSelector('#section-lights .bl-lifx-choice input[type="checkbox"]');
+        // Several bulbs (from build 3.2): Test light on each ticked bulb, one result per bulb.
+        await click('#section-lights .bl-lifx-card .ns-footer-right button');
+        await frame.waitForSelector('#section-lights .bl-lifx-results-list');
         await click('#section-lights .bl-lifx-card details summary');
         await click('#section-lights details.bl-all-sensors summary');
         // The status input: the port under Advanced, Replace key's question, a test result; a calendar card's own interval.
