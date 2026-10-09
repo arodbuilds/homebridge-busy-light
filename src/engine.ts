@@ -36,6 +36,44 @@ export const systemClock: Clock = {
   clearInterval: (h) => clearInterval(h as NodeJS.Timeout),
 };
 
+/** Node's largest timer delay, 2^31 - 1 ms (about 24.8 days); a longer one fires at once (SPEC 8.1 item 5). */
+export const MAX_TIMER_MS = 2_147_483_647;
+/** A timer that fires this close to its time counts as due (SPEC 8.1 item 5). */
+export const EARLY_MS = 1000;
+
+/**
+ * One timer for a time by the clock (SPEC 8.1 item 5): every delay is clamped to Node's maximum, and a timer that
+ * fires more than a second early is set again for the time left, so a far time never fires at once.
+ */
+export class ClockTimer {
+  private handle: unknown = null;
+
+  constructor(private readonly clock: Clock) {}
+
+  /** Calls `fn` at `at`, replacing any time set before. */
+  set(at: number, fn: () => void): void {
+    this.clear();
+    const arm = (): void => {
+      this.handle = this.clock.setTimeout(() => {
+        this.handle = null;
+        if (at - this.clock.now() > EARLY_MS) {
+          arm();
+        } else {
+          fn();
+        }
+      }, Math.min(MAX_TIMER_MS, Math.max(0, at - this.clock.now())));
+    };
+    arm();
+  }
+
+  clear(): void {
+    if (this.handle !== null) {
+      this.clock.clearTimeout(this.handle);
+      this.handle = null;
+    }
+  }
+}
+
 /** The state file is written at least this often (SPEC 10.1). */
 export const STATE_EVERY_MS = 60_000;
 /** Bulb transition on a status change; a refresh is instant (SPEC 13.1 item 4). */
@@ -84,11 +122,10 @@ export class BusyLightEngine {
   private readonly log: Log;
   private ticking = false;
   private queue: Promise<void> = Promise.resolve();
-  private boundaryTimer: unknown = null;
-  private expiryTimer: unknown = null;
+  private readonly boundaryTimer: ClockTimer;
+  private readonly expiryTimer: ClockTimer;
   private pollTimer: unknown = null;
   private stateTimer: unknown = null;
-  private lastTickAt = 0;
   private lastSendAt: number | null = null;
   private stopped = false;
   /** The status input server's state, set by the platform; without a server the input is not listening. */
@@ -99,10 +136,14 @@ export class BusyLightEngine {
     this.clock = options.clock ?? systemClock;
     this.log = options.log;
     this.override = options.override ?? false;
+    this.boundaryTimer = new ClockTimer(this.clock);
+    this.expiryTimer = new ClockTimer(this.clock);
     const ics = { outOfOfficeWords: this.config.outOfOfficeWords, ownerAddresses: ownerAddresses(this.config) };
     const now = () => this.clock.now();
     this.sources = this.config.calendars.map((config) => new SourceRunner({
       config, storageDir: options.storageDir, ics, log: this.log, now, sleep: options.sleep, onChange: () => this.writeState(),
+      // SPEC 8.1 item 3: the boundary timer follows the cached events as soon as they change, not when the tick ends.
+      onData: () => this.scheduleBoundary(this.clock.now()),
     }));
     this.inputs = new SenderStore(inputsFile(options.storageDir), (err) => this.log.debug(`Could not write inputs.json: ${err.message}`));
     const id = readInstanceId(options.storageDir);
@@ -160,13 +201,8 @@ export class BusyLightEngine {
         this.clock.clearInterval(timer);
       }
     }
-    for (const timer of [this.boundaryTimer, this.expiryTimer]) {
-      if (timer !== null) {
-        this.clock.clearTimeout(timer);
-      }
-    }
-    this.boundaryTimer = null;
-    this.expiryTimer = null;
+    this.boundaryTimer.clear();
+    this.expiryTimer.clear();
     for (const source of this.sources) {
       source.stop();
     }
@@ -180,7 +216,6 @@ export class BusyLightEngine {
     this.ticking = true;
     try {
       const now = this.clock.now();
-      this.lastTickAt = now;
       // SPEC 8.1 item 2: each source on its own interval, or the platform's when it has none.
       await Promise.all(this.sources.map((s) => s.runDue(now, (s.config.calendarSeconds ?? this.config.calendarSeconds) * 1000)));
       const bulbChosen = await this.light.maintain();
@@ -243,7 +278,8 @@ export class BusyLightEngine {
     if (this.stopped) {
       return;
     }
-    const now = Math.max(this.clock.now(), at ?? 0);
+    // A timer's time is the resolve's only when it fired within a second of it (SPEC 8.1 item 5).
+    const now = at !== undefined && at - this.clock.now() <= EARLY_MS ? Math.max(this.clock.now(), at) : this.clock.now();
     for (const sender of this.inputs.sweep(now)) {
       this.log.info(senderExpired(sender));
     }
@@ -269,24 +305,20 @@ export class BusyLightEngine {
     } else if (result.status !== 'unknown' && (resend || this.refreshDue(now))) {
       await this.send(result.status, resend ? CHANGE_DURATION_MS : 0, now);
     }
-    this.scheduleBoundary(now);
-    this.scheduleExpiry(now);
+    // From the clock after the send, which an offline bulb can hold up for seconds (SPEC 8.1 item 3).
+    const after = Math.max(this.clock.now(), now);
+    this.scheduleBoundary(after);
+    this.scheduleExpiry(after);
   }
 
   /** SPEC 18.7 item 3: one timer for the next report to expire, so the status changes the moment it does. */
   private scheduleExpiry(now: number): void {
-    if (this.expiryTimer !== null) {
-      this.clock.clearTimeout(this.expiryTimer);
-      this.expiryTimer = null;
-    }
     const next = this.inputs.nextExpiry();
     if (next === null) {
+      this.expiryTimer.clear();
       return;
     }
-    this.expiryTimer = this.clock.setTimeout(() => {
-      this.expiryTimer = null;
-      void this.applyStatus(next);
-    }, Math.max(0, next - now));
+    this.expiryTimer.set(Math.max(next, now), () => void this.applyStatus(next));
   }
 
   private refreshDue(now: number): boolean {
@@ -302,21 +334,21 @@ export class BusyLightEngine {
     await this.light.send(this.config.colors[status], durationMs);
   }
 
-  /** SPEC 8.1 item 3: one timer for the next event boundary, when that comes before the next tick. */
+  /**
+   * SPEC 8.1 item 3: one timer for the next event boundary, set after every apply and whenever a source's events
+   * change, whether or not the next tick comes first: a tick resolves only once its calendar checks finish.
+   */
   private scheduleBoundary(now: number): void {
-    if (this.boundaryTimer !== null) {
-      this.clock.clearTimeout(this.boundaryTimer);
-      this.boundaryTimer = null;
+    if (this.stopped) {
+      return;
     }
     const events = freshData(this.sources.map((s) => s.data()), now).events;
     const next = nextBoundary(events, now, this.resolveOptions);
-    if (next === null || next >= this.lastTickAt + this.pollMs) {
+    if (next === null) {
+      this.boundaryTimer.clear();
       return;
     }
-    this.boundaryTimer = this.clock.setTimeout(() => {
-      this.boundaryTimer = null;
-      void this.applyStatus(next);
-    }, next - now);
+    this.boundaryTimer.set(next, () => void this.applyStatus(next));
   }
 
   /** The state file of SPEC 10.1. */

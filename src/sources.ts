@@ -75,6 +75,8 @@ export interface SourceRunnerOptions {
   autoSignIn?: boolean;
   /** Called when the state, the sign-in code or the error changes, so the state file can be written. */
   onChange?: () => void;
+  /** Called when a read brought new events or presence, so the boundary timer can follow them (SPEC 8.1 item 3). */
+  onData?: () => void;
 }
 
 /** The `sources[]` entry of the state file (SPEC 10.1). */
@@ -282,6 +284,7 @@ export class SourceRunner {
     try {
       await read();
       part.succeed(this.now(), now + successInterval);
+      this.options.onData?.();
     } catch (err) {
       failure = toSourceError(err);
       delay = part.fail(this.now(), failure, this.config.type);

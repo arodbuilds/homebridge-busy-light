@@ -9,7 +9,7 @@ import { AddressWatcher } from './address-watch.js';
 import type { AddressDeps } from './addresses.js';
 import { parseConfig } from './config.js';
 import type { BusyLightConfig } from './config.js';
-import { BusyLightEngine, systemClock } from './engine.js';
+import { BusyLightEngine, ClockTimer, systemClock } from './engine.js';
 import type { Clock } from './engine.js';
 import { ensureStorageDir } from './files.js';
 import type { LifxClient } from './lifx.js';
@@ -64,7 +64,7 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
   private overrideAccessory: PlatformAccessory | null = null;
   /** The On a Call switch (SPEC 18.9), when enabled. Its context holds `callOnAt`, the time it was turned on. */
   private callAccessory: PlatformAccessory | null = null;
-  private callTimer: unknown = null;
+  private readonly callTimer: ClockTimer;
   private readonly clock: Clock;
 
   constructor(
@@ -76,6 +76,7 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
     const { config, issues } = parseConfig(rawConfig);
     this.config = config;
     this.clock = deps.clock ?? systemClock;
+    this.callTimer = new ClockTimer(this.clock);
     this.log = withDebug(log, config.debug);
     for (const issue of issues) {
       this.log[issue.level](validation(issue.path, issue.message));
@@ -303,18 +304,13 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
     return this.config.callSwitch.hours * 3_600_000;
   }
 
+  /** Clamped to Node's largest delay and set again when it fires early (SPEC 8.1 item 5), for a clock that was wrong. */
   private startCallTimer(onAt: number): void {
-    this.callTimer = this.clock.setTimeout(() => {
-      this.callTimer = null;
-      this.callTimedOut();
-    }, Math.max(0, onAt + this.callHoursMs - this.clock.now()));
+    this.callTimer.set(onAt + this.callHoursMs, () => this.callTimedOut());
   }
 
   private stopCallTimer(): void {
-    if (this.callTimer !== null) {
-      this.clock.clearTimeout(this.callTimer);
-      this.callTimer = null;
-    }
+    this.callTimer.clear();
   }
 
   /** The safety timeout (SPEC 18.9 item 3): the switch turns itself off and its report is withdrawn. */

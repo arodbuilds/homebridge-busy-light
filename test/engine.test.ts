@@ -2,7 +2,7 @@ import { afterEach, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { parseConfig } from '../src/config.js';
-import { BusyLightEngine } from '../src/engine.js';
+import { BusyLightEngine, MAX_TIMER_MS } from '../src/engine.js';
 import { ensureStorageDir } from '../src/files.js';
 import type { NewReport } from '../src/inputs.js';
 import { LifxClient, MSG, parseHeader } from '../src/lifx.js';
@@ -219,7 +219,72 @@ test('the boundary timer changes the status at the minute a meeting ends, with n
   assert.deepEqual(statuses, ['inMeeting', 'available']);
   assert.equal(fake.calls.length, calls);
   assert.equal(log.lines('info').at(-1), `Status: Available (until ${formatTime(end + 60 * MIN)}).`);
-  assert.deepEqual(clock.pending(), [], 'the next boundary is after the next tick');
+  assert.deepEqual(clock.pending().map((p) => p.at), [end + 60 * MIN], 'the next boundary, whether or not a tick comes first (SPEC 8.1 item 3)');
+});
+
+test('a meeting that starts while a calendar check waits on a slow server changes the status within one second of its start (SPEC 8.1 item 3)',
+  async () => {
+    const start = T0 + 5 * MIN;
+    make({ calendars: [{ type: 'url', name: 'Rota', url: FEED, calendarSeconds: 60 }], pollSeconds: 30 });
+    let release: (() => void) | null = null;
+    const feed = icsOf([['meeting', start, start + 30 * MIN]]);
+    fake.on('https://calendar.example.com/', (_call, index) => (index === 0 ? text(feed)
+      : new Promise<Response>((resolve) => {
+        release = () => resolve(text(feed));
+      })));
+    engine!.start();
+    await settle();
+    await engine!.idle();
+    assert.equal(engine!.status, 'available');
+    await clock.advance(5 * MIN - 1);
+    assert.equal(fake.callsTo('https://calendar.example.com/').length, 2, 'the second check is still waiting');
+    assert.equal(engine!.status, 'available');
+    await clock.advance(1000);
+    assert.equal(engine!.status, 'inMeeting', 'changed at the start, while the check waits');
+    release!();
+    await settle();
+  });
+
+test('the boundary timer is set from the clock after a send to an offline bulb (SPEC 8.1 item 3)', async () => {
+  const end = T0 + 30 * MIN;
+  class SlowBulb extends LifxClient {
+    override async sendColor(): Promise<boolean> {
+      clock.t += 3000; // three tries of each packet, unanswered
+      return false;
+    }
+  }
+  const { config } = parseConfig({ platform: 'BusyLight', calendars: [{ type: 'url', name: 'Rota', url: FEED }],
+    lifx: { enabled: true, host: DOOR.host } });
+  const statuses: [Status, number][] = [];
+  engine = new BusyLightEngine({ config, storageDir: dir, log: log.log, version: '0.1.0-beta.5', clock, lifx: new SlowBulb(),
+    onStatus: (s) => statuses.push([s, clock.t]) });
+  fake.on('https://calendar.example.com/', () => text(icsOf([['meeting', T0 - 30 * MIN, end]])));
+  clock.t = end - 10_000;
+  await engine.tick();
+  assert.deepEqual(clock.pending().map((p) => p.at), [end], 'at the end, not 3 seconds after it');
+  await clock.advance(10_000);
+  await engine.idle();
+  assert.deepEqual(statuses, [['inMeeting', end - 10_000], ['available', end]]);
+});
+
+test('every timer delay is at most Node\'s maximum, and a far expiry does not fire at once (SPEC 8.1 item 5)', async () => {
+  const far = T0 + 60 * 86_400_000;
+  fs.writeFileSync(`${dir}/inputs.json`, JSON.stringify({ version: 1, replay: [], senders: [{ sender: 'Far sender on a test Mac', status: 'doNotDisturb',
+    app: null, via: 'api', auth: 'signed', lastHeard: new Date(T0).toISOString(), expiresAt: new Date(far).toISOString(), active: true }] }));
+  make({ statusInput: { enabled: true, key: 'Synthetic-engine-key-000000000000000000000' } });
+  engine!.start();
+  await settle();
+  await engine!.idle();
+  assert.equal(engine!.status, 'doNotDisturb');
+  const delays = () => clock.pending().filter((p) => p.every === null).map((p) => p.at - clock.t);
+  assert.ok(delays().length > 0 && delays().every((d) => d <= MAX_TIMER_MS), String(delays()));
+  await clock.advance(MAX_TIMER_MS);
+  await engine!.idle();
+  assert.equal(engine!.status, 'doNotDisturb', 'the clamped timer fired early and was set again');
+  assert.ok(delays().every((d) => d > 0 && d <= MAX_TIMER_MS));
+  await clock.advance(far - clock.t);
+  await engine!.idle();
+  assert.equal(engine!.status, 'available', 'expired at its time');
 });
 
 test('the bulb is sent its color again every refreshSeconds, instantly, and never with 0', async () => {
