@@ -508,10 +508,14 @@ export class FakeDocument {
 
   /** The copy command of the clipboard fallback (plain http): counted, and it succeeds. */
   copies = 0;
+  /** What each copy took: the value of the clipboard textarea on the page at the time. */
+  copied: string[] = [];
 
   execCommand(command: string): boolean {
     if (command === 'copy') {
       this.copies++;
+      const area = this.body.querySelector('.ns-clipboard') as unknown as { value?: string } | null;
+      this.copied.push(area?.value ?? '');
     }
     return true;
   }

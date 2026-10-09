@@ -2,6 +2,28 @@
 
 All notable changes to Busy Light are recorded here. Versions follow [semantic versioning](https://semver.org).
 
+## 0.1.0-beta.4 (2026-10-08)
+
+What the first pass on a Raspberry Pi found. The configuration format does not change: every interval stays in seconds and every color stays saved, so an existing configuration loads and behaves exactly as before.
+
+### Added
+
+- Outlook or Microsoft 365 in Add calendar, with two options: Published calendar link (recommended: works with any Outlook or Microsoft 365 calendar with no IT approval, and shows busy, tentative and out of office) and Sign in with Microsoft 365 (for live Teams status, which needs IT approval). The published link adds a Calendar URL card named Outlook with the three steps to get the link from Outlook on the web.
+- How to get this link, collapsed, on any Calendar URL card whose address is an Outlook link.
+- A warning in the log, and a notice above the Address on the settings page until it is saved, when the IP address apps were given changes: "Homebridge's address changed from ... to .... Apps that use the old address need the new setup code."
+
+### Changed
+
+- Busy Light finds its name on the network the way a Mac or iPhone does, with one multicast DNS query, before trying the computer's own resolver. On the Homebridge Raspberry Pi image the name resolves to 127.0.0.1 on the Pi itself, so the settings page showed only the IP address; it now shows `http://homebridge.local:8582` first when the network confirms it. The settings page keeps the result for 10 minutes; `homebridge-busy-light input` checks for itself.
+- The setup code is masked like the key, and the key's Show and Hide reveal and mask both. Copy setup code copies the whole code either way.
+- Intervals are chosen as durations: Check for changes every on each calendar (1 to 10 minutes, or Same as Settings), Check status every (15 seconds to 4 minutes) and Reload calendars every (1 to 10 minutes). A value saved earlier that is not in a list, such as 90 seconds, is shown as "1 minute 30 seconds" and kept.
+- Colors shows the statuses your setup can produce: with calendars alone, Out of office, In a meeting, Tentative and Available. The other five wait behind "5 more statuses come from Teams or from other apps." and Show all statuses, and appear as you turn on the status input, the On a Call switch or Teams status. The per-status sensors list those statuses last, marked "Nothing in your setup reports this yet."
+- The README leads with the Outlook published calendar link for work calendars, with sign-in as the advanced option.
+
+### Removed
+
+- The "Teams only" badges on the Colors list.
+
 ## 0.1.0-beta.3 (2026-10-08)
 
 Status from other apps. Other apps on your home network can now tell Busy Light you are on a call or busy, and the Home app gets an optional On a Call switch. Each calendar can have its own check interval, and colors are chosen from presets. A configuration written by an earlier beta keeps working unchanged, with the new features off.

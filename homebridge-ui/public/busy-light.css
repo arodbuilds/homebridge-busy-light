@@ -406,6 +406,15 @@
   margin-top: 0;
 }
 
+/* The statuses the setup cannot produce wait behind one line below the rows (SPEC 11.3 D, from build 3.1). */
+.busy-light-ui .bl-more-statuses {
+  margin: 0.75rem 0 0;
+}
+
+.busy-light-ui .bl-more-statuses .ns-link-button {
+  font-size: inherit;
+}
+
 .bl-precedence {
   margin: 0.75rem 0 0.5rem;
 }

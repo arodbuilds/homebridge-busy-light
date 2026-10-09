@@ -5,6 +5,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { API, CharacteristicValue, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig, Service } from 'homebridge';
+import { AddressWatcher } from './address-watch.js';
+import type { AddressDeps } from './addresses.js';
 import { parseConfig } from './config.js';
 import type { BusyLightConfig } from './config.js';
 import { BusyLightEngine, systemClock } from './engine.js';
@@ -18,6 +20,7 @@ import { callSwitchTimeout, validation } from './messages.js';
 import { SENSOR_NAMES, SENSOR_STATUSES } from './model.js';
 import type { SensorKey, Status } from './model.js';
 import { PLATFORM_NAME, PLUGIN_NAME, RESET_MARKER, packageVersion } from './names.js';
+import { readState } from './state.js';
 import { StatusInputServer } from './status-api.js';
 import type { InputServerOptions } from './status-api.js';
 
@@ -44,6 +47,8 @@ export interface PlatformDeps {
   clock?: Clock;
   lifx?: LifxClient;
   createServer?: InputServerOptions['createServer'];
+  /** The host name check of the address change notice (SPEC 18.11), replaced in tests. */
+  addresses?: AddressDeps;
 }
 
 export class BusyLightPlatform implements DynamicPlatformPlugin {
@@ -51,6 +56,8 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
   engine: BusyLightEngine | null = null;
   /** The status API (SPEC 18.3), while `statusInput.enabled` is on. */
   inputServer: StatusInputServer | null = null;
+  /** The address change notice (SPEC 18.11 item 6), while `statusInput.enabled` is on. */
+  addressWatcher: AddressWatcher | null = null;
   private readonly log: Log;
   private readonly cached = new Map<string, PlatformAccessory>();
   private readonly sensors = new Map<SensorKey, Service>();
@@ -82,6 +89,7 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
     });
     this.api.on('shutdown', () => {
       this.inputServer?.stop();
+      this.addressWatcher?.stop();
       this.stopCallTimer();
       this.engine?.stop();
     });
@@ -94,6 +102,9 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
   start(): void {
     const storageDir = ensureStorageDir(this.api.user.storagePath());
     this.resetIfPending(storageDir);
+    // The address senders were last given, from the previous state file, before the engine writes a new one.
+    const previous = readState(storageDir)?.statusInput;
+    const record = { advertised: previous?.advertised ?? null, addressChange: previous?.addressChange ?? null };
     this.setupAccessories();
     this.engine = new BusyLightEngine({
       config: this.config,
@@ -105,6 +116,8 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
       override: this.overrideAccessory?.context.override === true,
       onStatus: (status) => this.showStatus(status),
     });
+    const id = this.engine.inputServerStatus().id;
+    this.engine.inputServerStatus = () => ({ listening: false, error: null, id, ...record });
     this.engine.start();
     this.restoreCallSwitch();
     if (this.config.statusInput.enabled) {
@@ -118,8 +131,13 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
         createServer: this.deps.createServer,
       });
       const server = this.inputServer;
-      this.engine.inputServerStatus = () => ({ ...server.state, id: server.id });
+      const watcher = new AddressWatcher({
+        log: this.log, previous: record, addresses: this.deps.addresses, now: this.deps.clock?.now, onChange: () => this.engine?.writeState(),
+      });
+      this.addressWatcher = watcher;
+      this.engine.inputServerStatus = () => ({ ...server.state, id: server.id, ...watcher.record() });
       void server.start().then(() => this.engine?.writeState());
+      watcher.start();
     }
   }
 

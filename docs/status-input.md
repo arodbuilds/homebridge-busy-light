@@ -9,7 +9,7 @@ There are two ways in:
 
 Both lead to the same place: Busy Light combines what senders report with your calendars and Microsoft Teams status, and the light and the Home app sensors follow.
 
-Status of this document: describes Busy Light 0.1.0-beta.3, the first version with the status API (API version 1) and the On a Call switch. Written October 8, 2026 and revised the same day (signed requests, names in Unicode, `clear`, finding Busy Light by name, sending from a laptop that leaves home, replay memory, the plain key setting and sender restarts), then updated for what the build settled: the error messages, `null` fields, the body as an object, and the order of the checks. Section and rule numbers refer to Busy Light's `SPEC.md`, section 18.
+Status of this document: describes Busy Light 0.1.0-beta.4. The status API (API version 1) and the On a Call switch came in 0.1.0-beta.3; 0.1.0-beta.4 finds Busy Light by name more reliably (section 2.1) and changes nothing a sender sends or receives. Written October 8, 2026 and revised the same day (signed requests, names in Unicode, `clear`, finding Busy Light by name, sending from a laptop that leaves home, replay memory, the plain key setting and sender restarts), then updated for what the build settled: the error messages, `null` fields, the body as an object, and the order of the checks. Section and rule numbers refer to Busy Light's `SPEC.md`, section 18.
 
 ## 1. What a sender can report
 
@@ -40,7 +40,7 @@ Busy Light only ever learns the status, an optional app name and the sender's na
 
 The status API is off until the user turns it on in Busy Light's settings, under **Status from other apps**. The page then shows:
 
-1. The address. When the Homebridge computer has a name on the network, the address uses it, for example `http://homebridge.local:8582`, so it keeps working when the router hands out a new IP address. The IP address, for example `http://192.168.4.10:8582`, is listed as well. The port is 8582 unless the user changed it.
+1. The address. When Busy Light can confirm its name on the network, the address uses it, for example `http://homebridge.local:8582`, so it keeps working when the router hands out a new IP address. Busy Light confirms the name the way your app would find it: one multicast DNS query for the name, answered with one of its own addresses (from 0.1.0-beta.4; before, a Raspberry Pi whose name resolves to 127.0.0.1 on the Pi itself was never confirmed). The IP address, for example `http://192.168.4.10:8582`, is listed as well. The port is 8582 unless the user changed it.
 2. A key: 43 random characters. Treat it like a password.
 3. A setup code combining the address, the key and Busy Light's id, to copy into your app in one step:
 
@@ -50,7 +50,7 @@ busylight://homebridge.local:8582/?key=Rk7fJ3...&id=q3Lr8vT0cXw2mN5a
 
 The user can also print it on the Homebridge computer with `homebridge-busy-light input --setup-code`.
 
-Parse it as a URL: the host (a name, an IPv4 address, or an IPv6 address in brackets) and port are the address, `key` is the key, `id` is this Busy Light's id (section 2.7), and the scheme tells you it is a Busy Light setup code. Accept it pasted with surrounding spaces. Keep the host as given; do not resolve a name once and store the IP address, or a router change breaks your app again.
+The setup code's host is the name when Busy Light can confirm it, and otherwise the first IPv4 address. Parse it as a URL: the host (a name, an IPv4 address, or an IPv6 address in brackets) and port are the address, `key` is the key, `id` is this Busy Light's id (section 2.7), and the scheme tells you it is a Busy Light setup code. Accept it pasted with surrounding spaces. Keep the host as given; do not resolve a name once and store the IP address, or a router change breaks your app again.
 
 The user can replace the key at any time, which disconnects every sender until it gets the new one. Show a clear message when you receive `401 unauthorized`.
 

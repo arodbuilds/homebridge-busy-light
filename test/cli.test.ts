@@ -9,7 +9,7 @@ import { LifxClient, MSG, hexToHsb, parseHeader } from '../src/lifx.js';
 import { parseConfig } from '../src/config.js';
 import { ADMIN_HELP_URL, formatTime } from '../src/messages.js';
 import { signature } from '../src/status-api.js';
-import { FakeFetch, FakeNetwork, icsOf, json, networkError, text, tmpDir } from './helpers.js';
+import { FakeFetch, FakeMdns, FakeNetwork, icsOf, json, mdnsAnswer, mdnsQueryOf, networkError, text, tmpDir } from './helpers.js';
 
 const MIN = 60_000;
 const T0 = Date.UTC(2026, 9, 8, 15);
@@ -41,8 +41,9 @@ function writeConfig(block: Record<string, unknown>): void {
   }));
 }
 
-/** The host's network as the `input` command sees it, replaced in tests (SPEC 15 item 20). */
-let addresses: AddressDeps = {};
+/** The host's network as the `input` command sees it, replaced in tests (SPEC 15 item 20): no UDP, no resolver. */
+const silentMdns = new FakeMdns();
+let addresses: AddressDeps = { createSocket: silentMdns.factory, mdnsWaitMs: 10, lookup: async () => [] };
 
 async function run(...argv: string[]): Promise<{ code: number; out: string[]; err: string[] }> {
   const out: string[] = [];
@@ -304,6 +305,8 @@ const PI_NETWORK: AddressDeps = {
     lo: [{ address: '127.0.0.1', family: 'IPv4', internal: true, netmask: '255.0.0.0', mac: '00:00:00:00:00:00', cidr: '127.0.0.1/8' }],
     eth0: [{ address: '192.168.4.10', family: 'IPv4', internal: false, netmask: '255.255.255.0', mac: '02:00:00:00:00:01', cidr: '192.168.4.10/24' }],
   }),
+  createSocket: silentMdns.factory,
+  mdnsWaitMs: 10,
   lookup: async (name) => (name === 'homebridge.local' ? [{ address: '192.168.4.10', family: 4 }] : []),
 };
 
@@ -344,6 +347,20 @@ test('input: on or off, the port, the id, the addresses by host name and IP, and
     `  Test on my laptop: Busy, plain key, last heard ${formatTime(T0 - 60_000)}, active.`,
   ]);
   assert.ok(!out.join('\n').includes(KEY), 'no key without --setup-code');
+});
+
+test('input on the Pi: the name resolves to 127.0.0.1 locally, and the CLI confirms it by multicast DNS itself (SPEC 18.11)', async () => {
+  const mdns = new FakeMdns();
+  mdns.answer = (query) => {
+    const { id, name } = mdnsQueryOf(query);
+    return [mdnsAnswer(id, name, [{ name, address: '192.168.4.10' }])];
+  };
+  addresses = { ...PI_NETWORK, createSocket: mdns.factory, lookup: async () => [{ address: '127.0.0.1', family: 4 }] };
+  writeConfig({ statusInput: { enabled: true, key: KEY } });
+  const { code, out } = await run('input');
+  assert.equal(code, 0);
+  assert.deepEqual(out.filter((l) => l.startsWith('Address:')), ['Address: http://homebridge.local:8582', 'Address: http://192.168.4.10:8582']);
+  assert.equal(mdns.sent.length, 1, 'one query, sent by the CLI');
 });
 
 test('input with the status input off and nothing reported yet', async () => {

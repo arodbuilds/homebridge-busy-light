@@ -111,13 +111,17 @@ export const DEFAULTS = {
 
 /** The limits of SPEC 9.1, for the number fields and their messages. */
 export const LIMITS = {
-  pollSeconds: [15, 240],
-  calendarSeconds: [60, 600],
   brightness: [1, 100],
   refreshSeconds: [0, 86400],
   port: [1024, 65535],
   hours: [1, 12],
-  sourceCalendarSeconds: [60, 600],
+} as const;
+
+/** The durations the interval selects offer, in seconds (SPEC 11.3 C and F); `config.json` keeps seconds. */
+export const INTERVALS = {
+  pollSeconds: [15, 30, 60, 120, 240],
+  calendarSeconds: [60, 120, 180, 300, 600],
+  sourceCalendarSeconds: [60, 120, 180, 300, 600],
 } as const;
 
 const KNOWN = new Set([

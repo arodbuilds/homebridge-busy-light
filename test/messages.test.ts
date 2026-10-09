@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  addressChanged,
   callSwitchTimeout, calendarsNotInUse, inputClockOff, inputFailed, inputNotLocal, inputPlainKeyOff, inputStarted, inputWrongKey,
   listedCalendarGone, senderCleared, senderExpired, senderReports,
 } from '../src/messages.js';
@@ -53,6 +54,11 @@ test('the build 3 status input lines are verbatim from SPEC section 12', () => {
   assert.equal(inputClockOff('192.168.4.20', 301), specLine('Clock off').replace('{ip}', '192.168.4.20').replace('{n}', '301'));
   assert.equal(inputPlainKeyOff('192.168.4.20'), specLine('Plain key off').replace('{ip}', '192.168.4.20'));
   assert.equal(inputNotLocal('203.0.113.9'), specLine('Not local').replace('{ip}', '203.0.113.9'));
+});
+
+test('the address change line is verbatim from SPEC section 12', () => {
+  assert.equal(addressChanged('192.168.4.10', '192.168.4.23'),
+    specLine('Address changed').replace('{old}', '192.168.4.10').replace('{new}', '192.168.4.23'));
 });
 
 test('the On a Call timeout line is verbatim from SPEC section 12, singular for 1', () => {

@@ -4,8 +4,12 @@
  * classes, its stylesheet loaded after the page's and its `body { height: unset }` rule, and no `data-bs-theme`), in
  * the host's light and dark themes at 800 and 390 pixels, with every card, the chooser, the disclosures, the Reset
  * dialog and the summary box open, and the Status from other apps section on with its Replace key question, a test
- * result and a sender of each kind listed (SPEC 15 item 19). It checks that secondary text and locked fields keep 4.5:1 contrast, that nothing
- * is wider than the frame, and that the frame itself never scrolls.
+ * result and a sender of each kind listed (SPEC 15 item 19). From build 3.1 it also has the chooser's two Outlook
+ * options, a new Outlook card and an existing Outlook address with How to get this link open, the interval selects
+ * with a saved value not in their list, the address change notice, and the Colors list measured collapsed and
+ * expanded once the status input, the On a Call switch and Teams status are turned off on the page. It checks that
+ * secondary text and locked fields keep 4.5:1 contrast, that nothing is wider than the frame, and that the frame
+ * itself never scrolls.
  *
  * It needs Playwright with Chromium and the Homebridge UI's own stylesheet, which are not dependencies of the plugin:
  *   HOMEBRIDGE_UI_CSS=/path/to/homebridge-config-ui-x/public/styles-*.css npm run test:layout
@@ -58,7 +62,9 @@ const CONFIG = {
     { type: 'microsoft', id: 'cal-work', name: 'Work', tenantId: '11111111-2222-3333-4444-555555555555',
       clientId: '66666666-7777-8888-9999-000000000000', useTeamsStatus: true, useCalendar: true },
     { type: 'url', id: 'cal-rota', name: 'Team rota', url: 'https://rota.example.net/synthetic.ics', use: 'outOfOffice', calendarSeconds: 600 },
+    { type: 'url', id: 'cal-office', name: 'Office', url: 'https://outlook.office365.com/owa/calendar/synthetic/reachcalendar.ics', calendarSeconds: 90 },
   ],
+  pollSeconds: 90,
   statusInput: { enabled: true, key: 'Synthetic-layout-key-0000000000000000000000', allowPlainKey: true },
   callSwitch: { enabled: true, hours: 3 },
   colors: { busy: '#1A2B3C' },
@@ -68,7 +74,7 @@ const CONFIG = {
 
 const NOW = Date.now();
 const ANSWERS = {
-  '/version': { version: '0.1.0-beta.3' },
+  '/version': { version: '0.1.0-beta.4' },
   '/status': {
     version: 1, updatedAt: new Date(NOW - 20_000).toISOString(), status: 'inMeeting',
     reason: { source: 'Work', until: new Date(NOW + 1_800_000).toISOString() }, override: false, signIn: null,
@@ -89,7 +95,8 @@ const ANSWERS = {
         expiresAt: null, active: true },
     ],
   },
-  '/input/info': { hostname: null, addresses: ['192.168.4.10', 'fd00:1234:5678:9abc::10'], port: 8582, id: 'q3Lr8vT0cXw2mN5a' },
+  '/input/info': { hostname: null, addresses: ['192.168.4.10', 'fd00:1234:5678:9abc::10'], port: 8582, id: 'q3Lr8vT0cXw2mN5a',
+    addressChange: { from: '192.168.4.23', to: '192.168.4.10' } },
   '/input/test': { error: 'notListening', message: 'Nothing is listening on port 8582.' },
   '/icloud/calendars': { calendars: [
     { id: '/123456789/calendars/home/', name: 'Alex', shared: false, subscribed: false, eventsToday: 3 },
@@ -306,9 +313,11 @@ async function run() {
           await fit();
         };
         // Open every card, list the iCloud calendars, test the Google address, show the Microsoft code, search for bulbs.
-        for (const id of ['icloud', 'cal-google', 'cal-work', 'cal-rota']) {
+        for (const id of ['icloud', 'cal-google', 'cal-work', 'cal-rota', 'cal-office']) {
           await click(`[data-card-id="${id}"] .ns-card-toggle`);
         }
+        await click('[data-card-id="cal-office"] details.bl-outlook-howto summary');
+        await click('[data-card-id="cal-office"] .bl-source-advanced summary');
         await click('[data-card-id="icloud"] .ns-footer-right button');
         await frame.waitForSelector('[data-card-id="icloud"] .bl-cal-row:nth-child(3)');
         await click('[data-card-id="cal-google"] .ns-footer-right button');
@@ -326,31 +335,56 @@ async function run() {
         // Colors: Off on one row and Custom on another, with Busy already a custom color.
         await click('#section-colors [data-path="colors.inMeeting"] button.bl-preset-off');
         await click('#section-colors [data-path="colors.outOfOffice"] button.bl-preset-custom');
+        // A published Outlook link added from the chooser, then the chooser open again on its two Outlook options.
         await click('#section-calendars .ns-section-add');
+        await click('#section-calendars .ns-chooser-tile[data-type="microsoft"]');
+        await click('#section-calendars .bl-outlook-published');
+        // Paste the link, as a person would; leaving the empty field would show its message and move Add under the pointer.
+        // TODO(alex): the shell's validation on blur (homebridge-ui/src/main.ts, focusout) moves a button below an empty
+        // required field before the mouse is released, so that click is lost; left as it is in build 3.1 (SPEC 17).
+        const address = frame.locator('#section-calendars input:focus');
+        await address.fill('https://outlook.office365.com/owa/calendar/synthetic/second.ics');
+        await address.press('Tab');
+        await fit();
+        await click('#section-calendars .ns-section-add');
+        await click('#section-calendars .ns-chooser-tile[data-type="microsoft"]');
+        // Settings: the interval selects, and a cleared Name for the summary box.
         await click('#section-settings details summary');
-        const poll = frame.locator('[data-path="pollSeconds"] input');
-        await poll.click();
-        await poll.fill('5');
-        await click('[data-path="name"] input');
+        const name = frame.locator('[data-path="name"] input');
+        await name.click();
+        await name.fill('');
+        await click('[data-path="outOfOfficeWords"] input');
         await click('#section-settings .ns-danger-link');
         await click('[data-card-id="cal-work"] .ns-footer-right button');
         await frame.waitForSelector('.bl-code-view');
         await fit();
-        const { problems, checked } = await frame.evaluate(measure);
-        problems.push(...errors.map((e) => `page error: ${e}`));
-        const label = `${themeName} ${width}px`;
-        if (problems.length) {
-          failed += problems.length;
-          console.log(`not ok ${label}: ${checked} elements checked`);
-          for (const p of problems) {
-            console.log(`  ${p}`);
+        const report = async (label, shot) => {
+          const { problems, checked } = await frame.evaluate(measure);
+          problems.push(...errors.splice(0).map((e) => `page error: ${e}`));
+          if (problems.length) {
+            failed += problems.length;
+            console.log(`not ok ${label}: ${checked} elements checked`);
+            for (const p of problems) {
+              console.log(`  ${p}`);
+            }
+          } else {
+            console.log(`ok ${label}: ${checked} elements checked, nothing wider than the frame, the frame does not scroll`);
           }
-        } else {
-          console.log(`ok ${label}: ${checked} elements checked, nothing wider than the frame, the frame does not scroll`);
-        }
-        if (process.env.LAYOUT_SCREENSHOTS) {
-          await page.screenshot({ path: path.join(process.env.LAYOUT_SCREENSHOTS, `${themeName}-${width}.png`), fullPage: true });
-        }
+          if (process.env.LAYOUT_SCREENSHOTS) {
+            await page.screenshot({ path: path.join(process.env.LAYOUT_SCREENSHOTS, `${themeName}-${width}${shot}.png`), fullPage: true });
+          }
+        };
+        await report(`${themeName} ${width}px`, '');
+        // Colors with calendars only: the status input, the On a Call switch and Teams status turned off on the page.
+        await click('[data-path="statusInput.enabled"] input');
+        await click('[data-path="callSwitch.enabled"] input');
+        await click('[data-card-id="cal-work"] .bl-code-view button:has-text("Cancel")');
+        await click('[data-path="calendars.cal-work.useTeamsStatus"] input');
+        await frame.waitForSelector('#section-colors .bl-more-statuses');
+        await fit();
+        await report(`${themeName} ${width}px, Colors collapsed`, '-collapsed');
+        await click('#section-colors .bl-show-statuses');
+        await report(`${themeName} ${width}px, Colors expanded`, '-expanded');
         await context.close();
       }
     }

@@ -5,6 +5,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
 import { FakeEvent, flush, installFakeDom, text, type, type FakeElement } from './fake-dom.js';
+import { parseConfig } from '../src/config.js';
 
 process.env.TZ = 'UTC';
 const dom = installFakeDom();
@@ -42,7 +43,7 @@ dom.window.homebridge = {
 
 // The page modules read window and document at call time; they are imported once the fake DOM is in place.
 const { Page } = await import('../homebridge-ui/src/main.js');
-const { readConfig, exportConfig } = await import('../homebridge-ui/src/model.js');
+const { readConfig, exportConfig, DEFAULTS } = await import('../homebridge-ui/src/model.js');
 const copy = await import('../homebridge-ui/src/copy.js');
 const { INTRO, SHELL, VALIDATION } = copy;
 
@@ -265,7 +266,7 @@ describe('settings page: the chooser and a new card (SPEC 11.1 item 4, 11.3 C)',
     assert.deepEqual(tiles.map((t) => [text(t.querySelector('.ns-tile-title')), text(t.querySelector('.ns-tile-help'))]), [
       ['iCloud', 'Calendars in your Apple account.'],
       ['Google Calendar', 'One Google calendar, by its secret address.'],
-      ['Microsoft 365', 'Outlook calendars and Teams status. Needs an app registration from your administrator.'],
+      ['Outlook or Microsoft 365', 'Outlook calendars, by a published link or by signing in.'],
       ['Calendar URL', 'Any calendar link that starts with https:// or webcal://.'],
     ]);
     assert.equal(buttons(section).includes(copy.CALENDARS.add), false);
@@ -730,11 +731,14 @@ describe('settings page: Colors (SPEC 11.3 D)', () => {
   const tabStop = (row: FakeElement): string[] => row.querySelectorAll('[role="radio"]').filter((b) => b.getAttribute('tabindex') === '0')
     .map((b) => b.getAttribute('aria-label')!);
   const swatchNamed = (row: FakeElement, name: string): FakeElement => row.querySelector(`[role="radio"][aria-label="${name}"]`)!;
+  /** Shows the rows of the statuses the setup cannot produce (SPEC 11.3 D, from build 3.1). */
+  const showAll = (root: FakeElement): void => root.querySelector('#section-colors .bl-show-statuses')!.click();
 
   it('one row per status in precedence order, each a radio group of the presets, Off and Custom, the saved color chosen', () => {
     const { root } = mount({ platform: 'BusyLight', colors: { inMeeting: '#aa00ff', busy: '#ff6a00', available: '#00ff00' } });
+    showAll(root);
     const rows = root.querySelectorAll('#section-colors .bl-color-row');
-    assert.deepEqual(rows.map((r) => text(r.querySelector('.bl-color-name')).replace(/ ?Teams only$/, '')),
+    assert.deepEqual(rows.map((r) => text(r.querySelector('.bl-color-name'))),
       ['Out of office', 'Do not disturb', 'In a call', 'In a meeting', 'Busy', 'Tentative', 'Away', 'Available', 'Offline']);
     for (const row of rows) {
       const group = row.querySelector('[role="radiogroup"]')!;
@@ -759,6 +763,7 @@ describe('settings page: Colors (SPEC 11.3 D)', () => {
 
   it('a preset, Off and Custom write the color; arrow keys move and choose; a bad hex shows the 11.3 H message; Reset colors', async () => {
     const { root, page } = mount();
+    showAll(root);
     const row = rowOf(root, 'busy');
     swatchNamed(row, 'Blue').click();
     await settle();
@@ -809,24 +814,63 @@ describe('settings page: Colors (SPEC 11.3 D)', () => {
     assert.equal(chosen(rowOf(root, 'busy')), 'Orange');
   });
 
-  it('Teams only, muted, while nothing else can give the status: no Teams status, no status input, and for In a call no switch', () => {
-    const teamsOnly = (root: FakeElement) => root.querySelectorAll('#section-colors .bl-color-row')
-      .filter((r) => r.querySelector('.badge')).map((r) => r.dataset.path);
-    const { root, page } = mount();
-    assert.deepEqual(teamsOnly(root), ['colors.doNotDisturb', 'colors.inCall', 'colors.busy', 'colors.away', 'colors.offline']);
-    assert.ok(root.querySelector('#section-colors .bl-badge-muted'));
-    buttonNamed(root, copy.CALENDARS.add).click();
-    root.querySelectorAll('.ns-chooser-tile')[2].click();
-    assert.deepEqual(teamsOnly(root), [], 'an unsaved Microsoft 365 card with Use Teams status on');
-    const id = page.config.calendars[0].id;
-    tick(field(root, `calendars.${id}.useTeamsStatus`), false);
-    assert.equal(teamsOnly(root).length, 5);
-    const saved = mount({ platform: 'BusyLight', calendars: [{ type: 'microsoft', id: 'w', name: 'W', tenantId: 'x', clientId: 'y' }] });
-    assert.deepEqual(teamsOnly(saved.root), []);
-    const call = mount({ platform: 'BusyLight', callSwitch: { enabled: true } });
-    assert.deepEqual(teamsOnly(call.root), ['colors.doNotDisturb', 'colors.busy', 'colors.away', 'colors.offline'], 'the switch gives In a call');
-    const input = mount({ platform: 'BusyLight', statusInput: { enabled: true, key: 'k'.repeat(43) } });
-    assert.deepEqual(teamsOnly(input.root), [], 'other apps can report each of them');
+  it('calendars only: the four statuses calendars give, and 5 more statuses behind Show all statuses (SPEC 11.3 D)', () => {
+    const { root } = mount({ platform: 'BusyLight', calendars: [ICLOUD_SOURCE, { type: 'url', id: 'office', name: 'Office',
+      url: 'https://outlook.office365.com/owa/calendar/synthetic/calendar.ics' }] });
+    const names = (): string[] => root.querySelectorAll('#section-colors .bl-color-row').map((r) => text(r.querySelector('.bl-color-name')));
+    assert.deepEqual(names(), ['Out of office', 'In a meeting', 'Tentative', 'Available']);
+    const more = root.querySelector('#section-colors .bl-more-statuses')!;
+    assert.equal(text(more.querySelector('span')), copy.COLORS.moreStatuses(5));
+    assert.equal(text(more.querySelector('span')), '5 more statuses come from Teams or from other apps.');
+    assert.equal(text(more.querySelector('button')), copy.COLORS.showAll);
+    more.querySelector('button')!.click();
+    assert.deepEqual(names(), ['Out of office', 'Do not disturb', 'In a call', 'In a meeting', 'Busy', 'Tentative', 'Away', 'Available', 'Offline'],
+      'all nine in the precedence order');
+    assert.equal(text(root.querySelector('#section-colors .bl-show-statuses')), copy.COLORS.showFewer);
+    root.querySelector('#section-colors .bl-show-statuses')!.click();
+    assert.deepEqual(names(), ['Out of office', 'In a meeting', 'Tentative', 'Available']);
+    assert.equal(text(root.querySelector('#section-colors .bl-precedence')), copy.COLORS.precedence, 'the precedence line stays');
+    assert.ok(!text(root).includes('Teams only'), 'no Teams only text anywhere');
+  });
+
+  it('the rows follow the On a Call switch, the status input and Teams status on the page, live', () => {
+    const { root } = mount({ platform: 'BusyLight', calendars: [ICLOUD_SOURCE] });
+    const names = (): string[] => root.querySelectorAll('#section-colors .bl-color-row').map((r) => text(r.querySelector('.bl-color-name')));
+    const ALL = ['Out of office', 'Do not disturb', 'In a call', 'In a meeting', 'Busy', 'Tentative', 'Away', 'Available', 'Offline'];
+    tick(field(root, 'callSwitch.enabled'), true);
+    assert.deepEqual(names(), ['Out of office', 'In a call', 'In a meeting', 'Tentative', 'Available'], 'the switch adds In a call');
+    assert.equal(text(root.querySelector('#section-colors .bl-more-statuses span')), copy.COLORS.moreStatuses(4));
+    tick(field(root, 'statusInput.enabled'), true);
+    assert.deepEqual(names(), ALL, 'the status input: all nine');
+    assert.equal(root.querySelector('#section-colors .bl-more-statuses'), null, 'nothing hidden, no line');
+    tick(field(root, 'statusInput.enabled'), false);
+    tick(field(root, 'callSwitch.enabled'), false);
+    assert.deepEqual(names(), ['Out of office', 'In a meeting', 'Tentative', 'Available'], 'turned off, the rows hide again');
+    buttonNamed(root.querySelector('#section-calendars')!, copy.CALENDARS.add).click();
+    root.querySelector('#section-calendars .ns-chooser-tile[data-type="microsoft"]')!.click();
+    const optionSignIn = root.querySelector('#section-calendars .bl-outlook-signin');
+    if (optionSignIn) {
+      optionSignIn.click();
+    }
+    const card = root.querySelectorAll('#section-calendars .bl-source-microsoft').at(-1)!;
+    const teams = field(root, `calendars.${card.getAttribute('data-card-id')}.useTeamsStatus`);
+    assert.equal(teams.checked, true, 'a new Microsoft 365 card reads Teams status');
+    assert.deepEqual(names(), ALL, 'a Microsoft 365 source with Teams status: all nine');
+    tick(teams, false);
+    assert.deepEqual(names(), ['Out of office', 'In a meeting', 'Tentative', 'Available'], 'Teams status off: hidden again');
+  });
+
+  it('hidden rows keep their saved colors on Save, and Reset colors resets all nine', async () => {
+    const colors = { doNotDisturb: '#123456', busy: 'off', offline: '#ABCDEF', tentative: '#FFD000' };
+    const { root } = mount({ platform: 'BusyLight', calendars: [ICLOUD_SOURCE], colors });
+    assert.equal(root.querySelector('[data-path="colors.busy"]'), null, 'hidden');
+    fill(root, 'name', 'Door');
+    await settle();
+    const saved = lastBlock().colors as Record<string, string>;
+    assert.deepEqual([saved.doNotDisturb, saved.busy, saved.offline], ['#123456', 'off', '#ABCDEF'], 'saved unchanged');
+    buttonNamed(root.querySelector('#section-colors')!, copy.COLORS.reset).click();
+    await settle();
+    assert.deepEqual(lastBlock().colors, { ...DEFAULTS.colors }, 'all nine reset');
   });
 });
 
@@ -946,8 +990,11 @@ describe('settings page: Lights (SPEC 11.3 E)', () => {
     const all = section.querySelector('details.bl-all-sensors')!;
     assert.equal(text(all.querySelector('summary')), copy.LIGHTS.showAll);
     assert.equal(all.open, false);
-    assert.deepEqual(labels(all), ['Door In a Meeting', 'Door In a Call', 'Door Do Not Disturb', 'Door Busy in Teams', 'Door Tentative', 'Door Away',
+    // From build 3.1, the statuses a calendar-only setup cannot produce come last, with their help (SPEC 11.3 E).
+    assert.deepEqual(labels(all), ['Door In a Meeting', 'Door Tentative', 'Door In a Call', 'Door Do Not Disturb', 'Door Busy in Teams', 'Door Away',
       'Door Offline']);
+    assert.deepEqual(all.querySelectorAll('.form-check').map((c) => text(c.querySelector('.form-text'))),
+      ['', '', ...Array(5).fill(copy.LIGHTS.nothingReports)]);
     assert.deepEqual(section.querySelectorAll('.bl-sensors input').slice(0, 3).map((i) => i.checked), [true, true, true]);
     tick(all.querySelectorAll('input')[0], true);
     tick(section.querySelectorAll('.bl-sensors input')[0], false);
@@ -985,19 +1032,13 @@ describe('settings page: Settings (SPEC 11.3 F)', () => {
 
   it('validates on blur, opens Advanced for an issue, and writes the words as a list', async () => {
     const { root, page } = mount();
-    fill(root, 'pollSeconds', '5');
-    assert.equal(feedback(root, 'pollSeconds'), 'Enter a whole number from 15 to 240.');
-    fill(root, 'calendarSeconds', '601');
-    assert.equal(feedback(root, 'calendarSeconds'), 'Enter a whole number from 60 to 600.');
     fill(root, 'name', ' ');
     assert.equal(feedback(root, 'name'), 'Name is required.');
-    assert.deepEqual(root.querySelectorAll('.ns-issue-link').map((b) => text(b)), [
-      'Settings: Name is required.', 'Settings: Enter a whole number from 15 to 240.', 'Settings: Enter a whole number from 60 to 600.',
-    ]);
+    assert.deepEqual(root.querySelectorAll('.ns-issue-link').map((b) => text(b)), ['Settings: Name is required.']);
     assert.equal(save.enabled, false);
     fill(root, 'name', 'Door');
-    fill(root, 'pollSeconds', '60');
-    fill(root, 'calendarSeconds', '300');
+    choose(field(root, 'pollSeconds'), '60');
+    choose(field(root, 'calendarSeconds'), '300');
     fill(root, 'outOfOfficeWords', 'Holiday, , Leave ');
     await settle();
     assert.equal(save.enabled, true);
@@ -1005,12 +1046,14 @@ describe('settings page: Settings (SPEC 11.3 F)', () => {
     const block = lastBlock();
     assert.deepEqual([block.name, block.pollSeconds, block.calendarSeconds, block.outOfOfficeWords], ['Door', 60, 300, ['Holiday', 'Leave']]);
     assert.ok(text(root.querySelector('#section-lights .bl-sensors')).includes('Door Available'), 'the sensors follow the name');
-    const reopened = mount({ platform: 'BusyLight', pollSeconds: 5 });
+    const reopened = mount();
+    fill(reopened.root, 'name', ' ');
+    reopened.root.querySelector('#section-settings details')!.open = false;
     assert.equal(reopened.page.issues().length, 1);
     reopened.root.querySelector('.ns-issue-link')!.click();
     assert.equal(reopened.root.querySelector('#section-settings details')!.open, true, 'the summary entry opens Advanced');
-    assert.equal(dom.document.activeElement, field(reopened.root, 'pollSeconds'), 'and moves focus to the field');
-    assert.equal(feedback(reopened.root, 'pollSeconds'), 'Enter a whole number from 15 to 240.');
+    assert.equal(dom.document.activeElement, field(reopened.root, 'name'), 'and moves focus to the field');
+    assert.equal(feedback(reopened.root, 'name'), 'Name is required.');
     void page;
   });
 
@@ -1191,6 +1234,7 @@ describe('settings page: Status from other apps (SPEC 11.3 I)', () => {
     assert.deepEqual(requests.map((r) => r.path), ['/input/info'], 'opening the page with the input on asks for the addresses');
     assert.deepEqual(addressLines(root), ['http://192.168.4.10:8582', 'http://10.0.0.7:8582']);
     assert.equal(text(section(root).querySelector('.bl-reserve-help')), copy.STATUS_INPUT.reserveHelp);
+    buttonNamed(section(root).querySelector('.bl-input-key')!, copy.SHELL.show).click();
     assert.equal(codeLine(root), `busylight://192.168.4.10:8582/?key=${key}&id=${ID}`);
     fill(root, 'statusInput.port', '9000');
     await settle();
@@ -1202,6 +1246,7 @@ describe('settings page: Status from other apps (SPEC 11.3 I)', () => {
     const key = 'r'.repeat(43);
     const { root, page } = mount({ platform: 'BusyLight', statusInput: { enabled: true, key } });
     await settle();
+    buttonNamed(section(root).querySelector('.bl-input-key')!, copy.SHELL.show).click();
     buttonNamed(section(root), copy.STATUS_INPUT.replaceKey).click();
     assert.equal(text(section(root).querySelector('.ns-confirm-question')), copy.STATUS_INPUT.replaceQuestion);
     buttonNamed(section(root), copy.STATUS_INPUT.cancel).click();
@@ -1329,33 +1374,98 @@ describe('settings page: Status from other apps (SPEC 11.3 I)', () => {
   });
 });
 
-describe('settings page: a calendar card\'s own check interval (SPEC 11.3 C, 9.1 item 19)', () => {
-  it('every card type has it under Advanced: empty by default with the platform value as placeholder, validated, written as calendarSeconds', async () => {
-    const { root, page } = mount({ platform: 'BusyLight', calendarSeconds: 240, calendars: [
-      ICLOUD_SOURCE,
-      { type: 'google', id: 'g', name: 'G', url: 'https://calendar.example.com/x.ics' },
-      { type: 'url', id: 'u', name: 'U', url: 'https://rota.example.net/a.ics', calendarSeconds: 600 },
-      { type: 'microsoft', id: 'm', name: 'M', tenantId: '11111111-2222-3333-4444-555555555555', clientId: '66666666-7777-8888-9999-000000000000' },
-    ] });
+describe('settings page: the intervals as durations (SPEC 11.3 C, F and G; 15 item 24)', () => {
+  const options = (select: FakeElement): string[] => select.querySelectorAll('option').map((o) => text(o));
+  const SOURCES = [
+    ICLOUD_SOURCE,
+    { type: 'google', id: 'g', name: 'G', url: 'https://calendar.example.com/x.ics' },
+    { type: 'url', id: 'u', name: 'U', url: 'https://rota.example.net/a.ics', calendarSeconds: 600 },
+    { type: 'microsoft', id: 'm', name: 'M', tenantId: '11111111-2222-3333-4444-555555555555', clientId: '66666666-7777-8888-9999-000000000000' },
+  ];
+
+  it('every card type has Check for changes every under Advanced: Same as Settings first, then the five durations', () => {
+    const { root, page } = mount({ platform: 'BusyLight', calendars: SOURCES });
     for (const id of ['icloud', 'g', 'u', 'm']) {
       const card = openCard(root, id);
       const advanced = card.querySelector('.bl-source-advanced')!;
       assert.equal(text(advanced.querySelector('summary')), copy.SHELL.advanced, id);
-      const input = field(root, `calendars.${id}.calendarSeconds`);
+      const select = field(root, `calendars.${id}.calendarSeconds`);
+      assert.equal(select.tagName, 'SELECT');
+      assert.ok(select.className.includes('form-select'), 'styled as Counts for');
       assert.equal(text(card.querySelector(`[data-path="calendars.${id}.calendarSeconds"] label`)), copy.CALENDARS.checkEvery);
-      assert.equal(input.getAttribute('placeholder'), 'e.g. 240', 'the platform value');
       assert.equal(text(card.querySelector(`[data-path="calendars.${id}.calendarSeconds"] .ns-help`)), copy.CALENDARS.checkEveryHelp);
-      assert.equal(input.value, id === 'u' ? '600' : '');
+      assert.equal(card.querySelector(`[data-path="calendars.${id}.calendarSeconds"] input`), null, 'no number field');
+      assert.deepEqual(options(select), ['Same as Settings (3 minutes)', '1 minute', '2 minutes', '3 minutes', '5 minutes', '10 minutes']);
+      assert.equal(select.value, id === 'u' ? '600' : '');
       assert.equal(advanced.open, id === 'u', 'open when it holds a value');
     }
-    fill(root, 'calendars.g.calendarSeconds', '30');
-    assert.equal(feedback(root, 'calendars.g.calendarSeconds'), 'Enter a whole number from 60 to 600.');
-    fill(root, 'calendars.g.calendarSeconds', '90');
-    fill(root, 'calendars.u.calendarSeconds', '');
-    await settle();
-    const blocks = lastBlock().calendars as Array<Record<string, unknown>>;
-    assert.deepEqual(blocks.map((c) => c.calendarSeconds), [undefined, 90, undefined, undefined], 'emptied means the platform interval');
     assert.deepEqual(page.issues(), []);
+  });
+
+  it('each option saves its seconds, and Same as Settings saves none', async () => {
+    const { root } = mount({ platform: 'BusyLight', calendars: SOURCES });
+    openCard(root, 'g');
+    for (const [value, seconds] of [['60', 60], ['120', 120], ['180', 180], ['300', 300], ['600', 600], ['', undefined]] as const) {
+      choose(field(root, 'calendars.g.calendarSeconds'), value);
+      await settle();
+      assert.equal((lastBlock().calendars as Array<Record<string, unknown>>)[1].calendarSeconds, seconds, value || 'Same as Settings');
+      assert.ok(!('calendarSeconds' in (lastBlock().calendars as Array<Record<string, unknown>>)[1]) || seconds !== undefined);
+    }
+  });
+
+  it('Same as Settings follows Reload calendars every as it is edited, in place', () => {
+    const { root } = mount({ platform: 'BusyLight', calendars: SOURCES });
+    openCard(root, 'g');
+    const card = (): FakeElement => field(root, 'calendars.g.calendarSeconds');
+    choose(field(root, 'calendarSeconds'), '600');
+    assert.equal(options(card())[0], 'Same as Settings (10 minutes)');
+    choose(field(root, 'calendarSeconds'), '60');
+    assert.equal(options(card())[0], 'Same as Settings (1 minute)');
+    assert.equal(card().value, '', 'the card keeps its choice');
+  });
+
+  it('Settings: Check status every and Reload calendars every, with the SPEC 8 defaults marked, each option saving its seconds', async () => {
+    const { root } = mount();
+    const poll = field(root, 'pollSeconds');
+    const reload = field(root, 'calendarSeconds');
+    assert.equal(poll.tagName, 'SELECT');
+    assert.deepEqual(options(poll), ['15 seconds', '30 seconds (default)', '1 minute', '2 minutes', '4 minutes']);
+    assert.deepEqual(options(reload), ['1 minute', '2 minutes', '3 minutes (default)', '5 minutes', '10 minutes']);
+    assert.deepEqual([poll.value, reload.value], ['30', '180']);
+    for (const [value, seconds] of [['15', 15], ['30', 30], ['60', 60], ['120', 120], ['240', 240]] as const) {
+      choose(field(root, 'pollSeconds'), value);
+      await settle();
+      assert.equal(lastBlock().pollSeconds, seconds);
+    }
+    for (const [value, seconds] of [['60', 60], ['120', 120], ['180', 180], ['300', 300], ['600', 600]] as const) {
+      choose(field(root, 'calendarSeconds'), value);
+      await settle();
+      assert.equal(lastBlock().calendarSeconds, seconds);
+    }
+  });
+
+  it('a saved 90 shows as 1 minute 30 seconds, selected, is kept on Save, and stays listed until another value is saved', async () => {
+    const { root, page } = mount({ platform: 'BusyLight', pollSeconds: 90, calendarSeconds: 90, calendars: [
+      { type: 'url', id: 'u', name: 'U', url: 'https://rota.example.net/a.ics', calendarSeconds: 90 },
+    ] });
+    openCard(root, 'u');
+    const card = field(root, 'calendars.u.calendarSeconds');
+    assert.deepEqual(options(card), [
+      'Same as Settings (1 minute 30 seconds)', '1 minute', '1 minute 30 seconds', '2 minutes', '3 minutes', '5 minutes', '10 minutes',
+    ]);
+    assert.equal(card.value, '90');
+    assert.deepEqual(options(field(root, 'pollSeconds')), ['15 seconds', '30 seconds (default)', '1 minute', '1 minute 30 seconds', '2 minutes', '4 minutes']);
+    assert.equal(field(root, 'pollSeconds').value, '90');
+    assert.equal(field(root, 'calendarSeconds').value, '90');
+    fill(root, 'name', 'Busy Light');
+    await settle();
+    const block = lastBlock();
+    assert.deepEqual([block.pollSeconds, block.calendarSeconds, (block.calendars as Array<Record<string, unknown>>)[0].calendarSeconds], [90, 90, 90], 'kept');
+    choose(field(root, 'pollSeconds'), '60');
+    page.rerender('settings');
+    assert.ok(options(field(root, 'pollSeconds')).includes('1 minute 30 seconds'), 'still listed until saved');
+    const saved = mount({ platform: 'BusyLight', pollSeconds: 60 });
+    assert.ok(!options(field(saved.root, 'pollSeconds')).includes('1 minute 30 seconds'), 'gone once another value is saved');
   });
 });
 
@@ -1393,5 +1503,268 @@ describe('settings page: the bulb in use when the page opens (SPEC 11.3 E)', () 
     requests.length = 0;
     root = await open(undefined);
     assert.deepEqual(linesOf(root), [copy.LIGHTS.noBulbYet]);
+  });
+});
+
+// SPEC 18.11 item 6, 15 item 23: the address change notice on the page.
+
+describe('settings page: the address change notice (SPEC 18.11 item 6)', () => {
+  const ID = 'q3Lr8vT0cXw2mN5a';
+  const section = (root: FakeElement): FakeElement => root.querySelector('#section-statusInput')!;
+
+  it('shows above the Address line while /input/info reports a change, in the warning tone', async () => {
+    const addressChange = { from: '192.168.4.10', to: '192.168.4.23' };
+    answers.set('/input/info', { hostname: null, addresses: ['192.168.4.23'], port: 8582, id: ID, addressChange });
+    const { root } = mount({ platform: 'BusyLight', statusInput: { enabled: true, key: 'a'.repeat(43) } });
+    await settle();
+    const notice = section(root).querySelector('.bl-address-change')!;
+    assert.equal(text(notice), copy.STATUS_INPUT.addressChanged('192.168.4.10', '192.168.4.23'));
+    assert.equal(text(notice), 'Homebridge\'s address changed from 192.168.4.10 to 192.168.4.23. Apps that use the old address need the new setup code.');
+    assert.ok(notice.querySelector('.alert-warning'), 'the warning tone');
+    const order = section(root).querySelectorAll('.bl-address-change, .bl-input-addresses').map((n) => n.className.split(' ').find((c) => c.startsWith('bl-')));
+    assert.deepEqual(order, ['bl-address-change', 'bl-input-addresses'], 'above the Address line');
+  });
+
+  it('is absent with no change, or once the page has been saved since (/input/info reports none)', async () => {
+    answers.set('/input/info', { hostname: 'homebridge.local', addresses: ['192.168.4.10'], port: 8582, id: ID, addressChange: null });
+    const { root } = mount({ platform: 'BusyLight', statusInput: { enabled: true, key: 'b'.repeat(43) } });
+    await settle();
+    assert.equal(section(root).querySelector('.bl-address-change'), null);
+  });
+});
+
+// SPEC 11.3 I (build 3.1), 15 item 24: the setup code is masked like the key and shares its Show and Hide.
+
+describe('settings page: the masked setup code (SPEC 11.3 I)', () => {
+  const ID = 'q3Lr8vT0cXw2mN5a';
+  const KEY = 'm'.repeat(43);
+  const CODE = `busylight://homebridge.local:8582/?key=${KEY}&id=${ID}`;
+  const section = (root: FakeElement): FakeElement => root.querySelector('#section-statusInput')!;
+  const codeLine = (root: FakeElement): string => text(section(root).querySelector('.bl-setup-code .bl-readonly-line'));
+  const keyInput = (root: FakeElement): FakeElement => section(root).querySelector('.bl-input-key input')!;
+  const toggle = (root: FakeElement): FakeElement => section(root).querySelector('.bl-input-key .input-group button')!;
+
+  async function open(): Promise<FakeElement> {
+    answers.set('/input/info', { hostname: 'homebridge.local', addresses: ['192.168.4.10'], port: 8582, id: ID, addressChange: null });
+    const { root } = mount({ platform: 'BusyLight', statusInput: { enabled: true, key: KEY } });
+    await settle();
+    return root;
+  }
+
+  it('is masked when the section opens, one dot per character, with no part of the key', async () => {
+    const root = await open();
+    assert.equal(keyInput(root).getAttribute('type'), 'password');
+    assert.equal(codeLine(root), '\u2022'.repeat(CODE.length));
+    assert.ok(!text(section(root)).includes(KEY), 'the key is nowhere in the text of the section');
+    assert.equal(text(toggle(root)), copy.SHELL.show);
+  });
+
+  it('one Show reveals both, one Hide masks both', async () => {
+    const root = await open();
+    toggle(root).click();
+    assert.equal(keyInput(root).getAttribute('type'), 'text');
+    assert.equal(codeLine(root), CODE);
+    assert.equal(text(toggle(root)), copy.SHELL.hide);
+    assert.equal(section(root).querySelectorAll('button').filter((b) => text(b) === copy.SHELL.show || text(b) === copy.SHELL.hide).length, 1,
+      'one toggle for both');
+    toggle(root).click();
+    assert.equal(keyInput(root).getAttribute('type'), 'password');
+    assert.equal(codeLine(root), '\u2022'.repeat(CODE.length));
+    assert.equal(text(toggle(root)), copy.SHELL.show);
+  });
+
+  it('Copy setup code copies the full code, masked or not', async () => {
+    const root = await open();
+    buttonNamed(section(root), copy.STATUS_INPUT.copySetupCode).click();
+    await flush();
+    assert.equal(dom.document.copied.at(-1), CODE, 'masked');
+    toggle(root).click();
+    buttonNamed(section(root), copy.STATUS_INPUT.copied).click();
+    await flush();
+    assert.equal(dom.document.copied.at(-1), CODE, 'shown');
+  });
+
+  it('a redraw of the section keeps them shown or masked together', async () => {
+    const root = await open();
+    toggle(root).click();
+    answers.set('/input/test', { ok: true });
+    buttonNamed(section(root), copy.STATUS_INPUT.test).click();
+    await settle();
+    assert.equal(text(section(root).querySelector('.bl-input-result')), copy.STATUS_INPUT.received, 'redrawn with the result');
+    assert.equal(keyInput(root).getAttribute('type'), 'text');
+    assert.equal(codeLine(root), CODE);
+  });
+});
+
+// SPEC 11.3 E (build 3.1), 15 item 24: the sensors the setup cannot produce come last, can still be ticked, and follow live.
+
+describe('settings page: the per-status sensors and the statuses the setup can produce (SPEC 11.3 E)', () => {
+  const sensors = (root: FakeElement): Array<[string, string]> => root.querySelectorAll('#section-lights details.bl-all-sensors .form-check')
+    .map((c) => [text(c.querySelector('.form-check-label')), text(c.querySelector('.form-text'))]);
+
+  it('with the status input on, every status can happen: section 7 order, no help', () => {
+    const { root } = mount({ platform: 'BusyLight', statusInput: { enabled: true, key: 'c'.repeat(43) } });
+    assert.deepEqual(sensors(root), [['Busy Light In a Meeting', ''], ['Busy Light In a Call', ''], ['Busy Light Do Not Disturb', ''],
+      ['Busy Light Busy in Teams', ''], ['Busy Light Tentative', ''], ['Busy Light Away', ''], ['Busy Light Offline', '']]);
+  });
+
+  it('the On a Call switch moves In a Call up, live; a status that cannot happen can still be ticked', async () => {
+    const { root } = mount();
+    tick(field(root, 'callSwitch.enabled'), true);
+    assert.deepEqual(sensors(root).slice(0, 3).map(([name, help]) => [name, help]),
+      [['Busy Light In a Meeting', ''], ['Busy Light In a Call', ''], ['Busy Light Tentative', '']]);
+    assert.equal(sensors(root)[3][1], copy.LIGHTS.nothingReports);
+    const offline = root.querySelectorAll('#section-lights details.bl-all-sensors .form-check')
+      .find((c) => text(c.querySelector('.form-check-label')) === 'Busy Light Offline')!;
+    tick(offline.querySelector('input')!, true);
+    await settle();
+    assert.ok((lastBlock().sensors as string[]).includes('offline'));
+  });
+});
+
+// SPEC 11.3 C (build 3.1), 15 item 24: the Outlook published calendar link as the recommended Microsoft 365 setup.
+
+describe('settings page: Outlook or Microsoft 365 (SPEC 11.3 C)', () => {
+  const OFFICE = 'https://outlook.office365.com/owa/calendar/synthetic/reachcalendar.ics';
+  const chooserOf = (root: FakeElement): FakeElement => {
+    const section = root.querySelector('#section-calendars')!;
+    buttonNamed(section, copy.CALENDARS.add).click();
+    return section;
+  };
+  const outlookTile = (section: FakeElement): FakeElement => section.querySelector('.ns-chooser-tile[data-type="microsoft"]')!;
+
+  it('the tile shows two options inline, in order: the published link, recommended, then sign-in', () => {
+    const { root } = mount();
+    const section = chooserOf(root);
+    assert.equal(section.querySelector('.bl-outlook-options'), null, 'not before the tile is chosen');
+    assert.equal(outlookTile(section).getAttribute('aria-expanded'), 'false');
+    outlookTile(section).click();
+    assert.equal(outlookTile(section).getAttribute('aria-expanded'), 'true');
+    const options = section.querySelectorAll('.bl-outlook-option');
+    const title = (o: FakeElement): string => text(o.querySelector('.ns-tile-title')).replace(copy.CHOOSER.recommended, '').trim();
+    assert.deepEqual(options.map((o) => [title(o), text(o.querySelector('.ns-tile-help'))]), [
+      [copy.CHOOSER.published, copy.CHOOSER.publishedText],
+      [copy.CHOOSER.signIn, copy.CHOOSER.signInText],
+    ]);
+    const recommended = options[0].querySelector('.badge')!;
+    assert.equal(text(recommended), copy.CHOOSER.recommended);
+    assert.ok(recommended.className.includes('bl-badge-connected'), 'the success tone');
+    assert.equal(options[1].querySelector('.badge'), null);
+    assert.equal(dom.document.activeElement, options[0], 'the first option takes focus');
+    buttonNamed(section, copy.CALENDARS.cancel).click();
+    buttonNamed(section, copy.CALENDARS.add).click();
+    assert.equal(section.querySelector('.bl-outlook-options'), null, 'Cancel closes the options with the chooser');
+  });
+
+  it('Published calendar link adds a Calendar URL card named Outlook, the steps, help and link above the Address, which takes focus', async () => {
+    const { root, page } = mount();
+    const section = chooserOf(root);
+    outlookTile(section).click();
+    section.querySelector('.bl-outlook-published')!.click();
+    await settle();
+    const s = page.config.calendars[0];
+    assert.equal(s.type, 'url');
+    assert.equal(s.name, copy.OUTLOOK.name);
+    const node = cardOf(root, s.id);
+    assert.deepEqual(node.querySelectorAll('.badge').map((b) => text(b)), ['Calendar URL', 'Not saved yet']);
+    assert.equal(node.querySelector('.bl-outlook-howto'), null, 'open, not under a disclosure');
+    const steps = node.querySelector('.bl-outlook-steps')!;
+    assert.deepEqual(steps.querySelectorAll('.ns-step-text').map((t) => text(t)), copy.OUTLOOK.steps);
+    assert.equal(text(steps.querySelectorAll('.ns-step-text')[1]),
+      'Under Publish a calendar, choose your calendar and Can view when I\'m busy, then select Publish.');
+    const link = steps.querySelector('.bl-outlook-missing a')!;
+    assert.equal(text(steps.querySelector('.bl-outlook-missing')), `${copy.OUTLOOK.missing} ${copy.OUTLOOK.open}`);
+    assert.deepEqual([text(link), link.getAttribute('href'), link.getAttribute('target'), link.getAttribute('rel')],
+      [copy.OUTLOOK.open, 'https://outlook.office.com/calendar/', '_blank', 'noopener noreferrer']);
+    const order = node.querySelectorAll('.bl-outlook-steps, [data-path]')
+      .map((n) => (n.className.includes('bl-outlook-steps') ? 'steps' : n.getAttribute('data-path')));
+    assert.deepEqual(order.slice(0, 3), [`calendars.${s.id}.name`, 'steps', `calendars.${s.id}.url`], 'the steps between Name and Address');
+    assert.equal(dom.document.activeElement, field(root, `calendars.${s.id}.url`), 'the Address takes focus');
+    assert.ok(node.querySelector(`[data-path="calendars.${s.id}.use"]`), 'Counts for applies');
+    assert.ok(node.querySelector(`[data-path="calendars.${s.id}.calendarSeconds"]`), 'and the interval');
+    fill(root, `calendars.${s.id}.url`, OFFICE);
+    await settle();
+    assert.deepEqual((lastBlock().calendars as unknown[])[0], { type: 'url', id: s.id, name: 'Outlook', url: OFFICE, use: 'all' });
+    answers.set('/url/test', { eventsToday: 2 });
+    buttonNamed(node, copy.TEST.test).click();
+    await settle();
+    assert.deepEqual(requests.filter((r) => r.path === '/url/test').map((r) => r.payload), [{ url: OFFICE }], 'Test works as for any address');
+  });
+
+  it('Sign in with Microsoft 365 adds the Microsoft 365 card, unchanged', async () => {
+    const { root, page } = mount();
+    const section = chooserOf(root);
+    outlookTile(section).click();
+    section.querySelector('.bl-outlook-signin')!.click();
+    await settle();
+    const s = page.config.calendars[0];
+    assert.equal(s.type, 'microsoft');
+    const node = cardOf(root, s.id);
+    assert.deepEqual(node.querySelectorAll('.badge').map((b) => text(b)), ['Microsoft 365', 'Not saved yet']);
+    assert.ok(node.querySelector(`[data-path="calendars.${s.id}.tenantId"]`));
+    assert.equal(dom.document.activeElement, field(root, `calendars.${s.id}.name`));
+  });
+
+  it('a saved Calendar URL on an Outlook host shows the steps collapsed under How to get this link; other cards do not', () => {
+    const { root } = mount({ platform: 'BusyLight', calendars: [
+      { type: 'url', id: 'office', name: 'Office', url: OFFICE },
+      { type: 'url', id: 'live', name: 'Home', url: 'webcal://outlook.live.com/owa/calendar/synthetic/calendar.ics' },
+      { type: 'url', id: 'rota', name: 'Team rota', url: 'https://rota.example.net/a.ics' },
+      { type: 'google', id: 'g', name: 'G', url: 'https://calendar.example.com/x.ics' },
+    ] });
+    for (const id of ['office', 'live']) {
+      const howTo = openCard(root, id).querySelector('details.bl-outlook-howto')!;
+      assert.ok(howTo, id);
+      assert.equal(text(howTo.querySelector('summary')), copy.OUTLOOK.howTo);
+      assert.equal(howTo.open, false, 'collapsed');
+      assert.deepEqual(howTo.querySelectorAll('.ns-step-text').map((t) => text(t)), copy.OUTLOOK.steps);
+    }
+    assert.equal(openCard(root, 'rota').querySelector('.bl-outlook-steps'), null);
+    assert.equal(openCard(root, 'g').querySelector('.bl-outlook-steps'), null);
+  });
+});
+
+// Build 3.1, before the pull request: the owner's configuration shape opens unchanged and Save writes it back as it was.
+
+describe('settings page: the owner\'s configuration, opened and saved back (build 3.1)', () => {
+  const OWNER = {
+    platform: 'BusyLight',
+    name: 'Busy Light',
+    calendars: [
+      { type: 'icloud', id: 'icloud', name: 'iCloud', appleId: 'person@example.com', appPassword: 'abcd-efgh-ijkl-mnop',
+        calendars: [{ id: '/123456789/calendars/home/', name: 'Alex', use: 'all' }] },
+      { type: 'url', id: 'office', name: 'Office', url: 'https://outlook.office365.com/owa/calendar/synthetic/reachcalendar.ics', use: 'all' },
+    ],
+    colors: { outOfOffice: '#B400FF', doNotDisturb: '#FF0000', inCall: '#FF0000', inMeeting: '#FF0000', busy: '#FF6A00', tentative: '#FFD000',
+      away: '#FFD000', available: '#00FF00', offline: 'off' },
+    lifx: { enabled: true, bulb: 'd073d5000001', host: '', brightness: 100, refreshSeconds: 300 },
+    sensors: ['available', 'busyAny', 'outOfOffice'],
+    overrideSwitch: false,
+    pollSeconds: 30,
+    calendarSeconds: 180,
+    ignoreAllDayBusy: true,
+    outOfOfficeWords: ['Out of office', 'OOO', 'Vacation', 'PTO'],
+    debug: false,
+    statusInput: { enabled: true, port: 8582, key: 'o'.repeat(43), allowPlainKey: true },
+    callSwitch: { enabled: true, hours: 3 },
+  };
+
+  it('opens with every value as saved, all nine colors, the intervals as their durations, and How to get this link on the Office card', async () => {
+    answers.set('/input/info', { hostname: 'homebridge.local', addresses: ['192.168.4.10'], port: 8582, id: 'q3Lr8vT0cXw2mN5a', addressChange: null });
+    const { root, page } = mount(OWNER);
+    await settle();
+    assert.deepEqual(page.issues(), []);
+    assert.equal(root.querySelectorAll('#section-colors .bl-color-row').length, 9, 'the status input and the switch are on');
+    assert.deepEqual([field(root, 'pollSeconds').value, field(root, 'calendarSeconds').value], ['30', '180']);
+    assert.ok(openCard(root, 'office').querySelector('details.bl-outlook-howto'));
+    assert.equal(field(root, 'calendars.office.calendarSeconds').value, '', 'Same as Settings');
+    // Any change pushes the whole block; put the name back as it was, as Save would write it.
+    fill(root, 'name', 'Busy Light');
+    await settle();
+    assert.deepEqual(lastBlock(), OWNER, 'written back with the same values, intervals in seconds');
+    const read = parseConfig(lastBlock());
+    assert.deepEqual(read.issues, [], 'the plugin reads the block with no issues');
+    assert.deepEqual(read.config, parseConfig(OWNER).config);
+    assert.deepEqual([read.config.pollSeconds, read.config.calendarSeconds], [30, 180]);
   });
 });

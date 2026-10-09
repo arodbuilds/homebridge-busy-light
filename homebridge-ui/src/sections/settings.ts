@@ -6,8 +6,10 @@
 import { callServer } from '../api.js';
 import type { App } from '../app.js';
 import { SETTINGS, SHELL } from '../copy.js';
-import { button, checkboxField, dangerLinkButton, disclosure, el, grid, gridCell, inlineDialog, linkButton, numberField, reveal, textField } from '../dom.js';
-import { emptyConfig, LIMITS } from '../model.js';
+import { button, checkboxField, dangerLinkButton, disclosure, el, grid, gridCell, inlineDialog, linkButton, reveal, selectField, textField } from '../dom.js';
+import { intervalOptions } from '../intervals.js';
+import { DEFAULTS, emptyConfig, INTERVALS } from '../model.js';
+import { followPlatformInterval } from './calendars.js';
 import { stopMicrosoft } from './microsoft.js';
 
 /**
@@ -104,14 +106,19 @@ export function renderSettings(app: App, container: HTMLElement): void {
       app.rerender('lights');
     }, { path: 'name', required: true, help: SETTINGS.nameHelp, maxlength: 64 })),
     gridCell(6),
-    gridCell(6, numberField(SETTINGS.pollSeconds, c.pollSeconds, (v) => {
-      c.pollSeconds = v;
-      app.changed();
-    }, { path: 'pollSeconds', min: LIMITS.pollSeconds[0], max: LIMITS.pollSeconds[1] })),
-    gridCell(6, numberField(SETTINGS.calendarSeconds, c.calendarSeconds, (v) => {
-      c.calendarSeconds = v;
-      app.changed();
-    }, { path: 'calendarSeconds', min: LIMITS.calendarSeconds[0], max: LIMITS.calendarSeconds[1] })),
+    // The intervals are durations to choose (SPEC 11.3 F); config.json keeps seconds.
+    gridCell(6, selectField(SETTINGS.pollSeconds, String(c.pollSeconds),
+      intervalOptions(INTERVALS.pollSeconds, c.pollSeconds, app.saved.pollSeconds, DEFAULTS.pollSeconds), (v) => {
+        c.pollSeconds = Number(v);
+        app.changed();
+      }, { path: 'pollSeconds' })),
+    gridCell(6, selectField(SETTINGS.calendarSeconds, String(c.calendarSeconds),
+      intervalOptions(INTERVALS.calendarSeconds, c.calendarSeconds, app.saved.calendarSeconds, DEFAULTS.calendarSeconds), (v) => {
+        c.calendarSeconds = Number(v);
+        app.changed();
+        // Each calendar card's `Same as Settings` option follows the value.
+        followPlatformInterval(app);
+      }, { path: 'calendarSeconds' })),
     gridCell(12, checkboxField(SETTINGS.ignoreAllDayBusy, c.ignoreAllDayBusy, (v) => {
       c.ignoreAllDayBusy = v;
       app.changed();

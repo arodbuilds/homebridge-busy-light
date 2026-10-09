@@ -50,6 +50,8 @@ export interface InputInfo {
   addresses: string[];
   port: number;
   id: string;
+  /** The address senders were given changed, and the page has not been saved since (SPEC 18.11 item 6). */
+  addressChange?: { from: string; to: string } | null;
 }
 
 /** The status input section's own state (SPEC 11.3 I). */
@@ -62,6 +64,8 @@ export interface InputUiState {
   result: { kind: 'received' | 'notListening' | 'unauthorized' | 'other'; message: string } | null;
   copied: 'key' | 'code' | null;
   replaceOpen: boolean;
+  /** Show was pressed: the key and the setup code are both shown, until Hide (SPEC 11.3 I). */
+  revealed: boolean;
 }
 
 /** An iCloud calendar as /icloud/calendars lists it. */
@@ -135,6 +139,10 @@ export interface LifxState {
 /** What the page draws beyond the configuration and /status. A redraw keeps all of it. */
 export interface UiState {
   chooserOpen: boolean;
+  /** The chooser shows the two Outlook or Microsoft 365 options (SPEC 11.3 C, from build 3.1). */
+  chooserOutlook: boolean;
+  /** Calendar URL cards added as a published Outlook link on this page: their steps show open (11.3 C). */
+  outlookCards: Set<string>;
   /** Calendar cards drawn open. A new card opens expanded; saved cards start closed. */
   expanded: Set<string>;
   /** The card whose Remove question is open. */
@@ -148,6 +156,8 @@ export interface UiState {
   /** Reset was confirmed: the done state stands where the dialog was until a reload. */
   resetDone: boolean;
   issuesExpanded: boolean;
+  /** Colors shows every status, not only those the setup can produce (SPEC 11.3 D). */
+  colorsExpanded: boolean;
 }
 
 /** What a section needs from the page. */

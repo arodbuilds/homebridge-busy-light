@@ -8,15 +8,17 @@
 import { callServer } from '../api.js';
 import type { App, ListState, StatusSource, TestResult } from '../app.js';
 import { badge, card, cardName, type BadgeKind } from '../card.js';
-import { CALENDARS, GOOGLE, ICLOUD, PILLS, SHELL, SOURCE_TYPES, TEST, URL_CARD } from '../copy.js';
+import { CALENDARS, CHOOSER, GOOGLE, ICLOUD, OUTLOOK, PILLS, SHELL, SOURCE_TYPES, TEST, URL_CARD } from '../copy.js';
 import {
-  clear, dangerLinkButton, disclosure, el, footerAction, grid, gridCell, inlineConfirm, numberField, outLink, outlineButton, paragraph, passwordField,
+  clear, dangerLinkButton, disclosure, el, footerAction, grid, gridCell, inlineConfirm, outLink, outlineButton, paragraph, passwordField,
   primaryButton, selectField, statusBox, textField, type Child,
 } from '../dom.js';
-import { parseDate, relativeTime } from '../format.js';
-import { DEFAULTS, emptySource, LIMITS, newId, SOURCE_TYPES as TYPES, type SourceType, type UiSource } from '../model.js';
+import { formatDuration, parseDate, relativeTime } from '../format.js';
+import { intervalOptions, SAME_AS_SETTINGS } from '../intervals.js';
+import { emptySource, INTERVALS, newId, SOURCE_TYPES as TYPES, type SourceType, type UiSource } from '../model.js';
 import { cardLabel, sourcePath } from '../validate.js';
 import { adoptIds, calendarList, rowBadges, type Row } from './calendar-list.js';
+import { statusesChanged } from './colors.js';
 import { microsoftBody, microsoftFooter, microsoftOnStatus, microsoftResults, stopMicrosoft } from './microsoft.js';
 
 const PILL_KIND: Record<StatusSource['state'], BadgeKind> = {
@@ -251,6 +253,35 @@ function testResult(s: UiSource, result: TestResult): HTMLElement {
   }
 }
 
+/** The hosts of an Outlook published calendar link (SPEC 11.3 C). */
+const OUTLOOK_HOSTS = ['outlook.office365.com', 'outlook.office.com', 'outlook.live.com'];
+
+/** How to get a published Outlook link: the three steps, the help when publishing is turned off, and the link to Outlook. */
+function outlookSteps(): HTMLElement {
+  return el('div', { class: 'bl-outlook-steps' },
+    el('ol', { class: 'ns-steps' }, ...OUTLOOK.steps.map((step, i) => el('li', { class: 'ns-step' },
+      el('span', { class: 'ns-step-number', 'aria-hidden': 'true' }, String(i + 1)),
+      el('span', { class: 'ns-step-text' }, step),
+    ))),
+    el('p', { class: 'form-text bl-outlook-missing' }, OUTLOOK.missing, ' ', outLink(OUTLOOK.open, OUTLOOK.url)),
+  );
+}
+
+/**
+ * Above the Address of a Calendar URL card (SPEC 11.3 C, from build 3.1): the steps, open, on a card added as a
+ * published Outlook link on this page; collapsed under How to get this link on any other card whose address is on an
+ * Outlook host; nothing otherwise.
+ */
+function outlookBlock(app: App, s: UiSource): HTMLElement | null {
+  if (app.ui.outlookCards.has(s.id)) {
+    return outlookSteps();
+  }
+  if (OUTLOOK_HOSTS.includes(hostName(s.url).toLowerCase())) {
+    return disclosure(OUTLOOK.howTo, [outlookSteps()], { cls: 'bl-outlook-howto' });
+  }
+  return null;
+}
+
 function addressBody(app: App, s: UiSource, title: HTMLElement): Child[] {
   if (s.type === 'google') {
     return [
@@ -268,6 +299,7 @@ function addressBody(app: App, s: UiSource, title: HTMLElement): Child[] {
   }
   return [
     nameField(app, s, title),
+    outlookBlock(app, s),
     textField(URL_CARD.address, s.url, (v) => {
       s.url = v;
       app.changed();
@@ -290,23 +322,38 @@ function removeSource(app: App, s: UiSource): void {
   app.changed();
   app.rerender('calendars');
   if (s.type === 'microsoft') {
-    app.rerender('colors');
+    statusesChanged(app);
+  }
+}
+
+/** The card select's `Same as Settings ({duration})` option, with the platform interval as edited (SPEC 11.3 C). */
+function sameAsSettings(app: App): string {
+  return CALENDARS.sameAsSettings(formatDuration(app.config.calendarSeconds));
+}
+
+/** After Reload calendars every changes under Settings, every card's `Same as Settings` option follows it, in place. */
+export function followPlatformInterval(app: App): void {
+  for (const option of document.querySelectorAll<HTMLElement>('#section-calendars option.bl-same-as-settings')) {
+    option.textContent = sameAsSettings(app);
   }
 }
 
 /**
- * The card's own check interval (SPEC 11.3 C, 9.1 item 19), under an Advanced disclosure at the bottom of the body:
- * empty uses Reload calendars every, under Settings, whose value the placeholder shows.
+ * The card's own check interval (SPEC 11.3 C, 9.1 item 19), a select under an Advanced disclosure at the bottom of the
+ * body: `Same as Settings` saves no `calendarSeconds`; the others save their seconds.
  */
 function intervalField(app: App, s: UiSource): HTMLElement {
-  return disclosure(SHELL.advanced, [grid(gridCell(6, numberField(CALENDARS.checkEvery, s.calendarSeconds ?? Number.NaN, (v) => {
-    s.calendarSeconds = Number.isNaN(v) ? null : v;
+  const saved = savedSource(app, s)?.calendarSeconds ?? null;
+  const options = [
+    { value: SAME_AS_SETTINGS, label: sameAsSettings(app), cls: 'bl-same-as-settings' },
+    ...intervalOptions(INTERVALS.sourceCalendarSeconds, s.calendarSeconds, saved),
+  ];
+  const value = s.calendarSeconds === null ? SAME_AS_SETTINGS : String(s.calendarSeconds);
+  const select = selectField(CALENDARS.checkEvery, value, options, (v) => {
+    s.calendarSeconds = v === SAME_AS_SETTINGS ? null : Number(v);
     app.changed();
-  }, {
-    path: sourcePath(s, 'calendarSeconds'), min: LIMITS.sourceCalendarSeconds[0], max: LIMITS.sourceCalendarSeconds[1],
-    placeholder: CALENDARS.checkEveryPlaceholder(Number.isFinite(app.config.calendarSeconds) ? app.config.calendarSeconds : DEFAULTS.calendarSeconds),
-    help: CALENDARS.checkEveryHelp,
-  })))], { cls: 'bl-source-advanced', open: s.calendarSeconds !== null });
+  }, { path: sourcePath(s, 'calendarSeconds'), help: CALENDARS.checkEveryHelp });
+  return disclosure(SHELL.advanced, [grid(gridCell(6, select))], { cls: 'bl-source-advanced', open: s.calendarSeconds !== null });
 }
 
 function sourceCard(app: App, s: UiSource): HTMLElement {
@@ -382,34 +429,73 @@ function sourceCard(app: App, s: UiSource): HTMLElement {
   });
 }
 
-/** Adds a card of the chosen type: a new id (SPEC 11.2 addition 3), open, with its Name field taking focus. */
-function addSource(app: App, type: SourceType): void {
+/**
+ * Adds a card of the chosen type: a new id (SPEC 11.2 addition 3), open, with its Name field taking focus. A published
+ * Outlook link is a Calendar URL card named Outlook, with its steps open and the Address taking focus (11.3 C).
+ */
+function addSource(app: App, type: SourceType, outlook = false): void {
   const s = emptySource(type, newId());
+  if (outlook) {
+    s.name = OUTLOOK.name;
+    app.ui.outlookCards.add(s.id);
+  }
   app.config.calendars.push(s);
   app.ui.expanded.add(s.id);
   app.ui.chooserOpen = false;
+  app.ui.chooserOutlook = false;
   app.changed();
   app.rerender('calendars');
   if (type === 'microsoft') {
-    app.rerender('colors');
+    statusesChanged(app);
   }
-  app.focusLater(sourcePath(s, 'name'));
+  app.focusLater(sourcePath(s, outlook ? 'url' : 'name'));
 }
 
-/** The chooser (shell rule R2): four tiles in Add calendar's place, and Cancel. */
+/** One of the two Outlook or Microsoft 365 options: a tile with its title, an optional badge, and its text. */
+function outlookOption(title: string, text: string, cls: string, onChoose: () => void, recommended = false): HTMLButtonElement {
+  const option = el('button', { type: 'button', class: `ns-chooser-tile bl-outlook-option ${cls}` },
+    el('span', { class: 'ns-tile-title' }, title, recommended ? ' ' : null, recommended ? badge(CHOOSER.recommended, 'connected') : null),
+    el('span', { class: 'form-text ns-tile-help' }, text),
+  );
+  option.addEventListener('click', onChoose);
+  return option;
+}
+
+/**
+ * The chooser (shell rule R2): four tiles in Add calendar's place, and Cancel. Outlook or Microsoft 365 shows its two
+ * options inline below the tiles (SPEC 11.3 C, from build 3.1): the published link first, recommended, then sign-in.
+ */
 function chooser(app: App): HTMLElement {
   const tiles = TYPES.map((type) => {
-    const tile = el('button', { type: 'button', class: 'ns-chooser-tile', 'data-type': type },
-      el('span', { class: 'ns-tile-title' }, SOURCE_TYPES[type].title),
-      el('span', { class: 'form-text ns-tile-help' }, SOURCE_TYPES[type].help),
+    const outlook = type === 'microsoft';
+    const expanded = outlook ? String(app.ui.chooserOutlook) : undefined;
+    const tile = el('button', { type: 'button', class: 'ns-chooser-tile', 'data-type': type, 'aria-expanded': expanded },
+      el('span', { class: 'ns-tile-title' }, outlook ? CHOOSER.outlookTitle : SOURCE_TYPES[type].title),
+      el('span', { class: 'form-text ns-tile-help' }, outlook ? CHOOSER.outlookHelp : SOURCE_TYPES[type].help),
     );
-    tile.addEventListener('click', () => addSource(app, type));
+    tile.addEventListener('click', () => {
+      if (!outlook) {
+        addSource(app, type);
+        return;
+      }
+      app.ui.chooserOutlook = true;
+      app.rerender('calendars');
+      document.querySelector<HTMLElement>('#section-calendars .bl-outlook-option')?.focus();
+    });
     return tile;
   });
+  const options = app.ui.chooserOutlook
+    ? el('div', { class: 'ns-chooser-tiles bl-outlook-options' },
+      outlookOption(CHOOSER.published, CHOOSER.publishedText, 'bl-outlook-published', () => addSource(app, 'url', true), true),
+      outlookOption(CHOOSER.signIn, CHOOSER.signInText, 'bl-outlook-signin', () => addSource(app, 'microsoft')),
+    )
+    : null;
   return el('div', { class: 'ns-chooser' },
     el('div', { class: 'ns-chooser-tiles' }, ...tiles),
+    options,
     outlineButton(CALENDARS.cancel, () => {
       app.ui.chooserOpen = false;
+      app.ui.chooserOutlook = false;
       app.rerender('calendars');
       document.querySelector<HTMLElement>('#section-calendars .ns-section-add')?.focus();
     }),

@@ -126,9 +126,6 @@ function sourceIssues(s: UiSource, all: UiSource[], ctx: ValidationContext, issu
     }
     break;
   }
-  if (s.calendarSeconds !== null && !wholeNumber(s.calendarSeconds, LIMITS.sourceCalendarSeconds)) {
-    add('calendarSeconds', VALIDATION.wholeNumber(LIMITS.sourceCalendarSeconds[0], LIMITS.sourceCalendarSeconds[1]));
-  }
   const listed = s.type === 'icloud' || (s.type === 'microsoft' && s.useCalendar);
   if (listed && ctx.listsShown?.has(s.id) && s.calendars.length === 0) {
     add('calendars', VALIDATION.chooseCalendar);
@@ -162,7 +159,5 @@ export function validate(config: UiConfig, ctx: ValidationContext = {}): UiIssue
   if (!config.name.trim()) {
     issues.push({ path: 'name', label: SETTINGS.heading, message: VALIDATION.required(SETTINGS.name) });
   }
-  number(issues, 'pollSeconds', SETTINGS.heading, SETTINGS.pollSeconds, config.pollSeconds, LIMITS.pollSeconds);
-  number(issues, 'calendarSeconds', SETTINGS.heading, SETTINGS.calendarSeconds, config.calendarSeconds, LIMITS.calendarSeconds);
   return issues;
 }

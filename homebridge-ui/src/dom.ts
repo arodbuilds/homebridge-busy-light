@@ -137,6 +137,7 @@ export function passwordField(label: string, value: string, onChange: (value: st
 export interface SelectOption {
   value: string;
   label: string;
+  cls?: string;
 }
 
 /** A labelled select; `onChange` receives the chosen value. */
@@ -144,7 +145,7 @@ export function selectField(label: string, value: string, options: SelectOption[
   const id = uniqueId();
   const select = el('select', { id, class: 'form-select' });
   for (const option of options) {
-    select.appendChild(el('option', { value: option.value, selected: option.value === value }, option.label));
+    select.appendChild(el('option', { value: option.value, selected: option.value === value, class: option.cls }, option.label));
   }
   select.value = value;
   select.addEventListener('change', () => onChange(select.value));

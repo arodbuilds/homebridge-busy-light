@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import * as copy from '../homebridge-ui/src/copy.js';
+import { formatDuration } from '../homebridge-ui/src/format.js';
 import { SENSOR_NAMES as PLUGIN_SENSOR_NAMES, STATUS_NAMES as PLUGIN_STATUS_NAMES } from '../src/model.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -25,7 +26,7 @@ const PLACEHOLDERS: Record<string, string[]> = {
   'RIGHT_NOW.stale': ['{relative time}'],
   'CALENDARS.lastChecked': ['{relative time}'],
   'CALENDARS.removeQuestion': ['{name}'],
-  'CALENDARS.checkEveryPlaceholder': ['{platform value}'],
+  'CALENDARS.sameAsSettings': ['{duration}'],
   'CALENDARS.eventsToday': ['{n}'],
   'TEST.result': ['{n}'],
   'TEST.http': ['{host}', '{code}'],
@@ -39,6 +40,13 @@ const PLACEHOLDERS: Record<string, string[]> = {
   'LIGHTS.usingBulb': ['{label}', '{host}'],
   'LIGHTS.usingBulbSilent': ['{label}', '{host}'],
   'STATUS_INPUT.portError': ['{port}'],
+  'STATUS_INPUT.addressChanged': ['{old}', '{new}'],
+  'COLORS.moreStatuses': ['{n}'],
+  'DURATIONS.minutes': ['{n}'],
+  'DURATIONS.seconds': ['{n}'],
+  'DURATIONS.minuteAndSeconds': ['{s}'],
+  'DURATIONS.minutesAndSeconds': ['{m}', '{s}'],
+  'DURATIONS.withDefault': ['{duration}'],
   'STATUS_INPUT.portHelp': ['{port}'],
   'STATUS_INPUT.fromApp': ['{app}'],
   'STATUS_INPUT.lastHeard': ['{relative time}'],
@@ -90,8 +98,14 @@ function strings(): Map<string, string> {
   for (const [key, ending] of Object.entries(copy.SENSOR_NAMES)) {
     out.set(`LIGHTS.sensor(${key})`, copy.LIGHTS.sensor('{name}', ending));
   }
+  // The durations the SPEC quotes for the interval selects (11.3 C and F), and the defaults it marks.
+  for (const seconds of [15, 30, 60, 90, 120, 180, 240, 300, 600]) {
+    out.set(`formatDuration(${seconds})`, formatDuration(seconds));
+  }
+  out.set('DURATIONS.withDefault(30)', copy.DURATIONS.withDefault(formatDuration(30)));
+  out.set('DURATIONS.withDefault(180)', copy.DURATIONS.withDefault(formatDuration(180)));
   // The number messages the SPEC quotes with their ranges filled in.
-  for (const [min, max] of [[60, 600], [1024, 65535], [1, 12]]) {
+  for (const [min, max] of [[1024, 65535], [1, 12]]) {
     out.set(`VALIDATION.wholeNumber(${min}, ${max})`, copy.VALIDATION.wholeNumber(min, max));
   }
   return out;
@@ -126,7 +140,9 @@ test('every string SPEC 11.3 quotes is in the copy module', () => {
   // `1:00 PM` is the SPEC's example of a time, which the page formats in the browser's locale.
   // Addresses and the setup code are built from data; `notListening` and `unauthorized` are /input/test error keys;
   // `Home app` is a sender name the plugin writes, which the page shows as data.
-  const notCopy = /^(\/|lifx\.|verificationUri$|use$|homebridge-|assets\/|busy-light|1:00 PM$|http:\/\/|busylight:\/\/|notListening$|unauthorized$|Home app$)/;
+  // `calendarSeconds`, `config.json` and the Outlook hosts name data the page reads or compares, not words it shows.
+  const notCopy = new RegExp('^(/|lifx\\.|verificationUri$|use$|homebridge-|assets/|busy-light|1:00 PM$|http://|busylight://|notListening$|unauthorized$'
+    + '|Home app$|calendarSeconds$|config\\.json$|outlook\\.(office365|office|live)\\.com$)');
   const missing = quoted.filter((q) => !notCopy.test(q) && !values.has(q) && !all.includes(q));
   assert.deepEqual(missing, []);
 });
