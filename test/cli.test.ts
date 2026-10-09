@@ -300,7 +300,42 @@ test('light reports a bulb that does not answer, and several bulbs without a nam
   net.bulbs = [{ ...DOOR }, { ...DESK }];
   result = await run('light');
   assert.deepEqual([result.code, result.out],
-    [1, ['More than one LIFX bulb was found: Desk, Office Door. Enter the name of the one to use in the plugin settings.']]);
+    [1, ['More than one LIFX bulb was found: Desk, Office Door. Choose the bulbs to use in the plugin settings.']]);
+});
+
+test('status prints one Light line per bulb from lights (SPEC 10.2 item 1, from build 3.2)', async () => {
+  writeConfig({});
+  fs.mkdirSync(path.join(storage, 'busy-light'));
+  fs.writeFileSync(path.join(storage, 'busy-light', 'state.json'), JSON.stringify({
+    version: 1, updatedAt: new Date(T0).toISOString(), status: 'available', reason: null, override: false, sources: [], signIn: null,
+    lights: [
+      { enabled: true, label: 'Office Door', host: DOOR.host, found: 'discovered', lastSent: '#00FF00', lastSentAt: new Date(T0).toISOString(),
+        answered: true },
+      { enabled: true, label: 'Desk', host: DESK.host, found: 'remembered', lastSent: '#00FF00', lastSentAt: new Date(T0).toISOString(),
+        answered: false },
+    ],
+  }));
+  const { code, out } = await run('status');
+  assert.equal(code, 0);
+  assert.deepEqual(out.slice(-2), [
+    `Light: Office Door at ${DOOR.host}, last sent #00FF00 at ${formatTime(T0)}, answered.`,
+    `Light: Desk at ${DESK.host}, last sent #00FF00 at ${formatTime(T0)}, no answer.`,
+  ]);
+});
+
+test('light with no bulb given sends to every chosen bulb, one answer line each, in the order of lifx.bulbs (SPEC 10.2 item 5)', async () => {
+  writeConfig({ lifx: { bulbs: ['Desk', DOOR.serial] } });
+  net.bulbs = [{ ...DOOR }, { ...DESK }];
+  let result = await run('light', 'off');
+  assert.deepEqual([result.code, result.out], [0, [
+    'LIFX bulbs found: Desk (192.168.4.51), Office Door (192.168.4.50). Using Desk, Office Door.',
+    'The LIFX bulb at 192.168.4.51 answered.',
+    'The LIFX bulb at 192.168.4.50 answered.',
+  ]]);
+  writeConfig({ lifx: { host: `${DOOR.host}, 192.168.4.60` } });
+  result = await run('light');
+  assert.deepEqual([result.code, result.out], [1, ['The LIFX bulb at 192.168.4.50 answered.', 'The LIFX bulb at 192.168.4.60 did not answer.']],
+    'a bulb that did not answer makes it exit 1');
 });
 
 test('review: check never starts a sign-in, even when the stored sign-in has expired', async () => {

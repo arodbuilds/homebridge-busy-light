@@ -29,8 +29,9 @@ export function bulbName(bulb: { label: string; serial: string }): string {
   return bulb.label || bulb.serial;
 }
 
-export function bulbsFound(bulbs: { label: string; serial: string; host: string }[], using: { label: string; serial: string }): string {
-  return `LIFX bulbs found: ${bulbs.map((b) => `${bulbName(b)} (${b.host})`).join(', ')}. Using ${bulbName(using)}.`;
+/** From build 3.2 every bulb in use, in the order of `lifx.bulbs` (SPEC 12, 13.3). */
+export function bulbsFound(bulbs: { label: string; serial: string; host: string }[], using: { label: string; serial: string }[]): string {
+  return `LIFX bulbs found: ${bulbs.map((b) => `${bulbName(b)} (${b.host})`).join(', ')}. Using ${using.map(bulbName).join(', ')}.`;
 }
 
 export function noBulb(): string {
@@ -38,10 +39,10 @@ export function noBulb(): string {
 }
 
 export function severalBulbs(bulbs: { label: string; serial: string }[]): string {
-  return `More than one LIFX bulb was found: ${bulbs.map(bulbName).join(', ')}. Enter the name of the one to use in the plugin settings.`;
+  return `More than one LIFX bulb was found: ${bulbs.map(bulbName).join(', ')}. Choose the bulbs to use in the plugin settings.`;
 }
 
-/** Not in the SPEC 12 table as first written; added in build 1 (SPEC 17) for a `lifx.bulb` that matches no bulb found. */
+/** Not in the SPEC 12 table as first written; added in build 1 (SPEC 17) for a bulb named in `lifx.bulbs` that matches no bulb found. */
 export function bulbNotNamed(wanted: string, bulbs: { label: string; serial: string; host: string }[]): string {
   return `No LIFX bulb named ${wanted} was found. Bulbs found: ${bulbs.map((b) => `${bulbName(b)} (${b.host})`).join(', ')}.`;
 }
@@ -97,8 +98,10 @@ export function formatWhen(ms: number, now: number): string {
 }
 
 /** `light on at {host}`, `light on` while the bulb is still being found, or `light off`. */
-export function startup(version: string, calendars: number, light: { enabled: boolean; host: string | null }, sensors: number): string {
-  const lightPart = !light.enabled ? 'off' : light.host ? `on at ${light.host}` : 'on';
+/** `light on ({n} bulbs)` from build 3.2, when more than one bulb is chosen (SPEC 12). */
+export function startup(version: string, calendars: number, light: { enabled: boolean; hosts: string[] }, sensors: number): string {
+  const n = light.hosts.length;
+  const lightPart = !light.enabled ? 'off' : n > 1 ? `on (${n} bulbs)` : n === 1 ? `on at ${light.hosts[0]}` : 'on';
   return `Busy Light ${version}: ${count(calendars, 'calendar')}, light ${lightPart}, ${count(sensors, 'sensor')}.`;
 }
 

@@ -25,7 +25,7 @@ import { STATUS_NAMES, isStatusKey } from './model.js';
 import { PLATFORM_NAME, STORAGE_DIR } from './names.js';
 import { SourceRunner } from './sources.js';
 import type { SourceState } from './sources.js';
-import { readState } from './state.js';
+import { lightsOf, readState } from './state.js';
 import { readInstanceId } from './status-api.js';
 import { isActive, resolve } from './status.js';
 
@@ -134,15 +134,17 @@ async function cmdStatus(storage: string, io: CliIo): Promise<number> {
     const source = state.sources.find((s) => s.id === state.signIn!.id);
     io.out(microsoftCode(source?.name ?? state.signIn.id, state.signIn.verificationUri, state.signIn.userCode));
   }
-  const light = state.light;
-  if (!light.enabled) {
-    io.out('Light: not used.');
-  } else if (!light.host) {
-    io.out('Light: no bulb chosen yet.');
-  } else {
-    const name = light.label ? `${light.label} at ${light.host}` : light.host;
-    const sent = light.lastSent ? `, last sent ${light.lastSent} at ${time(light.lastSentAt)}, ${light.answered ? 'answered' : 'no answer'}` : '';
-    io.out(`Light: ${name}${sent}.`);
+  // One line per bulb (SPEC 10.2 item 1, from build 3.2); a state file from before it has one `light`.
+  for (const light of lightsOf(state)) {
+    if (!light.enabled) {
+      io.out('Light: not used.');
+    } else if (!light.host) {
+      io.out('Light: no bulb chosen yet.');
+    } else {
+      const name = light.label ? `${light.label} at ${light.host}` : light.host;
+      const sent = light.lastSent ? `, last sent ${light.lastSent} at ${time(light.lastSentAt)}, ${light.answered ? 'answered' : 'no answer'}` : '';
+      io.out(`Light: ${name}${sent}.`);
+    }
   }
   return 0;
 }
@@ -271,18 +273,17 @@ async function cmdLight(storage: string, args: string[], io: CliIo): Promise<num
     host = bulb.host;
     answered = await client.sendColor(host, bulb.serial, color, config.lifx.brightness, 1000);
   } else {
+    // Every bulb the plugin would choose, at the same moment, with one answer line each (SPEC 10.2 item 5, 13.3).
     const light = new LightController({
-      config: { ...config.lifx, enabled: true }, client, log, storageDir: path.join(storage, STORAGE_DIR), remember: false, now: io.now,
+      config: { ...config.lifx, enabled: true }, client, log, storageDir: path.join(storage, STORAGE_DIR), remember: false, reportSends: false,
+      now: io.now,
     });
     await light.start();
-    if (!light.host) {
-      return 1;
+    const results = await light.send(color, 1000);
+    for (const result of results) {
+      io.out(result.answered ? `The LIFX bulb at ${result.host} answered.` : bulbSilent(result.host));
     }
-    answered = (await light.send(color, 1000)) === true;
-    if (answered) {
-      io.out(`The LIFX bulb at ${light.host} answered.`);
-    }
-    return answered ? 0 : 1; // a bulb that did not answer has been reported by the controller
+    return results.length > 0 && results.every((r) => r.answered) ? 0 : 1;
   }
   io.out(answered ? `The LIFX bulb at ${host} answered.` : bulbSilent(host));
   return answered ? 0 : 1;

@@ -66,12 +66,26 @@ export interface StateFile {
   override: boolean;
   sources: SourceStateEntry[];
   signIn: SignInState | null;
-  light: LightState;
+  /**
+   * One entry per chosen bulb, or one entry as `light` was while none is chosen (SPEC 10.1 item 5, from build 3.2).
+   * Absent in a state file written before build 3.2, which has `light`.
+   */
+  lights?: LightState[];
+  /** Before build 3.2: the one bulb. Read through `lightsOf`. */
+  light?: LightState;
   /** From build 3; absent in a state file written by build 2. */
   statusInput?: StatusInputState;
   inputs?: InputStateEntry[];
   /** The meeting warning while it is on, the meeting's start as an ISO time (SPEC 6.7, from build 3.2). */
   meetingWarning?: { meetingAt: string } | null;
+}
+
+/** The bulbs of a state file: `lights`, or a `light` written before build 3.2 as one entry (SPEC 10.1 item 5). */
+export function lightsOf(state: Pick<StateFile, 'lights' | 'light'>): LightState[] {
+  if (Array.isArray(state.lights)) {
+    return state.lights;
+  }
+  return state.light ? [state.light] : [];
 }
 
 export function stateFile(storageDir: string): string {

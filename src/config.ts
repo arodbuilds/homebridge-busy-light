@@ -78,10 +78,13 @@ export type SourceConfig = ICloudSourceConfig | GoogleSourceConfig | MicrosoftSo
 
 export interface LifxConfig {
   enabled: boolean;
-  /** A bulb's name as shown in the LIFX app, or its serial number. Empty when not set. */
-  bulb: string;
-  /** An IPv4 address or host name. Empty when not set. */
-  host: string;
+  /**
+   * The bulbs wanted, each a name as shown in the LIFX app or a serial number (SPEC 9.1 item 6): `lifx.bulbs`, or a
+   * saved `lifx.bulb` as a list of one. Empty when none is named.
+   */
+  bulbs: string[];
+  /** The addresses of `lifx.host`, separated by commas there, each a bulb. Empty when not set. */
+  hosts: string[];
   /** 1 to 100. */
   brightness: number;
   /** 0 sends only on a status change. */
@@ -164,7 +167,7 @@ export function defaultConfig(): BusyLightConfig {
     name: DEFAULT_NAME,
     calendars: [],
     colors: { ...DEFAULT_COLORS },
-    lifx: { enabled: false, bulb: '', host: '', brightness: 100, refreshSeconds: 300 },
+    lifx: { enabled: false, bulbs: [], hosts: [], brightness: 100, refreshSeconds: 300 },
     sensors: [...DEFAULT_SENSORS],
     overrideSwitch: false,
     pollSeconds: 30,
@@ -583,12 +586,19 @@ function readLifx(raw: unknown, issues: Issues): LifxConfig {
     return lifx;
   }
   lifx.enabled = readBoolean(raw.enabled, 'lifx.enabled', lifx.enabled, issues);
-  lifx.bulb = readText(raw.bulb, 'lifx.bulb', '', issues);
-  const host = readText(raw.host, 'lifx.host', '', issues);
-  if (host && !isHost(host)) {
+  // From build 3.2 a list; a saved lifx.bulb is read as a list of one while lifx.bulbs is absent.
+  if (isMissing(raw.bulbs)) {
+    const one = readText(raw.bulb, 'lifx.bulb', '', issues);
+    lifx.bulbs = one ? [one] : [];
+  } else {
+    lifx.bulbs = readTextList(raw.bulbs, 'lifx.bulbs', [], issues);
+  }
+  // One or more addresses separated by commas; one that is not an address leaves them all out (SPEC 17).
+  const hosts = readText(raw.host, 'lifx.host', '', issues).split(',').map((h) => h.trim()).filter((h) => h !== '');
+  if (hosts.some((h) => !isHost(h))) {
     issues.warn('lifx.host', 'must be an IPv4 address or host name');
   } else {
-    lifx.host = host;
+    lifx.hosts = hosts;
   }
   lifx.brightness = readInteger(raw.brightness, 'lifx.brightness', lifx.brightness, 1, 100, 'must be a whole number from 1 to 100', issues);
   lifx.refreshSeconds = readInteger(raw.refreshSeconds, 'lifx.refreshSeconds', lifx.refreshSeconds, 0, MAX_REFRESH_SECONDS,

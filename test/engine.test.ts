@@ -103,9 +103,10 @@ test('a status change: the line, the sensors, the state file and the bulb', asyn
   assert.deepEqual(state.sources, [{
     id: 'rota', name: 'Rota', type: 'url', state: 'connected', lastChecked: new Date(T0).toISOString(), events: 1, error: null,
   }]);
-  assert.deepEqual(state.light, {
+  assert.deepEqual(state.lights, [{
     enabled: true, label: null, host: DOOR.host, found: 'configured', lastSent: '#FF0000', lastSentAt: new Date(T0).toISOString(), answered: true,
-  });
+  }]);
+  assert.equal(state.light, undefined, 'from build 3.2 the state file has lights only');
   assert.equal(state.signIn, null);
   assert.equal(state.override, false);
   const color = lifxColors();
@@ -810,4 +811,50 @@ test('the warning begins on time while a calendar check waits on a slow server (
   await e.idle();
   assert.deepEqual(e.meetingWarning, { meetingAt: start }, 'begun on time while the second check waits');
   assert.deepEqual(packets().slice(-2), [['power', FULL, 0], ['color', RED, FULL, 60_000]]);
+});
+
+// Build 3.2: several bulbs (SPEC 13.3, C8 of the build prompt): every send goes to every chosen bulb.
+
+const STATUS_LIGHT = { serial: 'd073d5000004', label: 'Status Light', host: '192.168.4.21', answers: true };
+
+/** As `packets`, for any bulb. */
+function packetsTo(host: string): Packet[] {
+  return net.sent.filter((s) => s.to === host).flatMap((s): Packet[] => {
+    const h = parseHeader(s.buf)!;
+    if (h.type === MSG.SetColor) {
+      return [['color', s.buf.readUInt16LE(37), s.buf.readUInt16LE(41), s.buf.readUInt32LE(45)]];
+    }
+    return h.type === MSG.SetPower ? [['power', s.buf.readUInt16LE(36), s.buf.readUInt32LE(38)]] : [];
+  });
+}
+
+test('two bulbs show the status together: the change, the refresh, the warning fade and the Working switch off reach both (SPEC 13.3)', async () => {
+  const start = T0 + 10 * MIN;
+  const e = warned(() => icsOf([['meeting', start, start + 30 * MIN]]),
+    { lifx: { enabled: true, host: `${DOOR.host}, ${STATUS_LIGHT.host}`, refreshSeconds: 60 }, workingSwitch: { enabled: true } });
+  net.bulbs = [{ ...DOOR }, { ...STATUS_LIGHT }];
+  e.start();
+  await settle();
+  await e.idle();
+  assert.equal(log.lines('info')[0], 'Busy Light 0.1.0-beta.1: 1 calendar, light on (2 bulbs), 3 sensors.');
+  const both = (expected: Packet[], what: string) => {
+    assert.deepEqual(packetsTo(DOOR.host), expected, `${what}: Office Door`);
+    assert.deepEqual(packetsTo(STATUS_LIGHT.host), expected, `${what}: Status Light`);
+    net.sent = [];
+  };
+  both([['color', GREEN, FULL, 1000], ['power', FULL, 1000]], 'the first status');
+  assert.deepEqual(readState(dir)!.lights!.map((l) => [l.host, l.found, l.lastSent, l.answered]), [
+    [DOOR.host, 'configured', '#00FF00', true], [STATUS_LIGHT.host, 'configured', '#00FF00', true],
+  ]);
+  await clock.advance(60_000);
+  await e.idle();
+  both([['color', GREEN, FULL, 0], ['power', FULL, 0]], 'the refresh');
+  await clock.advance(7 * MIN - 1);
+  net.sent = [];
+  await clock.advance(1);
+  await e.idle();
+  both([['power', FULL, 0], ['color', RED, FULL, 120_000]], 'the meeting warning');
+  await e.setWorking(false);
+  await e.idle();
+  both([['power', 0, 1000]], 'the Working switch turned off');
 });

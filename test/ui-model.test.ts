@@ -36,7 +36,10 @@ describe('settings page model (SPEC section 9)', () => {
     const page = exportConfig(emptyConfig());
     const plugin = defaultConfig();
     assert.deepEqual(page, {
-      platform: 'BusyLight', name: plugin.name, calendars: [], colors: plugin.colors, lifx: plugin.lifx, sensors: plugin.sensors,
+      platform: 'BusyLight', name: plugin.name, calendars: [], colors: plugin.colors, sensors: plugin.sensors,
+      // The file's lifx block: the plugin reads its host as a list of addresses (from build 3.2).
+      lifx: { enabled: plugin.lifx.enabled, bulb: '', host: plugin.lifx.hosts.join(', '), brightness: plugin.lifx.brightness,
+        refreshSeconds: plugin.lifx.refreshSeconds },
       overrideSwitch: plugin.overrideSwitch, pollSeconds: plugin.pollSeconds, calendarSeconds: plugin.calendarSeconds,
       ignoreAllDayBusy: plugin.ignoreAllDayBusy, outOfOfficeWords: plugin.outOfOfficeWords, debug: plugin.debug,
       statusInput: plugin.statusInput, callSwitch: plugin.callSwitch, meetingWarningSeconds: plugin.meetingWarningSeconds,

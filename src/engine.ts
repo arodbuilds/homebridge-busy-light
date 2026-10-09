@@ -189,7 +189,7 @@ export class BusyLightEngine {
   start(): void {
     this.inputs.load(this.clock.now());
     void this.light.start();
-    this.log.info(startup(this.options.version, this.sources.length, { enabled: this.light.enabled, host: this.light.host },
+    this.log.info(startup(this.options.version, this.sources.length, { enabled: this.light.enabled, hosts: this.light.hosts },
       this.config.sensors.length));
     if (this.sources.length === 0) {
       this.log.warn(noCalendars());
@@ -459,7 +459,7 @@ export class BusyLightEngine {
       signIn: waiting && code
         ? { id: waiting.config.id, verificationUri: code.verificationUri, userCode: code.userCode, expiresAt: new Date(code.expiresAt).toISOString() }
         : null,
-      light: this.light.state(),
+      lights: this.light.lights(),
       statusInput: {
         enabled: this.config.statusInput.enabled, port: this.config.statusInput.port, ...this.inputServerStatus(),
         reported: Object.fromEntries(Object.entries(this.inputs.reported()).map(([status, at]) => [status, new Date(at).toISOString()])),
