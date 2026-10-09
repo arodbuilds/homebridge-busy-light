@@ -6,7 +6,7 @@ import { clearDraft, readDraft, saveDraft, stableStringify } from './draft.js';
 import { renderFooter, type FooterHandle } from './footer.js';
 import { exportConfig, isInputKey, newInputKey, PLATFORM, readConfig, restoreSecrets, withoutSecrets, type UiConfig } from './model.js';
 import { calendarsOnStatus, renderCalendars } from './sections/calendars.js';
-import { renderColors } from './sections/colors.js';
+import { colorsOnStatus, renderColors } from './sections/colors.js';
 import { lightsOnStatus, renderLights } from './sections/lights.js';
 import { renderRightNow } from './sections/right-now.js';
 import { renderSettings } from './sections/settings.js';
@@ -37,7 +37,7 @@ const SECTIONS: SectionDef[] = [
   { key: 'rightNow', title: RIGHT_NOW.heading, help: '', render: renderRightNow, onStatus: (app) => app.rerender('rightNow') },
   { key: 'calendars', title: CALENDARS.heading, help: CALENDARS.help, render: renderCalendars, onStatus: calendarsOnStatus },
   { key: 'statusInput', title: STATUS_INPUT.heading, help: '', render: renderStatusInput, onStatus: statusInputOnStatus },
-  { key: 'colors', title: COLORS.heading, help: COLORS.help, render: renderColors },
+  { key: 'colors', title: COLORS.heading, help: COLORS.help, render: renderColors, onStatus: colorsOnStatus },
   { key: 'lights', title: LIGHTS.heading, help: '', render: renderLights, onStatus: lightsOnStatus },
   { key: 'settings', title: SETTINGS.heading, help: '', render: renderSettings },
 ];

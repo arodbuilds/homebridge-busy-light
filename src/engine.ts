@@ -460,7 +460,10 @@ export class BusyLightEngine {
         ? { id: waiting.config.id, verificationUri: code.verificationUri, userCode: code.userCode, expiresAt: new Date(code.expiresAt).toISOString() }
         : null,
       light: this.light.state(),
-      statusInput: { enabled: this.config.statusInput.enabled, port: this.config.statusInput.port, ...this.inputServerStatus() },
+      statusInput: {
+        enabled: this.config.statusInput.enabled, port: this.config.statusInput.port, ...this.inputServerStatus(),
+        reported: Object.fromEntries(Object.entries(this.inputs.reported()).map(([status, at]) => [status, new Date(at).toISOString()])),
+      },
       meetingWarning: this.meetingWarning ? { meetingAt: new Date(this.meetingWarning.meetingAt).toISOString() } : null,
       inputs: this.inputs.list(this.clock.now()).map((e) => ({
         sender: e.sender,

@@ -175,8 +175,26 @@ test('nothing in inputs.json but names, statuses, apps, times and ts', () => {
   store.report(api(MAC, 'inCall', { app: 'Microsoft Teams' }), T0);
   store.recordTs(MAC, T0, T0);
   const raw = JSON.parse(fs.readFileSync(path.join(dir, 'inputs.json'), 'utf8')) as { senders: Record<string, unknown>[] };
-  assert.deepEqual(Object.keys(raw), ['version', 'senders', 'replay']);
+  assert.deepEqual(Object.keys(raw), ['version', 'senders', 'replay', 'reported']);
   assert.deepEqual(Object.keys(raw.senders[0]), ['sender', 'status', 'app', 'via', 'auth', 'lastHeard', 'expiresAt', 'active']);
+});
+
+test('when each status was last reported through the API is kept in inputs.json, across a reload (SPEC 18.7 item 8)', () => {
+  fs.writeFileSync(file, JSON.stringify({ version: 1, senders: [], replay: [] }));
+  const store = loaded();
+  store.report(api(MAC, 'busy'), T0);
+  store.report(api('Other Mac', 'away'), T0 + 5000);
+  store.report(api(MAC, 'busy'), T0 + 9000);
+  store.report({ sender: 'Home app', status: 'inCall', app: null, via: 'switch', auth: null, ttlMs: null }, T0 + 9000);
+  store.clear(MAC, 'plain', T0 + 10_000);
+  assert.deepEqual(store.reported(), { busy: T0 + 9000, away: T0 + 5000 }, 'the switch and clear are not reports of a status');
+  const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as { reported: Record<string, string> };
+  assert.deepEqual(raw.reported, { busy: new Date(T0 + 9000).toISOString(), away: new Date(T0 + 5000).toISOString() });
+  const again = loaded();
+  assert.deepEqual(again.reported(), { busy: T0 + 9000, away: T0 + 5000 });
+  fs.writeFileSync(file, JSON.stringify({ version: 1, senders: [], replay: [], reported: { busy: 'nonsense', clear: new Date(T0).toISOString(),
+    tentative: new Date(T0).toISOString(), offline: new Date(T0).toISOString() } }));
+  assert.deepEqual(loaded().reported(), { offline: T0 }, 'anything that is not a reportable status and a time is dropped');
 });
 
 test('a signed report or clear records its ts in the same step that accepts it; a refused report records nothing', () => {

@@ -41,7 +41,8 @@ export interface StatusData {
   sources: StatusSource[];
   signIn: unknown;
   light: { enabled: boolean; label: string | null; host: string | null; found: string | null; answered?: boolean | null } | null;
-  statusInput?: { enabled: boolean; port: number; listening: boolean; error: string | null; id: string | null };
+  /** `reported` (from build 3.2): when each status was last reported through the status API (SPEC 18.7 item 8). */
+  statusInput?: { enabled: boolean; port: number; listening: boolean; error: string | null; id: string | null; reported?: Partial<Record<StatusKey, string>> };
   inputs?: StatusInputEntry[];
   /** The meeting warning while it is on (SPEC 6.7, from build 3.2). */
   meetingWarning?: { meetingAt: string } | null;
@@ -161,6 +162,8 @@ export interface UiState {
   issuesExpanded: boolean;
   /** Colors shows every status, not only those the setup can produce (SPEC 11.3 D). */
   colorsExpanded: boolean;
+  /** The statuses Colors was last drawn with, so a /status answer redraws it only when they change. */
+  colorsShown?: string;
 }
 
 /** What a section needs from the page. */

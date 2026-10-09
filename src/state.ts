@@ -31,6 +31,8 @@ export interface StatusInputState {
   advertised?: string | null;
   /** The last change from one IPv4 address to another (18.11 item 6; from build 3.1). */
   addressChange?: AddressChange | null;
+  /** When each status was last reported through the status API, as ISO times (18.7 item 8; from build 3.2). */
+  reported?: Partial<Record<InputStatus, string>>;
 }
 
 /** A change of the address senders were given (SPEC 18.11 item 6), `at` an ISO time. */

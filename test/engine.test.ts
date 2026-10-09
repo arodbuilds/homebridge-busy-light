@@ -566,7 +566,8 @@ test('the state file carries the status input, the senders with how they authent
   await engine!.report(call());
   await engine!.report(call({ sender: 'Test on my laptop', status: 'away', app: null, auth: 'plain' }));
   const state = readState(dir)!;
-  assert.deepEqual(state.statusInput, { enabled: true, port: 8582, listening: false, error: null, id: null });
+  assert.deepEqual(state.statusInput, { enabled: true, port: 8582, listening: false, error: null, id: null,
+    reported: { inCall: new Date(T0).toISOString(), away: new Date(T0).toISOString() } });
   assert.deepEqual(state.reason, { source: MAC, until: null, app: 'Microsoft Teams' });
   assert.deepEqual(state.inputs, [
     { sender: MAC, status: 'inCall', app: 'Microsoft Teams', via: 'api', auth: 'signed', lastHeard: new Date(T0).toISOString(),
@@ -578,7 +579,8 @@ test('the state file carries the status input, the senders with how they authent
   assert.ok(!raw.includes(INPUT_KEY), 'the key is never in the state file');
   engine!.inputServerStatus = () => ({ listening: true, error: null, id: 'q3Lr8vT0cXw2mN5a' });
   engine!.writeState();
-  assert.deepEqual(readState(dir)!.statusInput, { enabled: true, port: 8582, listening: true, error: null, id: 'q3Lr8vT0cXw2mN5a' });
+  assert.deepEqual(readState(dir)!.statusInput, { enabled: true, port: 8582, listening: true, error: null, id: 'q3Lr8vT0cXw2mN5a',
+    reported: { inCall: new Date(T0).toISOString(), away: new Date(T0).toISOString() } });
 });
 
 // Build 3.2: the Working switch (SPEC 6.6).

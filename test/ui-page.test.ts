@@ -868,9 +868,12 @@ describe('settings page: Colors (SPEC 11.3 D)', () => {
     assert.deepEqual(names(), ['Out of office', 'In a call', 'In a meeting', 'Tentative', 'Available'], 'the switch adds In a call');
     assert.equal(text(root.querySelector('#section-colors .bl-more-statuses span')), copy.COLORS.moreStatuses(4));
     tick(field(root, 'statusInput.enabled'), true);
-    assert.deepEqual(names(), ALL, 'the status input: all nine');
-    assert.equal(root.querySelector('#section-colors .bl-more-statuses'), null, 'nothing hidden, no line');
+    assert.deepEqual(names(), ['Out of office', 'In a call', 'In a meeting', 'Tentative', 'Available'],
+      'the status input alone adds no more from build 3.2 (SPEC 11.3 D)');
+    tick(field(root, 'callSwitch.enabled'), false);
+    assert.deepEqual(names(), ['Out of office', 'In a call', 'In a meeting', 'Tentative', 'Available'], 'the status input gives In a call');
     tick(field(root, 'statusInput.enabled'), false);
+    tick(field(root, 'callSwitch.enabled'), true);
     tick(field(root, 'callSwitch.enabled'), false);
     assert.deepEqual(names(), ['Out of office', 'In a meeting', 'Tentative', 'Available'], 'turned off, the rows hide again');
     buttonNamed(root.querySelector('#section-calendars')!, copy.CALENDARS.add).click();
@@ -885,6 +888,30 @@ describe('settings page: Colors (SPEC 11.3 D)', () => {
     assert.deepEqual(names(), ALL, 'a Microsoft 365 source with Teams status: all nine');
     tick(teams, false);
     assert.deepEqual(names(), ['Out of office', 'In a meeting', 'Tentative', 'Available'], 'Teams status off: hidden again');
+  });
+
+  it('an app\'s report in the last 30 days shows its status, with the singular line for one left (SPEC 11.3 D, from build 3.2)', async () => {
+    const day = 86_400_000;
+    const ago = (days: number) => new Date(T - days * day).toISOString();
+    answers.set('/version', { version: '0.1.0-beta.5' });
+    answers.set('/status', state({ statusInput: { enabled: true, port: 8582, listening: true, error: null, id: null,
+      reported: { busy: ago(2), away: ago(29), doNotDisturb: ago(31) } } }));
+    const { root, page } = mount({ platform: 'BusyLight', calendars: [ICLOUD_SOURCE], statusInput: { enabled: true, key: 'c'.repeat(43) } });
+    const names = (): string[] => root.querySelectorAll('#section-colors .bl-color-row').map((r) => text(r.querySelector('.bl-color-name')));
+    assert.deepEqual(names(), ['Out of office', 'In a call', 'In a meeting', 'Tentative', 'Available'], 'before /status answers');
+    page.startPolling();
+    await flush();
+    assert.deepEqual(names(), ['Out of office', 'In a call', 'In a meeting', 'Busy', 'Tentative', 'Away', 'Available'],
+      'Busy and Away were reported within 30 days; Do not disturb 31 days ago');
+    assert.equal(text(root.querySelector('#section-colors .bl-more-statuses span')), copy.COLORS.moreStatuses(2));
+    const sensors = root.querySelectorAll('#section-lights details.bl-all-sensors .form-check').map((c) => text(c.querySelector('.form-check-label')));
+    assert.deepEqual(sensors.slice(0, 5), ['Busy Light In a Meeting', 'Busy Light In a Call', 'Busy Light Busy in Teams', 'Busy Light Tentative',
+      'Busy Light Away'], 'the sensors follow the same rule');
+    answers.set('/status', state({ statusInput: { enabled: true, port: 8582, listening: true, error: null, id: null,
+      reported: { busy: ago(2), away: ago(1), doNotDisturb: ago(1) } } }));
+    await dom.clock.advance(15_000);
+    assert.equal(text(root.querySelector('#section-colors .bl-more-statuses span')), copy.COLORS.moreStatus, 'one left: the singular');
+    assert.equal(copy.COLORS.moreStatus, '1 more status comes from Teams or from other apps.');
   });
 
   it('hidden rows keep their saved colors on Save, and Reset colors resets all nine', async () => {
@@ -1629,8 +1656,9 @@ describe('settings page: the per-status sensors and the statuses the setup can p
   const sensors = (root: FakeElement): Array<[string, string]> => root.querySelectorAll('#section-lights details.bl-all-sensors .form-check')
     .map((c) => [text(c.querySelector('.form-check-label')), text(c.querySelector('.form-text'))]);
 
-  it('with the status input on, every status can happen: section 7 order, no help; Meeting Soon last while the warning is off', () => {
-    const { root } = mount({ platform: 'BusyLight', statusInput: { enabled: true, key: 'c'.repeat(43) } });
+  it('with Teams status, every status can happen: section 7 order, no help; Meeting Soon last while the warning is off', () => {
+    const { root } = mount({ platform: 'BusyLight', calendars: [{ type: 'microsoft', id: 'work', name: 'Work', tenantId: '11111111-2222-3333-4444-555555555555',
+      clientId: '66666666-7777-8888-9999-000000000000', useTeamsStatus: true, useCalendar: true }] });
     assert.deepEqual(sensors(root), [['Busy Light In a Meeting', ''], ['Busy Light In a Call', ''], ['Busy Light Do Not Disturb', ''],
       ['Busy Light Busy in Teams', ''], ['Busy Light Tentative', ''], ['Busy Light Away', ''], ['Busy Light Offline', ''],
       ['Busy Light Meeting Soon', `${copy.LIGHTS.meetingSoonHelp} ${copy.LIGHTS.nothingReports}`]]);
@@ -1788,7 +1816,7 @@ describe('settings page: the owner\'s configuration, opened and saved back (buil
     const { root, page } = mount(OWNER);
     await settle();
     assert.deepEqual(page.issues(), []);
-    assert.equal(root.querySelectorAll('#section-colors .bl-color-row').length, 9, 'the status input and the switch are on');
+    assert.equal(root.querySelectorAll('#section-colors .bl-color-row').length, 5, 'the status input and the switch: In a call joins the four');
     assert.deepEqual([field(root, 'pollSeconds').value, field(root, 'calendarSeconds').value], ['30', '180']);
     assert.ok(openCard(root, 'office').querySelector('details.bl-outlook-howto'));
     assert.equal(field(root, 'calendars.office.calendarSeconds').value, '', 'Same as Settings');

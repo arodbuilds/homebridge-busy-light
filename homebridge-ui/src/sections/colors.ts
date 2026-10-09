@@ -11,31 +11,52 @@
 import type { App } from '../app.js';
 import { COLORS, STATUS_NAMES, type StatusKey } from '../copy.js';
 import { el, linkButton, paragraph, uniqueId } from '../dom.js';
+import { parseDate } from '../format.js';
 import { DEFAULTS, STATUS_KEYS } from '../model.js';
 
 /** The statuses only a live source can give: Teams presence, another app, or (In a call) the On a Call switch. */
 const LIVE: readonly StatusKey[] = ['doNotDisturb', 'inCall', 'busy', 'away', 'offline'];
 
+/** An app's report shows a status's row for this long after it (SPEC 11.3 D, from build 3.2). */
+export const REPORTED_SHOWS_MS = 30 * 86_400_000;
+
 /**
- * Whether a status can happen with the configuration on the page, as edited (SPEC 11.3 D): Out of office, In a meeting,
- * Tentative and Available always; In a call with the On a Call switch, the status input or Teams status; Do not
- * disturb, Busy, Away and Offline with the status input or Teams status.
+ * Whether a status can happen with the configuration on the page, as edited, and the reports the running plugin has
+ * seen (SPEC 11.3 D): Out of office, In a meeting, Tentative and Available always; In a call with the On a Call switch,
+ * the status input or Teams status; Do not disturb, Busy, Away and Offline with Teams status, or once an app has
+ * reported that status in the last 30 days. The status input alone no longer shows those four (build 3.2).
  */
 export function canHappen(app: App, key: StatusKey): boolean {
   if (!LIVE.includes(key)) {
     return true;
   }
   const c = app.config;
-  if (c.statusInput.enabled || c.calendars.some((s) => s.type === 'microsoft' && s.useTeamsStatus)) {
+  if (c.calendars.some((s) => s.type === 'microsoft' && s.useTeamsStatus)) {
     return true;
   }
-  return key === 'inCall' && c.callSwitch.enabled;
+  if (key === 'inCall') {
+    return c.callSwitch.enabled || c.statusInput.enabled;
+  }
+  const at = parseDate(app.status?.statusInput?.reported?.[key]);
+  return at !== null && Date.now() - at.getTime() <= REPORTED_SHOWS_MS;
+}
+
+/** Which statuses can happen, as one value, so a /status answer redraws Colors and the sensors only when it changes. */
+function shownKey(app: App): string {
+  return STATUS_KEYS.filter((key) => canHappen(app, key)).join(',');
 }
 
 /** The status input, the On a Call switch or a source's Teams status changed: Colors and the sensors follow. */
 export function statusesChanged(app: App): void {
   app.rerender('colors');
   app.rerender('lights');
+}
+
+/** After each /status answer: a status reported for the first time in 30 days shows its row (SPEC 11.3 D). */
+export function colorsOnStatus(app: App): void {
+  if (app.ui.colorsShown !== shownKey(app)) {
+    statusesChanged(app);
+  }
 }
 
 const HEX = /^#[0-9a-f]{6}$/i;
@@ -176,12 +197,13 @@ function colorRow(app: App, key: StatusKey): HTMLElement {
 }
 
 export function renderColors(app: App, container: HTMLElement): void {
+  app.ui.colorsShown = shownKey(app);
   const hidden = STATUS_KEYS.filter((key) => !canHappen(app, key));
   const shown = app.ui.colorsExpanded ? STATUS_KEYS : STATUS_KEYS.filter((key) => canHappen(app, key));
   const rows = shown.map((key) => colorRow(app, key));
   // The statuses the setup cannot produce wait behind one line; their saved colors are kept as they are.
   const more = hidden.length === 0 ? null : el('div', { class: 'bl-more-statuses form-text' },
-    el('span', {}, COLORS.moreStatuses(hidden.length)), ' ',
+    el('span', {}, hidden.length === 1 ? COLORS.moreStatus : COLORS.moreStatuses(hidden.length)), ' ',
     linkButton(app.ui.colorsExpanded ? COLORS.showFewer : COLORS.showAll, () => {
       app.ui.colorsExpanded = !app.ui.colorsExpanded;
       app.rerender('colors');

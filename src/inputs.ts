@@ -105,6 +105,8 @@ export class SenderStore {
   private expiredUnseen: string[] = [];
   /** The startup floor (SPEC 18.7 item 7), when inputs.json could not be read at startup. */
   private floor: number | null = null;
+  /** When each status was last reported through the status API (SPEC 18.7 item 8). */
+  private readonly reportedAt = new Map<InputStatus, number>();
 
   /** `file` is null to keep everything in memory. */
   constructor(private readonly file: string | null, private readonly onError: (err: Error) => void = () => undefined) {}
@@ -117,7 +119,7 @@ export class SenderStore {
    * of 18.7 item 7 applies for 300 seconds.
    */
   load(now: number): void {
-    const raw = this.file ? readJson(this.file) as { version?: number; senders?: unknown; replay?: unknown } | null : null;
+    const raw = this.file ? readJson(this.file) as { version?: number; senders?: unknown; replay?: unknown; reported?: unknown } | null : null;
     const readable = raw !== null && typeof raw === 'object' && raw.version === 1;
     const senders = readable && Array.isArray(raw.senders) ? raw.senders : [];
     this.entries = senders.map(readEntry).filter((e): e is SenderEntry => e !== null);
@@ -134,8 +136,21 @@ export class SenderStore {
       }
     }
     this.pruneReplay(now);
+    this.reportedAt.clear();
+    const reported = readable && typeof raw.reported === 'object' && raw.reported !== null ? raw.reported as Record<string, unknown> : {};
+    for (const [status, at] of Object.entries(reported)) {
+      const time = typeof at === 'string' ? Date.parse(at) : NaN;
+      if (isInputStatus(status) && !Number.isNaN(time)) {
+        this.reportedAt.set(status, time);
+      }
+    }
     this.floor = readable ? null : now;
     this.prune(now);
+  }
+
+  /** When each status was last reported through the status API (SPEC 18.7 item 8), for the state file. */
+  reported(): Partial<Record<InputStatus, number>> {
+    return Object.fromEntries(this.reportedAt);
   }
 
   /**
@@ -190,6 +205,9 @@ export class SenderStore {
     if (r.ts !== undefined && r.ts !== null) {
       this.replay.set(r.sender, r.ts);
       this.pruneReplay(now);
+    }
+    if (r.via === 'api') {
+      this.reportedAt.set(r.status, now);
     }
     this.prune(now);
     this.save();
@@ -315,8 +333,9 @@ export class SenderStore {
       active: e.active,
     }));
     const replay = [...this.replay].map(([sender, ts]) => ({ sender, ts }));
+    const reported = Object.fromEntries([...this.reportedAt].map(([status, at]) => [status, new Date(at).toISOString()]));
     try {
-      writeFileAtomic(this.file, `${JSON.stringify({ version: 1, senders, replay }, null, 2)}\n`, 0o600);
+      writeFileAtomic(this.file, `${JSON.stringify({ version: 1, senders, replay, reported }, null, 2)}\n`, 0o600);
     } catch (err) {
       this.onError(err as Error);
     }
