@@ -28,6 +28,8 @@ export interface StatusInputEntry {
   lastHeard: string;
   expiresAt: string | null;
   active: boolean;
+  /** How it ended once inactive (from build 3.2); absent before it, which reads as expired. */
+  ended?: 'cleared' | 'expired' | null;
 }
 
 /** The state file of SPEC 10.1, as /status returns it. The build 3 fields are absent in a build 2 state file. */
@@ -66,7 +68,8 @@ export interface InputUiState {
   failed: boolean;
   testing: boolean;
   result: { kind: 'received' | 'notListening' | 'unauthorized' | 'other'; message: string } | null;
-  copied: 'key' | 'code' | null;
+  /** Which Copy button reads Copied: the key, the setup code, or an address line (`address:{n}`, from build 3.2). */
+  copied: string | null;
   replaceOpen: boolean;
   /** Show was pressed: the key and the setup code are both shown, until Hide (SPEC 11.3 I). */
   revealed: boolean;

@@ -474,6 +474,7 @@ export class BusyLightEngine {
         lastHeard: new Date(e.lastHeard).toISOString(),
         expiresAt: e.expiresAt === null ? null : new Date(e.expiresAt).toISOString(),
         active: e.active,
+        ended: e.ended,
       })),
     };
   }

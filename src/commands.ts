@@ -332,7 +332,8 @@ async function cmdInput(storage: string, rest: string[], io: CliIo): Promise<num
   for (const e of senders) {
     const how = e.via === 'switch' ? '' : `, ${e.auth === 'plain' ? 'plain key' : 'signed'}`;
     const from = e.app ? ` from ${e.app}` : '';
-    io.out(`  ${e.sender}: ${STATUS_NAMES[e.status]}${from}${how}, last heard ${time(e.lastHeard)}, ${e.active ? 'active' : 'expired'}.`);
+    const state = e.active ? 'active' : e.ended === 'cleared' ? 'cleared' : 'expired';
+    io.out(`  ${e.sender}: ${STATUS_NAMES[e.status]}${from}${how}, last heard ${time(e.lastHeard)}, ${state}.`);
   }
   if (rest.includes('--setup-code')) {
     const host = preferredHost(found);

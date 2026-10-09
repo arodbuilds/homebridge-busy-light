@@ -279,5 +279,10 @@ export function renderLights(app: App, container: HTMLElement): void {
       el('span', { class: 'ns-step-number', 'aria-hidden': 'true' }, String(i + 1)),
       el('span', { class: 'ns-step-text' }, step(name)),
     ))),
+    // The Working switch (SPEC 6.6, 11.3 E), below the steps, which belong to the sensors.
+    el('div', { class: 'bl-working-switch' }, checkboxField(LIGHTS.workingSwitch, app.config.workingSwitch.enabled, (v) => {
+      app.config.workingSwitch.enabled = v;
+      app.changed();
+    }, { path: 'workingSwitch.enabled', help: LIGHTS.workingSwitchHelp })),
   ));
 }

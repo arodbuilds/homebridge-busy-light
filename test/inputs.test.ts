@@ -176,7 +176,7 @@ test('nothing in inputs.json but names, statuses, apps, times and ts', () => {
   store.recordTs(MAC, T0, T0);
   const raw = JSON.parse(fs.readFileSync(path.join(dir, 'inputs.json'), 'utf8')) as { senders: Record<string, unknown>[] };
   assert.deepEqual(Object.keys(raw), ['version', 'senders', 'replay', 'reported']);
-  assert.deepEqual(Object.keys(raw.senders[0]), ['sender', 'status', 'app', 'via', 'auth', 'lastHeard', 'expiresAt', 'active']);
+  assert.deepEqual(Object.keys(raw.senders[0]), ['sender', 'status', 'app', 'via', 'auth', 'lastHeard', 'expiresAt', 'active', 'ended']);
 });
 
 test('when each status was last reported through the API is kept in inputs.json, across a reload (SPEC 18.7 item 8)', () => {
@@ -210,4 +210,22 @@ test('a signed report or clear records its ts in the same step that accepts it; 
   }
   assert.deepEqual(store.report(api('Refused', 'inCall', { ts: T0 - 1 }), T0), { ok: false, error: 'tooManySenders' });
   assert.equal(store.replayFloor('Refused', T0), null);
+});
+
+test('each sender records how its report ended: cleared after clear, expired when it ran out, also while down (SPEC 18.7 item 5)', () => {
+  fs.writeFileSync(file, JSON.stringify({ version: 1, senders: [], replay: [] }));
+  const store = loaded();
+  store.report(api('Clears', 'busy', { ttlMs: 60_000 }), T0);
+  store.report(api('Runs out', 'busy', { ttlMs: 60_000 }), T0);
+  store.report(api('Down', 'away', { ttlMs: 600_000 }), T0);
+  assert.deepEqual(store.list(T0).map((e) => [e.sender, e.ended]), [['Clears', null], ['Runs out', null], ['Down', null]]);
+  store.clear('Clears', 'signed', T0 + 1000);
+  assert.deepEqual(store.sweep(T0 + 60_000), ['Runs out']);
+  const ended = (s: SenderStore, now: number) => Object.fromEntries(s.list(now).map((e) => [e.sender, [e.active, e.ended]]));
+  assert.deepEqual(ended(store, T0 + 60_000), { Clears: [false, 'cleared'], 'Runs out': [false, 'expired'], Down: [true, null] });
+  // Homebridge restarts after Down's report ran out.
+  assert.deepEqual(ended(loaded(T0 + 700_000), T0 + 700_000), { Clears: [false, 'cleared'], 'Runs out': [false, 'expired'], Down: [false, 'expired'] });
+  // A cleared sender that reports again is active, with no ending.
+  store.report(api('Clears', 'inCall'), T0 + 70_000);
+  assert.deepEqual(ended(store, T0 + 70_000).Clears, [true, null]);
 });

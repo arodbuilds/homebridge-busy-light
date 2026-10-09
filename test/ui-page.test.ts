@@ -1234,7 +1234,9 @@ describe('settings page: Status from other apps (SPEC 11.3 I)', () => {
     const node = section(root);
     assert.equal(text(node.querySelector('h2')), copy.STATUS_INPUT.heading);
     assert.equal(text(node.querySelector('.section-copy')), `${copy.STATUS_INPUT.help} ${copy.STATUS_INPUT.howAppsConnect}`);
-    const link = node.querySelector('.section-copy a')!;
+    const [jeronimo, link] = node.querySelectorAll('.section-copy a');
+    assert.deepEqual([text(jeronimo), jeronimo.getAttribute('href'), jeronimo.getAttribute('target'), jeronimo.getAttribute('rel')],
+      [copy.STATUS_INPUT.jeronimo, copy.STATUS_INPUT.jeronimoUrl, '_blank', 'noopener noreferrer'], 'Jeronimo links to its site (from build 3.2)');
     assert.deepEqual([link.getAttribute('href'), link.getAttribute('target'), link.getAttribute('rel')],
       [copy.STATUS_INPUT.docsUrl, '_blank', 'noopener noreferrer']);
     assert.equal(field(root, 'statusInput.enabled').checked, false);
@@ -1293,6 +1295,45 @@ describe('settings page: Status from other apps (SPEC 11.3 I)', () => {
     fill(root, 'statusInput.port', '9000');
     await settle();
     assert.equal((lastBlock().statusInput as Record<string, unknown>).port, 9000);
+  });
+
+  it('each address line has its own Copy button, which copies that address and reads Copied (SPEC 11.3 I, from build 3.2)', async () => {
+    answers.set('/input/info', INFO);
+    const { root } = mount({ platform: 'BusyLight', statusInput: { enabled: true, key: 'k'.repeat(43) } });
+    await settle();
+    const rows = section(root).querySelectorAll('.bl-input-addresses .bl-address-row');
+    assert.deepEqual(rows.map((r) => [text(r.querySelector('.bl-readonly-line')), text(r.querySelector('button'))]), [
+      ['http://homebridge.local:8582', copy.STATUS_INPUT.copy], ['http://192.168.4.10:8582', copy.STATUS_INPUT.copy],
+    ]);
+    for (const row of rows) {
+      const describedBy = row.querySelector('button')!.getAttribute('aria-describedby');
+      assert.equal(row.querySelector('.bl-readonly-line')!.getAttribute('id'), describedBy, 'each button is told apart by its line');
+    }
+    rows[1].querySelector('button')!.click();
+    await flush();
+    assert.equal(dom.document.copied.at(-1), 'http://192.168.4.10:8582');
+    const after = section(root).querySelectorAll('.bl-input-addresses .bl-address-row');
+    assert.deepEqual(after.map((r) => text(r.querySelector('button'))), [copy.STATUS_INPUT.copy, copy.STATUS_INPUT.copied]);
+    after[0].querySelector('button')!.click();
+    await flush();
+    assert.equal(dom.document.copied.at(-1), 'http://homebridge.local:8582');
+  });
+
+  it('a sender that cleared shows Cleared, one whose report ran out Expired, both in the secondary tone (SPEC 11.3 I, from build 3.2)', async () => {
+    const now = dom.clock.now;
+    const ended = (sender: string, how: string | undefined) => ({ sender, status: 'busy', app: null, via: 'api', auth: 'signed',
+      lastHeard: new Date(now - 60_000).toISOString(), expiresAt: new Date(now - 30_000).toISOString(), active: false, ...(how ? { ended: how } : {}) });
+    answers.set('/version', { version: '0.1.0-beta.5' });
+    answers.set('/status', state({ inputs: [ended('Cleared Mac', 'cleared'), ended('Expired Mac', 'expired'), ended('Older beta Mac', undefined),
+      { sender: 'Home app', status: 'inCall', app: null, via: 'switch', auth: null, lastHeard: new Date(now - 60_000).toISOString(), expiresAt: null,
+        active: false, ended: 'cleared' }] }));
+    const { root, page } = mount({ platform: 'BusyLight', calendars: [ICLOUD_SOURCE] });
+    page.startPolling();
+    await flush();
+    const badges = section(root).querySelectorAll('.bl-sender-row').map((r) => [text(r.querySelector('.bl-sender-name')),
+      text(r.querySelector('.badge')), r.querySelector('.badge')!.className.replace(/.*bl-badge-/, '')]);
+    assert.deepEqual(badges, [['Cleared Mac', 'Cleared', 'checking'], ['Expired Mac', 'Expired', 'checking'],
+      ['Older beta Mac', 'Expired', 'checking'], ['Home app', 'Cleared', 'checking']]);
   });
 
   it('Replace key asks first; Replace makes a new key and Cancel keeps the old one', async () => {
@@ -1652,6 +1693,55 @@ describe('settings page: the masked setup code (SPEC 11.3 I)', () => {
 
 // SPEC 11.3 E (build 3.1), 15 item 24: the sensors the setup cannot produce come last, can still be ticked, and follow live.
 
+// Build 3.2 (SPEC 15 item 33): the Working switch checkbox, Warn before meetings and the Colors help line.
+
+describe('settings page: the Working switch, Warn before meetings and light only during meetings (build 3.2)', () => {
+  it('Add a Working switch to the Home app sits below the steps, with its help, and writes workingSwitch', async () => {
+    const { root } = mount();
+    const lights = root.querySelector('#section-lights')!;
+    const box = lights.querySelector('.bl-working-switch')!;
+    assert.equal(text(box.querySelector('.form-check-label')), copy.LIGHTS.workingSwitch);
+    assert.equal(text(box.querySelector('.form-text')), copy.LIGHTS.workingSwitchHelp);
+    const children = lights.querySelector('.bl-other-lights')!.children;
+    assert.ok(children.indexOf(box) > children.indexOf(lights.querySelector('.ns-steps')!), 'below the steps');
+    assert.equal(field(root, 'workingSwitch.enabled').checked, false);
+    tick(field(root, 'workingSwitch.enabled'), true);
+    await settle();
+    assert.deepEqual(lastBlock().workingSwitch, { enabled: true });
+    assert.equal(mount({ platform: 'BusyLight', workingSwitch: { enabled: true } }).root.querySelector('[data-path="workingSwitch.enabled"] input')!.checked,
+      true);
+  });
+
+  it('Warn before meetings: Off and four durations at the bottom of Colors, writing seconds; Meeting Soon follows it', async () => {
+    const { root } = mount();
+    const colors = root.querySelector('#section-colors')!;
+    const select = field(root, 'meetingWarningSeconds');
+    assert.equal(text(colors.querySelector('.bl-meeting-warning label')), copy.COLORS.warn);
+    assert.equal(text(colors.querySelector('.bl-meeting-warning .form-text')), copy.COLORS.warnHelp);
+    assert.deepEqual(select.querySelectorAll('option').map((o) => [o.getAttribute('value'), text(o)]),
+      [['0', 'Off'], ['60', '1 minute'], ['120', '2 minutes'], ['180', '3 minutes'], ['300', '5 minutes']]);
+    assert.equal(select.value, '0');
+    const card = colors.querySelector('.bl-colors-card .card-body')!;
+    assert.ok(card.children.indexOf(colors.querySelector('.bl-meeting-warning')!) > card.children.indexOf(colors.querySelector('.bl-actions')!),
+      'below Reset colors');
+    choose(select, '120');
+    await settle();
+    assert.equal(lastBlock().meetingWarningSeconds, 120);
+    const soon = root.querySelectorAll('#section-lights details.bl-all-sensors .form-check')
+      .find((c) => text(c.querySelector('.form-check-label')) === 'Busy Light Meeting Soon')!;
+    assert.equal(text(soon.querySelector('.form-text')), copy.LIGHTS.meetingSoonHelp, 'Meeting Soon can happen now');
+    const kept = mount({ platform: 'BusyLight', meetingWarningSeconds: 90 });
+    assert.deepEqual(field(kept.root, 'meetingWarningSeconds').querySelectorAll('option').map((o) => text(o)),
+      ['Off', '1 minute', '1 minute 30 seconds', '2 minutes', '3 minutes', '5 minutes'], 'a hand-written value is kept as one more option');
+  });
+
+  it('the Colors help line for lighting up only during meetings (SPEC 11.3 D, C7 of build 3.2)', () => {
+    const { root } = mount();
+    const lines = root.querySelectorAll('#section-colors .section-copy').map((p) => text(p));
+    assert.deepEqual(lines, [copy.COLORS.help, copy.COLORS.meetingsHelp]);
+  });
+});
+
 describe('settings page: the per-status sensors and the statuses the setup can produce (SPEC 11.3 E)', () => {
   const sensors = (root: FakeElement): Array<[string, string]> => root.querySelectorAll('#section-lights details.bl-all-sensors .form-check')
     .map((c) => [text(c.querySelector('.form-check-label')), text(c.querySelector('.form-text'))]);
@@ -1823,7 +1913,8 @@ describe('settings page: the owner\'s configuration, opened and saved back (buil
     // Any change pushes the whole block; put the name back as it was, as Save would write it.
     fill(root, 'name', 'Busy Light');
     await settle();
-    assert.deepEqual(lastBlock(), { ...OWNER, meetingWarningSeconds: 0 }, 'written back with the same values, intervals in seconds, and no warning');
+    assert.deepEqual(lastBlock(), { ...OWNER, meetingWarningSeconds: 0, workingSwitch: { enabled: false } },
+      'written back with the same values, intervals in seconds, and the build 3.2 settings off');
     const read = parseConfig(lastBlock());
     assert.deepEqual(read.issues, [], 'the plugin reads the block with no issues');
     assert.deepEqual(read.config, parseConfig(OWNER).config);

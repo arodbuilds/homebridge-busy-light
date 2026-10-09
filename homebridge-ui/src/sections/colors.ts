@@ -10,9 +10,9 @@
 
 import type { App } from '../app.js';
 import { COLORS, STATUS_NAMES, type StatusKey } from '../copy.js';
-import { el, linkButton, paragraph, uniqueId } from '../dom.js';
-import { parseDate } from '../format.js';
-import { DEFAULTS, STATUS_KEYS } from '../model.js';
+import { el, grid, gridCell, linkButton, paragraph, selectField, uniqueId, type SelectOption } from '../dom.js';
+import { formatDuration, parseDate } from '../format.js';
+import { DEFAULTS, MEETING_WARNINGS, STATUS_KEYS } from '../model.js';
 
 /** The statuses only a live source can give: Teams presence, another app, or (In a call) the On a Call switch. */
 const LIVE: readonly StatusKey[] = ['doNotDisturb', 'inCall', 'busy', 'away', 'offline'];
@@ -196,8 +196,24 @@ function colorRow(app: App, key: StatusKey): HTMLElement {
   );
 }
 
+/**
+ * Warn before meetings (SPEC 11.3 D, 6.7): Off, then durations. A saved value not in the list, possible only by hand, is
+ * one more option, as for the intervals, and the plugin falls back to no warning with its warning line.
+ */
+function warningOptions(app: App): SelectOption[] {
+  const values: number[] = [...MEETING_WARNINGS];
+  for (const value of [app.saved.meetingWarningSeconds, app.config.meetingWarningSeconds]) {
+    if (Number.isFinite(value) && !values.includes(value)) {
+      values.push(value);
+    }
+  }
+  return values.sort((a, b) => a - b).map((value) => ({ value: String(value), label: value === 0 ? COLORS.off : formatDuration(value) }));
+}
+
 export function renderColors(app: App, container: HTMLElement): void {
   app.ui.colorsShown = shownKey(app);
+  // The second help line (SPEC 11.3 D, from build 3.2).
+  container.appendChild(paragraph(COLORS.meetingsHelp, 'section-copy bl-colors-meetings'));
   const hidden = STATUS_KEYS.filter((key) => !canHappen(app, key));
   const shown = app.ui.colorsExpanded ? STATUS_KEYS : STATUS_KEYS.filter((key) => canHappen(app, key));
   const rows = shown.map((key) => colorRow(app, key));
@@ -221,6 +237,13 @@ export function renderColors(app: App, container: HTMLElement): void {
         app.changed();
         app.rerender('colors');
       }, 'bl-reset-colors')),
+      el('div', { class: 'bl-meeting-warning' }, grid(gridCell(6, selectField(COLORS.warn, String(app.config.meetingWarningSeconds),
+        warningOptions(app), (v) => {
+          app.config.meetingWarningSeconds = Number(v);
+          app.changed();
+          // The Meeting Soon sensor can happen once the warning is on (SPEC 11.3 E).
+          app.rerender('lights');
+        }, { path: 'meetingWarningSeconds', help: COLORS.warnHelp })))),
     ),
   ));
 }

@@ -5,7 +5,7 @@
  */
 import path from 'node:path';
 import { readJson, writeFileAtomic } from './files.js';
-import type { Auth, Via } from './inputs.js';
+import type { Auth, Ended, Via } from './inputs.js';
 import type { LightState } from './light.js';
 import type { Status } from './model.js';
 import type { SourceStateEntry } from './sources.js';
@@ -53,6 +53,8 @@ export interface InputStateEntry {
   lastHeard: string;
   expiresAt: string | null;
   active: boolean;
+  /** How it ended once inactive (from build 3.2): `cleared` or `expired`; null while active (10.1 item 8). */
+  ended?: Ended | null;
 }
 
 export interface StateFile {

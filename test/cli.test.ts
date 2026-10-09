@@ -346,7 +346,7 @@ function writeInputs(): void {
       { sender: 'CallWatch on Alex’s iMac', status: 'inCall', app: 'Microsoft Teams', via: 'api', auth: 'signed',
         lastHeard: new Date(T0).toISOString(), expiresAt: new Date(T0 + 180_000).toISOString(), active: true },
       { sender: 'Home app', status: 'inCall', app: null, via: 'switch', auth: null, lastHeard: new Date(T0 - 3_600_000).toISOString(),
-        expiresAt: new Date(T0 - 60_000).toISOString(), active: false },
+        expiresAt: new Date(T0 - 60_000).toISOString(), active: false, ended: 'cleared' },
       { sender: 'Test on my laptop', status: 'busy', app: null, via: 'api', auth: 'plain', lastHeard: new Date(T0 - 60_000).toISOString(),
         expiresAt: new Date(T0 + 120_000).toISOString(), active: true },
     ],
@@ -368,7 +368,7 @@ test('input: on or off, the port, the id, the addresses by host name and IP, and
     'Address: http://192.168.4.10:8582',
     'Apps reporting now:',
     `  CallWatch on Alex’s iMac: In a call from Microsoft Teams, signed, last heard ${formatTime(T0)}, active.`,
-    `  Home app: In a call, last heard ${formatTime(T0 - 3_600_000)}, expired.`,
+    `  Home app: In a call, last heard ${formatTime(T0 - 3_600_000)}, cleared.`,
     `  Test on my laptop: Busy, plain key, last heard ${formatTime(T0 - 60_000)}, active.`,
   ]);
   assert.ok(!out.join('\n').includes(KEY), 'no key without --setup-code');

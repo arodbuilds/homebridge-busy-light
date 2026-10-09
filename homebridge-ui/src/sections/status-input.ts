@@ -89,7 +89,7 @@ function readOnlyLines(label: string, lines: string[], cls: string): HTMLElement
   );
 }
 
-function copyButton(app: App, label: string, which: 'key' | 'code', value: string): HTMLButtonElement {
+function copyButton(app: App, label: string, which: string, value: string, cls = `bl-copy-${which}`): HTMLButtonElement {
   const state = app.ui.input;
   const node = button(state.copied === which ? STATUS_INPUT.copied : label, () => {
     void copyText(value).then((ok) => {
@@ -98,8 +98,28 @@ function copyButton(app: App, label: string, which: 'key' | 'code', value: strin
         node.textContent = STATUS_INPUT.copied;
       }
     });
-  }, `btn btn-outline-primary btn-sm bl-copy-${which}`);
+  }, `btn btn-outline-primary btn-sm ${cls}`);
   return node;
+}
+
+/**
+ * The Address field (SPEC 11.3 I): one read-only monospace line per address, the host name first, each with its own
+ * Copy button beside it (from build 3.2), described by its line so each is told apart.
+ */
+function addressField(app: App, lines: string[]): HTMLElement {
+  const id = uniqueId();
+  return el('div', { class: 'mb-3 bl-input-addresses' },
+    el('div', { class: 'form-label', id }, STATUS_INPUT.address),
+    ...lines.map((line, i) => {
+      const lineId = uniqueId('address');
+      const copy = copyButton(app, STATUS_INPUT.copy, `address:${i}`, line, 'bl-copy-address');
+      copy.setAttribute('aria-describedby', lineId);
+      return el('div', { class: 'bl-address-row' },
+        el('div', { class: 'form-control font-monospace bl-readonly', role: 'textbox', 'aria-readonly': 'true', 'aria-labelledby': id },
+          el('div', { class: 'bl-readonly-line', id: lineId }, line)),
+        copy);
+    }),
+  );
 }
 
 /** The setup code as the masked field shows it: one dot per character, so it wraps as the code would. */
@@ -146,7 +166,7 @@ function enabledBody(app: App): HTMLElement {
       body.appendChild(el('div', { class: 'bl-address-change' }, statusBox('warning', STATUS_INPUT.addressChanged(from, to))));
     }
     const lines = [...(info.hostname ? [inputUrl(info.hostname, input.port)] : []), ...info.addresses.map((a) => inputUrl(a, input.port))];
-    body.appendChild(readOnlyLines(STATUS_INPUT.address, lines, 'bl-input-addresses'));
+    body.appendChild(addressField(app, lines));
     if (!info.hostname) {
       body.appendChild(helpText(STATUS_INPUT.reserveHelp, 'bl-reserve-help mb-3'));
     }
@@ -221,7 +241,9 @@ function senderList(app: App): HTMLElement {
   }
   for (const entry of inputs) {
     const heard = parseDate(entry.lastHeard);
-    const badges = [badge(entry.active ? STATUS_INPUT.active : STATUS_INPUT.expired, entry.active ? 'connected' : 'checking')];
+    // Cleared when its last word was clear, Expired when its report ran out (SPEC 11.3 I, from build 3.2).
+    const ended = entry.ended === 'cleared' ? STATUS_INPUT.cleared : STATUS_INPUT.expired;
+    const badges = [badge(entry.active ? STATUS_INPUT.active : ended, entry.active ? 'connected' : 'checking')];
     if (entry.via === 'api' && entry.auth) {
       badges.push(badge(entry.auth === 'signed' ? STATUS_INPUT.signed : STATUS_INPUT.plainKey, entry.auth === 'signed' ? 'checking' : 'warning'));
     }
@@ -240,7 +262,10 @@ function senderList(app: App): HTMLElement {
 export function renderStatusInput(app: App, container: HTMLElement): void {
   const input = app.config.statusInput;
   const call = app.config.callSwitch;
-  container.appendChild(el('p', { class: 'section-copy' }, STATUS_INPUT.help, ' ', outLink(STATUS_INPUT.howAppsConnect, STATUS_INPUT.docsUrl)));
+  // Jeronimo, named in the help, links to its site (SPEC 11.3 I, from build 3.2); nothing else depends on it.
+  const [before, after] = STATUS_INPUT.help.split(STATUS_INPUT.jeronimo);
+  container.appendChild(el('p', { class: 'section-copy' }, before, outLink(STATUS_INPUT.jeronimo, STATUS_INPUT.jeronimoUrl), after, ' ',
+    outLink(STATUS_INPUT.howAppsConnect, STATUS_INPUT.docsUrl)));
   container.appendChild(checkboxField(STATUS_INPUT.enable, input.enabled, (v) => {
     input.enabled = v;
     if (v && !isInputKey(input.key)) {

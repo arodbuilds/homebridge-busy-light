@@ -571,9 +571,9 @@ test('the state file carries the status input, the senders with how they authent
   assert.deepEqual(state.reason, { source: MAC, until: null, app: 'Microsoft Teams' });
   assert.deepEqual(state.inputs, [
     { sender: MAC, status: 'inCall', app: 'Microsoft Teams', via: 'api', auth: 'signed', lastHeard: new Date(T0).toISOString(),
-      expiresAt: new Date(T0 + 60_000).toISOString(), active: true },
+      expiresAt: new Date(T0 + 60_000).toISOString(), active: true, ended: null },
     { sender: 'Test on my laptop', status: 'away', app: null, via: 'api', auth: 'plain', lastHeard: new Date(T0).toISOString(),
-      expiresAt: new Date(T0 + 60_000).toISOString(), active: true },
+      expiresAt: new Date(T0 + 60_000).toISOString(), active: true, ended: null },
   ]);
   const raw = fs.readFileSync(`${dir}/state.json`, 'utf8');
   assert.ok(!raw.includes(INPUT_KEY), 'the key is never in the state file');

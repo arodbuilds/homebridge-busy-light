@@ -86,6 +86,8 @@ export interface UiConfig {
   callSwitch: UiCallSwitch;
   /** The meeting warning in seconds (SPEC 9.1 item 21): 0 (none), 60, 120, 180 or 300, or a hand-written value kept as is. */
   meetingWarningSeconds: number;
+  /** The Working switch (SPEC 9.1 item 20). */
+  workingSwitch: { enabled: boolean };
   /** Keys the page does not edit, written back untouched. */
   extra: Record<string, unknown>;
   /** Calendar entries the page cannot edit (an unknown type), written back untouched. */
@@ -110,7 +112,11 @@ export const DEFAULTS = {
   statusInput: { enabled: false, port: 8582, key: '', allowPlainKey: true } as UiStatusInput,
   callSwitch: { enabled: false, hours: 3 } as UiCallSwitch,
   meetingWarningSeconds: 0,
+  workingSwitch: { enabled: false },
 };
+
+/** The choices of Warn before meetings, in seconds (SPEC 11.3 D); 0 is Off. */
+export const MEETING_WARNINGS = [0, 60, 120, 180, 300] as const;
 
 /** The limits of SPEC 9.1, for the number fields and their messages. */
 export const LIMITS = {
@@ -129,7 +135,7 @@ export const INTERVALS = {
 
 const KNOWN = new Set([
   'platform', 'name', 'calendars', 'colors', 'lifx', 'sensors', 'overrideSwitch', 'pollSeconds', 'calendarSeconds', 'ignoreAllDayBusy',
-  'outOfOfficeWords', 'debug', 'statusInput', 'callSwitch', 'meetingWarningSeconds',
+  'outOfOfficeWords', 'debug', 'statusInput', 'callSwitch', 'meetingWarningSeconds', 'workingSwitch',
 ]);
 
 /** The key's rule (SPEC 18.8 item 1). */
@@ -259,6 +265,7 @@ export function emptyConfig(): UiConfig {
     statusInput: { ...DEFAULTS.statusInput },
     callSwitch: { ...DEFAULTS.callSwitch },
     meetingWarningSeconds: DEFAULTS.meetingWarningSeconds,
+    workingSwitch: { ...DEFAULTS.workingSwitch },
     extra: {},
     otherCalendars: [],
   };
@@ -323,6 +330,8 @@ export function readConfig(raw: unknown): UiConfig {
   const call = isObject(raw.callSwitch) ? raw.callSwitch : {};
   c.callSwitch = { enabled: bool(call.enabled, DEFAULTS.callSwitch.enabled), hours: num(call.hours, DEFAULTS.callSwitch.hours) };
   c.meetingWarningSeconds = num(raw.meetingWarningSeconds, DEFAULTS.meetingWarningSeconds);
+  const working = isObject(raw.workingSwitch) ? raw.workingSwitch : {};
+  c.workingSwitch = { enabled: bool(working.enabled, DEFAULTS.workingSwitch.enabled) };
   for (const [key, value] of Object.entries(raw)) {
     if (!KNOWN.has(key)) {
       c.extra[key] = value;
@@ -398,6 +407,7 @@ export function exportConfig(c: UiConfig): Record<string, unknown> {
     statusInput: { enabled: c.statusInput.enabled, port: c.statusInput.port, key: c.statusInput.key, allowPlainKey: c.statusInput.allowPlainKey },
     callSwitch: { enabled: c.callSwitch.enabled, hours: c.callSwitch.hours },
     meetingWarningSeconds: c.meetingWarningSeconds,
+    workingSwitch: { enabled: c.workingSwitch.enabled },
   };
 }
 

@@ -40,6 +40,7 @@ describe('settings page model (SPEC section 9)', () => {
       overrideSwitch: plugin.overrideSwitch, pollSeconds: plugin.pollSeconds, calendarSeconds: plugin.calendarSeconds,
       ignoreAllDayBusy: plugin.ignoreAllDayBusy, outOfOfficeWords: plugin.outOfOfficeWords, debug: plugin.debug,
       statusInput: plugin.statusInput, callSwitch: plugin.callSwitch, meetingWarningSeconds: plugin.meetingWarningSeconds,
+      workingSwitch: plugin.workingSwitch,
     });
     assert.deepEqual(readConfig(undefined), emptyConfig());
     assert.deepEqual(LIMITS, {

@@ -24,6 +24,8 @@ export const HOME_APP_SENDER = 'Home app';
 export type Via = 'api' | 'switch';
 /** How a report through the API authenticated (SPEC 18.8 item 10); null for the switch. */
 export type Auth = 'signed' | 'plain';
+/** How a sender's report ended (SPEC 18.7 item 5, from build 3.2): withdrawn with `clear`, or run out. */
+export type Ended = 'cleared' | 'expired';
 
 export interface SenderEntry {
   sender: string;
@@ -36,6 +38,8 @@ export interface SenderEntry {
   expiresAt: number | null;
   /** True while its report counts. */
   active: boolean;
+  /** How it ended, once it is not active; null while active. */
+  ended: Ended | null;
 }
 
 export interface NewReport {
@@ -63,6 +67,7 @@ interface StoredEntry {
   lastHeard: string;
   expiresAt: string | null;
   active: boolean;
+  ended?: Ended | null;
 }
 
 export function inputsFile(storageDir: string): string {
@@ -94,6 +99,7 @@ function readEntry(raw: unknown): SenderEntry | null {
     lastHeard,
     expiresAt,
     active: e.active === true,
+    ended: e.ended === 'cleared' || e.ended === 'expired' ? e.ended : null,
   };
 }
 
@@ -126,6 +132,8 @@ export class SenderStore {
     for (const e of this.entries) {
       if (e.active && (e.via === 'switch' || e.expiresAt === null || e.expiresAt <= now)) {
         e.active = false;
+        // A report that ran out while Homebridge was down expired; the switch's is restored from the switch itself.
+        e.ended = e.via === 'api' && e.expiresAt !== null && e.expiresAt <= now ? 'expired' : e.ended;
       }
     }
     this.replay.clear();
@@ -192,7 +200,7 @@ export class SenderStore {
     }
     const changed = !entry?.active || entry.status !== r.status || entry.app !== r.app;
     if (!entry) {
-      entry = { sender: r.sender, status: r.status, app: r.app, via: r.via, auth: r.auth, lastHeard: now, expiresAt: null, active: true };
+      entry = { sender: r.sender, status: r.status, app: r.app, via: r.via, auth: r.auth, lastHeard: now, expiresAt: null, active: true, ended: null };
       this.entries.push(entry);
     }
     entry.status = r.status;
@@ -202,6 +210,7 @@ export class SenderStore {
     entry.lastHeard = now;
     entry.expiresAt = r.ttlMs === null ? null : now + r.ttlMs;
     entry.active = true;
+    entry.ended = null;
     if (r.ts !== undefined && r.ts !== null) {
       this.replay.set(r.sender, r.ts);
       this.pruneReplay(now);
@@ -234,6 +243,8 @@ export class SenderStore {
     const wasActive = entry.active;
     entry.lastHeard = now;
     entry.active = false;
+    // Its last word was clear (SPEC 18.7 item 5): Cleared on the page, not Expired.
+    entry.ended = 'cleared';
     if (auth !== null) {
       entry.auth = auth;
     }
@@ -261,6 +272,7 @@ export class SenderStore {
     for (const e of this.entries) {
       if (e.active && e.expiresAt !== null && e.expiresAt <= now) {
         e.active = false;
+        e.ended = 'expired';
         gone.push(e.sender);
       }
     }
@@ -289,7 +301,10 @@ export class SenderStore {
     return this.entries
       .filter((e) => now - e.lastHeard < LIST_MS)
       .sort((a, b) => b.lastHeard - a.lastHeard)
-      .map((e) => ({ ...e, active: e.active && (e.expiresAt === null || e.expiresAt > now) }));
+      .map((e) => {
+        const active = e.active && (e.expiresAt === null || e.expiresAt > now);
+        return { ...e, active, ended: active ? null : e.ended ?? 'expired' };
+      });
   }
 
   private find(sender: string): SenderEntry | undefined {
@@ -331,6 +346,7 @@ export class SenderStore {
       lastHeard: new Date(e.lastHeard).toISOString(),
       expiresAt: e.expiresAt === null ? null : new Date(e.expiresAt).toISOString(),
       active: e.active,
+      ended: e.ended,
     }));
     const replay = [...this.replay].map(([sender, ts]) => ({ sender, ts }));
     const reported = Object.fromEntries([...this.reportedAt].map(([status, at]) => [status, new Date(at).toISOString()]));
