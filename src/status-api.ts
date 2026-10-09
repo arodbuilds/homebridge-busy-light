@@ -15,6 +15,7 @@ import type { IncomingHttpHeaders } from 'node:http';
 import type { StatusInputConfig } from './config.js';
 import type { Clock, ReportResult } from './engine.js';
 import { readJson, writeFileAtomic } from './files.js';
+import { HOME_APP_SENDER } from './inputs.js';
 import type { Auth, NewReport, SenderEntry } from './inputs.js';
 import type { Log } from './log.js';
 import { inputClockOff, inputFailed, inputNotLocal, inputPlainKeyOff, inputStarted, inputWrongKey } from './messages.js';
@@ -152,6 +153,15 @@ export function checkText(value: unknown): string | null {
     }
   }
   return nfc;
+}
+
+/**
+ * The sender name of the On a Call switch is reserved for it (SPEC 18.4 item 3, from build 3.2), in any form that
+ * normalizes to it under NFKC (a no-break space or fullwidth letters, say), so no app can appear as the switch. Case
+ * is kept, as senders are matched with case kept.
+ */
+export function isReservedSender(sender: string): boolean {
+  return sender.normalize('NFKC') === HOME_APP_SENDER;
 }
 
 // ---------------------------------------------------------------------------
@@ -441,7 +451,7 @@ export class StatusApi {
       throw refuse('unknown_field');
     }
     const sender = checkText(raw.sender);
-    if (sender === null) {
+    if (sender === null || isReservedSender(sender)) {
       throw refuse('invalid_sender');
     }
     const status = raw.status;

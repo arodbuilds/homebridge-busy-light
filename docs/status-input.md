@@ -100,6 +100,7 @@ Text rule for `sender` and `app`:
 1. Any Unicode text, from 1 to 64 characters, where a character is a Unicode code point: not a byte, and not a UTF-16 unit. Curly apostrophes, accented letters and emoji are fine. The macOS default computer name ("Alex’s iMac", with a curly apostrophe) is fine as it is.
 2. Busy Light normalizes the text to Unicode NFC before checking, storing and comparing it, so the same name typed two ways is one sender.
 3. Not allowed: leading or trailing spaces, control characters (newlines and tabs included), U+2028, U+2029, and the bidirectional formatting characters U+202A to U+202E and U+2066 to U+2069. Busy Light never trims or rewrites a name; it refuses it with `invalid_sender` or `invalid_app`.
+4. The sender name `Home app` is reserved for the On a Call switch (section 3): from Busy Light 0.1.0-beta.5, a `sender` that is `Home app` in any Unicode form that normalizes to it (with a no-break space or fullwidth letters, for example) is refused with `400 invalid_sender`.
 
 The body must be a JSON object; anything else (an array, a string, `null`) is `400 invalid_json`. `"app": null` and `"ttlSeconds": null` are read as if the field were absent. Any field other than the four above is rejected with `400 unknown_field`.
 
