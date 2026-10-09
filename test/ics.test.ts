@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import ICAL from 'ical.js';
-import { classify, outOfOfficePattern, readIcs } from '../src/ics.js';
+import { MAX_ITERATIONS, classify, outOfOfficePattern, readIcs } from '../src/ics.js';
+import { xmlBlocks, xmlText } from '../src/xml.js';
 import { resolveStatus } from '../src/status.js';
 import type { CalEvent } from '../src/status.js';
 import { fixture, fixtureTitles } from './helpers.js';
@@ -118,12 +119,203 @@ test('a changed occurrence without its series is a single event', () => {
     isCancelled: false, source: 'Family' }]);
 });
 
-test('a series stops at 20,000 iterations', () => {
+test('a minutely series started in 2000 gives the window\'s occurrences, well inside the cap (SPEC 5.4 item 3)', () => {
   const text = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'BEGIN:VEVENT', 'UID:every-minute', 'DTSTART:20000101T000000Z',
     'DTEND:20000101T000030Z', 'RRULE:FREQ=MINUTELY', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+  let limited = 0;
   const started = Date.now();
-  assert.deepEqual(read(text, now), [], 'the window is never reached');
-  assert.ok(Date.now() - started < 10_000);
+  const events = readIcs(text, now - DAY, now + DAY, { ...opts, onRepeatLimit: () => limited++ });
+  assert.equal(events.length, 2 * 24 * 60, 'every minute of the two-day window');
+  assert.equal(limited, 0);
+  assert.ok(Date.now() - started < 2000);
+});
+
+test('a series repeating every second reaches the cap, which says so once per read (SPEC 5.4 item 3)', () => {
+  const series = (uid: string) => ['BEGIN:VEVENT', `UID:${uid}`, 'DTSTART:20261001T000000Z', 'DTEND:20261001T000001Z', 'RRULE:FREQ=SECONDLY', 'END:VEVENT'];
+  const text = ['BEGIN:VCALENDAR', 'VERSION:2.0', ...series('one'), ...series('two'), 'END:VCALENDAR'].join('\r\n');
+  let limited = 0;
+  readIcs(text, now - DAY, now + DAY, { ...opts, onRepeatLimit: () => limited++ });
+  assert.equal(limited, 1);
+  assert.equal(MAX_ITERATIONS, 20_000);
+});
+
+test('an hourly series started in 2023 gives today\'s occurrences (SPEC 5.4 item 3)', () => {
+  const text = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'BEGIN:VEVENT', 'UID:hourly', 'SUMMARY:Synthetic hourly check-in', 'DTSTART:20230102T090000Z',
+    'DTEND:20230102T091000Z', 'RRULE:FREQ=HOURLY', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+  const events = read(text, now);
+  assert.equal(events.length, 48);
+  assert.deepEqual(events.map((e) => e.start).sort((a, b) => a - b).slice(0, 2), [at(2026, 10, 7, 15), at(2026, 10, 7, 16)]);
+  assert.ok(events.every((e) => new Date(e.start).getUTCMinutes() === 0 && e.end - e.start === 10 * 60_000));
+});
+
+test('a series that ended before the window is not walked, by UNTIL or by COUNT (SPEC 5.4 item 3)', () => {
+  const series = (uid: string, rule: string) => ['BEGIN:VEVENT', `UID:${uid}`, 'DTSTART:20160104T140000Z', 'DTEND:20160104T143000Z',
+    `RRULE:${rule}`, 'END:VEVENT'];
+  const text = ['BEGIN:VCALENDAR', 'VERSION:2.0', ...series('until', 'FREQ=DAILY;UNTIL=20190601T000000Z'), ...series('count', 'FREQ=DAILY;COUNT=1000'),
+    ...series('open', 'FREQ=DAILY'), 'END:VCALENDAR'].join('\r\n');
+  const events = read(text, now);
+  assert.deepEqual(events.map((e) => e.start).sort((a, b) => a - b), [at(2026, 10, 8, 14), at(2026, 10, 9, 14)], 'the open series only');
+});
+
+/** The review's feed (SPEC 15 item 25): 100 daily series that ended in 2019, 300 open daily series started in 2016, 100 weekly series, 5,000 single events. */
+function reviewFeed(): string {
+  const tz = ics.slice(ics.indexOf('BEGIN:VTIMEZONE'), ics.indexOf('END:VTIMEZONE') + 'END:VTIMEZONE'.length);
+  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Busy Light tests//Synthetic//EN', tz];
+  const event = (uid: string, start: string, end: string, extra: string[]) => lines.push('BEGIN:VEVENT', `UID:${uid}`, `SUMMARY:Synthetic ${uid}`,
+    `DTSTART;TZID=America/New_York:${start}`, `DTEND;TZID=America/New_York:${end}`, ...extra, 'END:VEVENT');
+  const two = (n: number) => String(n).padStart(2, '0');
+  for (let i = 0; i < 100; i++) {
+    event(`ended-${i}`, '20160104T090000', '20160104T093000', [i % 2 ? 'RRULE:FREQ=DAILY;UNTIL=20190601T000000Z' : 'RRULE:FREQ=DAILY;COUNT=1000']);
+  }
+  for (let i = 0; i < 300; i++) {
+    const day = `201601${two(1 + (i % 28))}T${two(8 + (i % 9))}`;
+    event(`open-${i}`, `${day}0000`, `${day}3000`, ['RRULE:FREQ=DAILY']);
+  }
+  for (let i = 0; i < 100; i++) {
+    event(`weekly-${i}`, '20180105T100000', '20180105T110000', ['RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR']);
+  }
+  for (let i = 0; i < 5000; i++) {
+    const d = new Date(Date.UTC(2020, 0, 1) + i * 9 * 3_600_000);
+    const stamp = `${d.getUTCFullYear()}${two(d.getUTCMonth() + 1)}${two(d.getUTCDate())}T${two(d.getUTCHours())}`;
+    event(`single-${i}`, `${stamp}0000`, `${stamp}4500`, []);
+  }
+  lines.push('END:VCALENDAR');
+  return lines.join('\r\n');
+}
+
+test('the review\'s feed reads in under 1 second (SPEC 5.4 item 3, 15 item 25)', () => {
+  const feed = reviewFeed();
+  const started = performance.now();
+  const events = read(feed, now);
+  const took = performance.now() - started;
+  assert.ok(took < 1000, `took ${Math.round(took)} ms`);
+  assert.equal(events.filter((e) => e.end - e.start === 30 * 60_000).length, 600, 'each open daily series twice in the window');
+  assert.equal(events.filter((e) => e.end - e.start === 60 * 60_000).length, 100, 'Friday of each weekly series (Wednesday\'s ends as the window starts)');
+});
+
+// Build 3.1's reader, kept as the reference (SPEC 5.4 item 3.6): every series walked from DTSTART in full, with no cap.
+
+function walkInFull(text: string, from: number, to: number): CalEvent[] {
+  const oof = outOfOfficePattern(opts.outOfOfficeWords);
+  const out: CalEvent[] = [];
+  const push = (comp: InstanceType<typeof ICAL.Component>, s: InstanceType<typeof ICAL.Time>, e: InstanceType<typeof ICAL.Time>) => {
+    const start = s.toJSDate().getTime();
+    const end = e.toJSDate().getTime();
+    if (Number.isFinite(start) && Number.isFinite(end) && end >= start && end > from && start < to) {
+      out.push({ ...classify(comp, oof, opts.ownerAddresses), start, end, isAllDay: s.isDate, source: opts.source });
+    }
+  };
+  const root = new ICAL.Component(ICAL.parse(text) as unknown[]);
+  const masters = root.getAllSubcomponents('vevent').filter((v) => !v.hasProperty('recurrence-id'));
+  const changes = root.getAllSubcomponents('vevent').filter((v) => v.hasProperty('recurrence-id'));
+  for (const master of masters) {
+    const uid = master.getFirstPropertyValue('uid');
+    try {
+      const event = new ICAL.Event(master, { exceptions: changes.filter((c) => c.getFirstPropertyValue('uid') === uid) });
+      if (!event.isRecurring()) {
+        push(master, event.startDate, event.endDate);
+        continue;
+      }
+      const iterator = event.iterator();
+      for (let next = iterator.next(); next; next = iterator.next()) {
+        const details = event.getOccurrenceDetails(next);
+        if (details.startDate.toJSDate().getTime() >= to && next.toJSDate().getTime() >= to) {
+          break;
+        }
+        push(details.item.component, details.startDate, details.endDate);
+      }
+    } catch {
+      // As the reader: an event that cannot be read is skipped.
+    }
+  }
+  return out;
+}
+
+const sorted = (events: CalEvent[]) => events.map((e) => `${e.start} ${e.end} ${e.showAs} ${e.isAllDay} ${e.isCancelled}`).sort();
+
+test('every fixture reads as walking each series in full, at windows across more than a year (SPEC 5.4 item 3.6)', () => {
+  const calendars = [ics, ...['default-ns-report-home.xml', 'prefixed-report-work.xml'].flatMap((f) => xmlBlocks(fixture(`caldav/${f}`), 'calendar-data')
+    .map(xmlText).filter((text) => text.includes('BEGIN:VCALENDAR')))];
+  assert.ok(calendars.length >= 4, 'the fixture and the calendar objects of the CalDAV reports');
+  let compared = 0;
+  for (const text of calendars) {
+    for (let t = at(2026, 1, 1, 3); t < at(2027, 3, 1, 0); t += 71 * 3_600_000) {
+      assert.deepEqual(sorted(read(text, t)), sorted(walkInFull(text, t - DAY, t + DAY)), new Date(t).toISOString());
+      compared++;
+    }
+  }
+  assert.ok(compared > 600);
+});
+
+test('generated series of every frequency read as walking them in full, across daylight saving changes (SPEC 5.4 item 3.6)', () => {
+  const tz = ics.slice(ics.indexOf('BEGIN:VTIMEZONE'), ics.indexOf('END:VTIMEZONE') + 'END:VTIMEZONE'.length);
+  const rules = [
+    'FREQ=DAILY', 'FREQ=DAILY;INTERVAL=3;BYHOUR=9,17', 'FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR', 'FREQ=WEEKLY', 'FREQ=WEEKLY;BYDAY=MO,WE,FR',
+    'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH', 'FREQ=WEEKLY;WKST=SU;INTERVAL=2;BYDAY=SU,SA', 'FREQ=MONTHLY', 'FREQ=MONTHLY;INTERVAL=2;BYDAY=2TU',
+    'FREQ=MONTHLY;BYDAY=-1FR', 'FREQ=MONTHLY;BYMONTHDAY=15,-1', 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1', 'FREQ=YEARLY',
+    'FREQ=YEARLY;BYMONTH=10;BYDAY=2TH', 'FREQ=YEARLY;BYWEEKNO=41;BYDAY=TH', 'FREQ=YEARLY;BYYEARDAY=281,282', 'FREQ=HOURLY;INTERVAL=5',
+    'FREQ=HOURLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9,10,11', 'FREQ=MINUTELY;INTERVAL=45', 'FREQ=DAILY;UNTIL=20261009T000000Z', 'FREQ=DAILY;COUNT=400',
+    'FREQ=WEEKLY;BYDAY=TH;COUNT=30', 'FREQ=WEEKLY;BYDAY=TH;UNTIL=20261231', 'FREQ=MONTHLY;COUNT=12',
+  ];
+  // Starts far enough back for the walk to start late, and near enough for the full walk it is compared with to stay
+  // quick: a month's last day, a daylight saving day in UTC (with an EXDATE), and for monthly and yearly series a
+  // February 29.
+  const starts = (rule: string) => (/HOURLY|MINUTELY/.test(rule) ? ['20260830T113000', '20260831T013000']
+    : /MONTHLY|YEARLY/.test(rule) ? ['20250131T113000', '20251102T013000', '20240229T013000']
+      : ['20260131T113000', '20251102T013000']);
+  let compared = 0;
+  for (const rule of rules) {
+    for (const [i, start] of starts(rule).entries()) {
+      const end = `${start.slice(0, 9)}${String((Number(start.slice(9, 11)) + 1) % 24).padStart(2, '0')}${start.slice(11)}`;
+      const when = i === 1 ? [`DTSTART:${start}Z`, `DTEND:${end}Z`, 'EXDATE:20261008T013000Z']
+        : [`DTSTART;TZID=America/New_York:${start}`, `DTEND;TZID=America/New_York:${end}`, 'EXDATE;TZID=America/New_York:20261008T113000'];
+      const text = ['BEGIN:VCALENDAR', 'VERSION:2.0', tz, 'BEGIN:VEVENT', 'UID:generated', 'SUMMARY:Synthetic series', ...when, `RRULE:${rule}`,
+        'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+      for (let t = at(2026, 9, 20, 2); t < at(2026, 11, 25, 0); t += 7.5 * DAY) {
+        assert.deepEqual(sorted(read(text, t)), sorted(walkInFull(text, t - DAY, t + DAY)), `${rule} from ${start} at ${new Date(t).toISOString()}`);
+        compared++;
+      }
+    }
+  }
+  const allDay = ['FREQ=DAILY', 'FREQ=WEEKLY;BYDAY=FR', 'FREQ=MONTHLY;BYMONTHDAY=9', 'FREQ=YEARLY', 'FREQ=DAILY;INTERVAL=4'];
+  for (const rule of allDay) {
+    const text = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'BEGIN:VEVENT', 'UID:all-day', 'SUMMARY:Synthetic all day', 'DTSTART;VALUE=DATE:20231009',
+      'DTEND;VALUE=DATE:20231010', `RRULE:${rule}`, 'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+    for (let t = at(2026, 9, 20, 2); t < at(2026, 11, 25, 0); t += 2.5 * DAY) {
+      assert.deepEqual(sorted(read(text, t)), sorted(walkInFull(text, t - DAY, t + DAY)), `${rule} at ${new Date(t).toISOString()}`);
+      compared++;
+    }
+  }
+  assert.ok(compared > 400);
+});
+
+test('a weekly Friday meeting whose next occurrence moved to Thursday shows on Thursday, and not on Friday (SPEC 5.4 item 2)', () => {
+  const tz = ics.slice(ics.indexOf('BEGIN:VTIMEZONE'), ics.indexOf('END:VTIMEZONE') + 'END:VTIMEZONE'.length);
+  const feed = (master: string[], change: string[]) => ['BEGIN:VCALENDAR', 'VERSION:2.0', tz,
+    'BEGIN:VEVENT', 'UID:friday-sync', 'SUMMARY:Synthetic Friday sync', ...master, 'RRULE:FREQ=WEEKLY;BYDAY=FR', 'END:VEVENT',
+    'BEGIN:VEVENT', 'UID:friday-sync', 'SUMMARY:Synthetic Friday sync', ...change, 'DTSTART:20261015T140000Z', 'DTEND:20261015T143000Z', 'END:VEVENT',
+    'END:VCALENDAR'].join('\r\n');
+  const utc = ['DTSTART:20260904T150000Z', 'DTEND:20260904T153000Z'];
+  const eastern = ['DTSTART;TZID=America/New_York:20260904T110000', 'DTEND;TZID=America/New_York:20260904T113000'];
+  const cases = {
+    'the same form': feed(utc, ['RECURRENCE-ID:20261016T150000Z']),
+    'a RECURRENCE-ID in the series\' time zone': feed(utc, ['RECURRENCE-ID;TZID=America/New_York:20261016T110000']),
+    'a RECURRENCE-ID in UTC': feed(eastern, ['RECURRENCE-ID:20261016T150000Z']),
+    'the date in EXDATE as well': feed([...utc, 'EXDATE:20261016T150000Z'], ['RECURRENCE-ID:20261016T150000Z']),
+  };
+  const thursday = at(2026, 10, 15, 14);
+  const friday = at(2026, 10, 16, 15);
+  for (const [name, text] of Object.entries(cases)) {
+    // Wednesday evening: the window ends on Thursday, before the Friday the occurrence moved from.
+    assert.deepEqual(read(text, at(2026, 10, 14, 20)).map((e) => e.start), [thursday], name);
+    // Thursday evening: the window holds both days.
+    assert.deepEqual(read(text, at(2026, 10, 15, 20)).map((e) => e.start), [thursday], name);
+    // The week after, the series is back on Friday.
+    assert.deepEqual(read(text, at(2026, 10, 22, 20)).map((e) => e.start), [at(2026, 10, 23, 15)], name);
+  }
+  assert.deepEqual(walkInFull(cases['a RECURRENCE-ID in the series\' time zone'], at(2026, 10, 13, 20), at(2026, 10, 15, 20)), [],
+    'build 3.1 lost it');
+  assert.ok(friday > thursday);
 });
 
 test('classification rules in order', () => {
@@ -141,6 +333,20 @@ test('classification rules in order', () => {
   assert.deepEqual(c(['X-MICROSOFT-CDO-BUSYSTATUS:TENTATIVE']), { showAs: 'tentative', isCancelled: false });
   assert.deepEqual(c(['STATUS:TENTATIVE', 'TRANSP:TRANSPARENT']), { showAs: 'free', isCancelled: false });
   assert.deepEqual(c([]), { showAs: 'busy', isCancelled: false });
+});
+
+test('a declined invitation by the EMAIL parameter, and working elsewhere, are free (SPEC 6.4 rules 2 and 4)', () => {
+  const comp = (lines: string[]) => new ICAL.Component(ICAL.parse(['BEGIN:VEVENT', 'UID:x', 'DTSTART:20261008T100000Z', ...lines,
+    'END:VEVENT'].join('\r\n')) as unknown[]);
+  const c = (lines: string[]) => classify(comp(lines), null, ['person@example.com']);
+  assert.deepEqual(c(['ATTENDEE;EMAIL=Person@Example.com;PARTSTAT=DECLINED:urn:uuid:00000000-0000-0000-0000-000000000001']),
+    { showAs: 'free', isCancelled: false });
+  assert.deepEqual(c(['ATTENDEE;EMAIL=person@example.com;PARTSTAT=ACCEPTED:urn:uuid:00000000-0000-0000-0000-000000000001']),
+    { showAs: 'busy', isCancelled: false });
+  assert.deepEqual(c(['ATTENDEE;EMAIL=someone@example.net;PARTSTAT=DECLINED:urn:uuid:00000000-0000-0000-0000-000000000002']),
+    { showAs: 'busy', isCancelled: false });
+  assert.deepEqual(c(['X-MICROSOFT-CDO-BUSYSTATUS:WORKINGELSEWHERE']), { showAs: 'free', isCancelled: false });
+  assert.deepEqual(c(['X-MICROSOFT-CDO-BUSYSTATUS:workingElsewhere']), { showAs: 'free', isCancelled: false });
 });
 
 test('out of office words match whole words without regard to case', () => {

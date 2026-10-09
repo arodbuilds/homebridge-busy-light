@@ -15,6 +15,8 @@ export interface CalendarSource {
 export interface IcsSettings {
   outOfOfficeWords: string[];
   ownerAddresses: string[];
+  /** Called when a recurring series reaches the safety cap of SPEC 5.4 item 3, so the source can say so once. */
+  onRepeatLimit?: () => void;
 }
 
 /** How a source reports the calendars it chose, so the source runner can write the log lines of SPEC 12. */

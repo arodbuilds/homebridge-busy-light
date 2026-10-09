@@ -9,7 +9,7 @@ import { SourceError, toSourceError } from './errors.js';
 import { GraphClient } from './graph.js';
 import { ICloudSource } from './icloud.js';
 import type { Log } from './log.js';
-import { calendarsNotInUse, icloudDiscovery, icloudRejected, listedCalendarGone, sourceFailed, sourceRecovered } from './messages.js';
+import { calendarsNotInUse, icloudDiscovery, icloudRejected, listedCalendarGone, repeatLimit, sourceFailed, sourceRecovered } from './messages.js';
 import { MicrosoftAuth, TokenStore, tokenFile } from './microsoft.js';
 import type { CalEvent, Presence, SourceData } from './status.js';
 import { UrlSource } from './url-source.js';
@@ -102,6 +102,8 @@ export class SourceRunner {
   private warned = false;
   /** Listed calendars reported missing, so the "Listed calendar gone" line is written once until each is found again. */
   private readonly gone = new Set<string>();
+  /** The "Repeat limit" line was written: it is written once per source (SPEC 5.4 item 3). */
+  private repeatLimited = false;
   private readonly log: Log;
   private readonly now: () => number;
 
@@ -110,11 +112,12 @@ export class SourceRunner {
     this.log = options.log;
     this.now = options.now ?? Date.now;
     const c = options.config;
+    const ics: IcsSettings = { ...options.ics, onRepeatLimit: () => this.repeatLimit() };
     if (c.type === 'icloud') {
-      this.calendar = new ICloudSource(c, options.ics, this.report());
+      this.calendar = new ICloudSource(c, ics, this.report());
       this.calendarPart = new Part();
     } else if (c.type === 'google' || c.type === 'url') {
-      this.calendar = new UrlSource(c, options.ics);
+      this.calendar = new UrlSource(c, ics);
       this.calendarPart = new Part();
     } else {
       this.auth = new MicrosoftAuth({
@@ -161,6 +164,14 @@ export class SourceRunner {
         }
       },
     };
+  }
+
+  /** A recurring series reached the safety cap: say so once for this source. */
+  private repeatLimit(): void {
+    if (!this.repeatLimited) {
+      this.repeatLimited = true;
+      this.log.warn(repeatLimit(this.name));
+    }
   }
 
   /** True when this source reads Teams presence. */

@@ -111,6 +111,11 @@ export function sourceFailed(name: string, reason: string, minutes: number): str
   return `${name}: could not be read (${reason}). Trying again in ${count(minutes, 'minute')}.`;
 }
 
+/** SPEC 12 "Repeat limit": once per source, when a recurring series reaches the safety cap of 5.4 item 3. */
+export function repeatLimit(name: string): string {
+  return `${name}: a recurring event repeats too often to read in full, so some of its occurrences are left out.`;
+}
+
 export function sourceRecovered(name: string): string {
   return `${name}: working again.`;
 }

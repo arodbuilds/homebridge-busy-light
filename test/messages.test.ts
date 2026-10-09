@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   addressChanged,
   callSwitchTimeout, calendarsNotInUse, inputClockOff, inputFailed, inputNotLocal, inputPlainKeyOff, inputStarted, inputWrongKey,
-  listedCalendarGone, senderCleared, senderExpired, senderReports,
+  listedCalendarGone, repeatLimit, senderCleared, senderExpired, senderReports,
 } from '../src/messages.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -64,4 +64,8 @@ test('the address change line is verbatim from SPEC section 12', () => {
 test('the On a Call timeout line is verbatim from SPEC section 12, singular for 1', () => {
   assert.equal(callSwitchTimeout('Busy Light', 3), specLine('Call switch timeout').replace('{name}', 'Busy Light').replace('{n}', '3'));
   assert.equal(callSwitchTimeout('Busy Light', 1), 'Busy Light On a Call turned itself off after 1 hour.');
+});
+
+test('the Repeat limit line is verbatim from SPEC section 12', () => {
+  assert.equal(repeatLimit('Rota'), specLine('Repeat limit').replace('{name}', 'Rota'));
 });

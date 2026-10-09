@@ -397,6 +397,18 @@ test('review: presence and calendar failing together write one warning', async (
   ]);
 });
 
+test('a series repeating too often writes the Repeat limit line once per source (SPEC 5.4 item 3, 12)', async () => {
+  make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }, { type: 'url', name: 'Team', url: OTHER }], calendarSeconds: 60 });
+  const everySecond = icsOf([['every-second', T0 - 2 * 86_400_000, T0 - 2 * 86_400_000 + 1000, ['RRULE:FREQ=SECONDLY']]]);
+  fake.on('https://calendar.example.com/', () => text(everySecond));
+  fake.on(OTHER, () => text(icsOf([])));
+  await engine!.tick();
+  clock.t += 60_000;
+  await engine!.tick();
+  assert.equal(fake.callsTo('https://calendar.example.com/').length, 2, 'read twice');
+  assert.deepEqual(log.lines('warn'), ['Rota: a recurring event repeats too often to read in full, so some of its occurrences are left out.']);
+});
+
 // Build 3: the sender store in the loop (SPEC 6.3, 6.5, 18.7).
 
 const INPUT_KEY = 'Synthetic-engine-key-000000000000000000000';
