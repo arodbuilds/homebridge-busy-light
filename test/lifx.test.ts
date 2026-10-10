@@ -532,3 +532,62 @@ test('a bulb named but not found at startup is looked for every 5 minutes, and c
   clock += REDISCOVER_MS;
   assert.equal(await light.maintain(), false, 'every bulb found: no more discovery');
 });
+
+// Build 3.2, from the review before the pull request: rediscovery and the bulbs' own lanes (SPEC 13.2 item 4, 13.3).
+
+const setColorsTo = (host: string) => net.sent.filter((s) => s.to === host && parseHeader(s.buf)!.type === MSG.SetColor);
+
+test('two chosen bulbs that both moved are each sent the color at the address the one rediscovery finds (SPEC 13.3 item 2)', async () => {
+  net.bulbs = [{ ...DOOR }, { ...STATUS }];
+  const { light } = controller({ bulbs: [DOOR.serial, STATUS.serial] });
+  await light.start();
+  // A power cut: both bulbs come back at new addresses.
+  net.bulbs = [{ ...DOOR, host: '192.168.4.77' }, { ...STATUS, host: '192.168.4.88' }];
+  clock += REDISCOVER_MS;
+  await light.send('#FF0000', 0);
+  await light.send('#FF0000', 0);
+  net.sent = [];
+  const results = await light.send('#FF0000', 0);
+  await light.settled();
+  assert.deepEqual(light.hosts, ['192.168.4.77', '192.168.4.88']);
+  assert.deepEqual(results.map((r) => [r.host, r.answered]), [['192.168.4.77', true], ['192.168.4.88', true]]);
+  assert.deepEqual([setColorsTo('192.168.4.77').length, setColorsTo('192.168.4.88').length], [1, 1], 'each once');
+  assert.equal(net.sent.filter((s) => parseHeader(s.buf)!.type === MSG.GetService).length / 2, 3, 'one discovery for both');
+});
+
+test('a bulb chosen by the discovery another bulb\'s silent send sent out is sent the last color (SPEC 13.3 item 4)', async () => {
+  net.bulbs = [{ ...DOOR }];
+  const { light } = controller({ bulbs: [DOOR.serial, 'Status Light'] });
+  await light.start();
+  assert.deepEqual(light.hosts, [DOOR.host]);
+  // Office Door is switched off at the wall; Status Light is switched on.
+  net.bulbs = [{ ...STATUS }];
+  clock += REDISCOVER_MS;
+  for (let i = 0; i < 3; i++) {
+    await light.send('#FF0000', 0);
+  }
+  await light.settled();
+  assert.deepEqual(light.hosts, [DOOR.host, STATUS.host]);
+  assert.equal(setColorsTo(STATUS.host).length, 1, 'chosen later and sent the last color at once');
+  assert.equal(setColorsTo(STATUS.host)[0].buf.readUInt32LE(45), 1000, 'with the 1 second fade (SPEC 8.2 item 4)');
+  assert.equal(await light.maintain(), false, 'nothing left to look for');
+});
+
+test('two entries of lifx.bulbs naming the same bulb: no discovery at a restart, and none every 5 minutes after (SPEC 13.2 items 2 to 4)', async () => {
+  const discoveries = () => net.sent.filter((s) => parseHeader(s.buf)!.type === MSG.GetService).length;
+  fs.writeFileSync(lightFile(dir), JSON.stringify({ bulbs: [{ serial: DOOR.serial, label: 'Office Door', host: DOOR.host }] }));
+  net.bulbs = [{ ...DOOR }];
+  const remembered = controller({ bulbs: ['Office Door', DOOR.serial] });
+  await remembered.light.start();
+  assert.equal(discoveries(), 0, 'the remembered bulb fits both entries');
+  fs.rmSync(lightFile(dir));
+  const { light } = controller({ bulbs: ['office door', DOOR.serial] });
+  await light.start();
+  assert.deepEqual(light.hosts, [DOOR.host]);
+  const after = discoveries();
+  for (let i = 0; i < 3; i++) {
+    clock += REDISCOVER_MS;
+    await light.maintain();
+  }
+  assert.equal(discoveries(), after, 'every bulb wanted is found');
+});

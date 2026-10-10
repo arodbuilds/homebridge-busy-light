@@ -341,8 +341,8 @@ test('Unknown turns every sensor off and leaves the bulb alone', async () => {
   assert.equal(readState(dir)!.reason, null);
 });
 
-test('a bulb found later is sent the current color', async () => {
-  make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }], lifx: { enabled: true } });
+test('a bulb found later is sent the current color, with the 1 second fade (SPEC 8.2 item 4)', async () => {
+  make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }], lifx: { enabled: true, refreshSeconds: 600 } });
   fake.on('https://calendar.example.com/', () => text(icsOf([])));
   await engine!.light.start();
   await engine!.tick();
@@ -352,6 +352,7 @@ test('a bulb found later is sent the current color', async () => {
   await engine!.tick();
   assert.equal(lifxColors().length, 1);
   assert.equal(lifxColors()[0].to, DOOR.host);
+  assert.equal(lifxColors()[0].buf.readUInt32LE(45), 1000);
 });
 
 test('ticks never overlap', async () => {
@@ -744,6 +745,7 @@ test('a call starting during the fade replaces it at once (SPEC 6.7 item 4)', as
   await e.report(call());
   assert.equal(e.status, 'inCall');
   assert.equal(e.meetingWarning, null);
+  await e.idle(); // the answer to the report does not wait for the bulb's acknowledgements (SPEC 13.3 item 1)
   assert.deepEqual(packets(), [['color', RED, FULL, 1000], ['power', FULL, 1000]]);
 });
 
@@ -857,4 +859,55 @@ test('two bulbs show the status together: the change, the refresh, the warning f
   await e.setWorking(false);
   await e.idle();
   both([['power', 0, 1000]], 'the Working switch turned off');
+});
+
+test('the 5 minute discovery for a missing bulb finds a chosen one at a new address, which is sent the color at once (SPEC 13.2 item 4)', async () => {
+  make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }], lifx: { enabled: true, bulbs: [DOOR.serial, 'Status Light'], refreshSeconds: 0 } });
+  fake.on('https://calendar.example.com/', () => text(icsOf([])));
+  net.bulbs = [{ ...DOOR }];
+  await engine!.light.start();
+  await engine!.tick();
+  assert.equal(lifxColors().filter((s) => s.to === DOOR.host).length, 1);
+  // Office Door is power cycled and gets a new address; Status Light is still switched off at the wall.
+  net.bulbs = [{ ...DOOR, host: '192.168.4.77' }];
+  net.sent = [];
+  clock.t = T0 + 5 * MIN;
+  await engine!.tick();
+  assert.deepEqual(engine!.light.hosts, ['192.168.4.77']);
+  assert.deepEqual(lifxColors().map((s) => [s.to, s.buf.readUInt32LE(45)]), [['192.168.4.77', 1000]], 'at once, with no refresh due');
+});
+
+test('one silent bulb\'s tries do not hold up the next color on the bulb that answers (SPEC 13.3 item 1)', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const sentTo: [string, string][] = [];
+  class Gated extends LifxClient {
+    override async sendColor(host: string, _serial: string | null, color: string): Promise<boolean> {
+      sentTo.push([host, color]);
+      if (host === STATUS_LIGHT.host) {
+        await gate; // switched off at the wall: three tries of each packet, about 3 seconds
+        return false;
+      }
+      return true;
+    }
+  }
+  const { config } = parseConfig({ platform: 'BusyLight', calendars: [{ type: 'url', name: 'Rota', url: FEED }],
+    lifx: { enabled: true, host: `${STATUS_LIGHT.host}, ${DOOR.host}` }, overrideSwitch: true });
+  engine = new BusyLightEngine({ config, storageDir: dir, log: log.log, version: '0.1.0-beta.5', clock, lifx: new Gated() });
+  fake.on('https://calendar.example.com/', () => text(icsOf([])));
+  const ticking = engine.tick();
+  await settle();
+  const door = () => sentTo.filter(([h]) => h === DOOR.host).map(([, c]) => c);
+  assert.deepEqual(door(), ['#00FF00'], 'Available reached Office Door at once');
+  await engine.setOverride(true);
+  await settle();
+  assert.deepEqual(door(), ['#00FF00', config.colors.doNotDisturb], 'Do not disturb too, while Status Light is still trying');
+  assert.deepEqual(sentTo.filter(([h]) => h === STATUS_LIGHT.host).map(([, c]) => c), ['#00FF00'], 'Status Light has it waiting');
+  release();
+  await ticking;
+  await engine.idle();
+  assert.deepEqual(sentTo.filter(([h]) => h === STATUS_LIGHT.host).map(([, c]) => c), ['#00FF00', config.colors.doNotDisturb],
+    'then Status Light is sent the newest color, once');
 });

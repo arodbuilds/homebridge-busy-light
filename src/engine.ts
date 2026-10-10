@@ -231,8 +231,10 @@ export class BusyLightEngine {
       const now = this.clock.now();
       // SPEC 8.1 item 2: each source on its own interval, or the platform's when it has none.
       await Promise.all(this.sources.map((s) => s.runDue(now, (s.config.calendarSeconds ?? this.config.calendarSeconds) * 1000)));
-      const bulbChosen = await this.light.maintain();
-      await this.applyStatus(undefined, bulbChosen);
+      // A bulb chosen or found at a new address is sent the last color by the light controller (SPEC 13.3 items 2 and 4).
+      await this.light.maintain();
+      await this.applyStatus();
+      await this.light.settled();
     } catch (err) {
       this.log.error(`Unexpected error: ${(err as Error).message}`);
     } finally {
@@ -287,20 +289,23 @@ export class BusyLightEngine {
     return this.applyStatus();
   }
 
-  /** Resolves and applies, one at a time. `at` is a boundary time, for the boundary timer. */
-  applyStatus(at?: number, resend = false): Promise<void> {
-    this.queue = this.queue.then(() => this.applyNow(at, resend)).catch((err: unknown) => {
+  /**
+   * Resolves and applies, one at a time. `at` is a boundary time, for the boundary timer. An apply puts its color on
+   * every bulb's lane and goes on, so one bulb still trying never holds up the next color on the others (SPEC 13.3 item 1).
+   */
+  applyStatus(at?: number): Promise<void> {
+    this.queue = this.queue.then(() => this.applyNow(at)).catch((err: unknown) => {
       this.log.error(`Unexpected error: ${(err as Error).message}`);
     });
     return this.queue;
   }
 
-  /** Resolves once the queued applies are done. */
+  /** Resolves once the queued applies are done and every bulb has its color (or has stopped trying). */
   idle(): Promise<void> {
-    return this.queue;
+    return this.queue.then(() => this.light.settled());
   }
 
-  private async applyNow(at: number | undefined, resend: boolean): Promise<void> {
+  private async applyNow(at: number | undefined): Promise<void> {
     if (this.stopped) {
       return;
     }
@@ -339,26 +344,26 @@ export class BusyLightEngine {
       this.writeState();
       if (warning) {
         // Available began inside the warning time: the fade starts from the Available color (SPEC 6.7 item 3).
-        await this.sendWarning(warning, now, true);
+        this.sendWarning(warning, now, true);
       } else if (result.status !== 'unknown') {
-        await this.send(result.status, CHANGE_DURATION_MS, now);
+        this.send(result.status, CHANGE_DURATION_MS, now);
       }
     } else if (result.status !== 'unknown') {
       if (warningChanged) {
         this.options.onMeetingSoon?.(warning !== null);
         this.writeState();
       }
-      if (warning && (warningChanged || resend)) {
-        await this.sendWarning(warning, now, resend);
+      if (warning && warningChanged) {
+        this.sendWarning(warning, now, false);
       } else if (!warning && hadWarning) {
         // The warning ended before the meeting: the normal apply replaces the fade at once (SPEC 6.7 item 4).
-        await this.send(result.status, CHANGE_DURATION_MS, now);
-      } else if (!warning && (resend || this.refreshDue(now))) {
+        this.send(result.status, CHANGE_DURATION_MS, now);
+      } else if (!warning && this.refreshDue(now)) {
         // No refresh during the warning, which would end the fade (SPEC 6.7 item 6).
-        await this.send(result.status, resend ? CHANGE_DURATION_MS : 0, now);
+        this.send(result.status, 0, now);
       }
     }
-    // From the clock after the send, which an offline bulb can hold up for seconds (SPEC 8.1 item 3).
+    // From the clock after the send is put on the bulbs' lanes (SPEC 8.1 item 3).
     const after = Math.max(this.clock.now(), now);
     this.scheduleBoundary(after);
     this.scheduleExpiry(after);
@@ -395,24 +400,28 @@ export class BusyLightEngine {
    * The meeting warning's fade (SPEC 6.7 item 3): to the In a meeting color, until the meeting starts. With the Available
    * color off the bulb comes on dim first; `fromAvailable` sets the Available color first, when the bulb may not show it.
    */
-  private async sendWarning(warning: { meetingAt: number }, now: number, fromAvailable: boolean): Promise<void> {
+  private sendWarning(warning: { meetingAt: number }, now: number, fromAvailable: boolean): void {
     if (!this.light.enabled) {
       return;
     }
     this.lastSendAt = now;
     const available = this.config.colors.available;
     this.log.debug(`Meeting warning: fading over ${Math.round((warning.meetingAt - now) / 1000)} seconds.`);
-    await this.light.sendFade({ from: available === 'off' ? 'off' : fromAvailable ? available : null, to: this.config.colors.inMeeting,
-      until: warning.meetingAt });
+    this.light.sendFade({ from: available === 'off' ? 'off' : fromAvailable ? available : null, to: this.config.colors.inMeeting,
+      until: warning.meetingAt }).catch((err: unknown) => this.log.error(`Unexpected error: ${(err as Error).message}`));
   }
 
-  /** Sends a status's color; not working turns the light off, whatever the Offline color (SPEC 6.6 item 1). */
-  private async send(status: Exclude<Status, 'unknown'>, durationMs: number, now: number): Promise<void> {
+  /**
+   * Puts a status's color on every bulb's lane, without waiting for the answers (SPEC 13.3 item 1); not working turns
+   * the light off, whatever the Offline color (SPEC 6.6 item 1).
+   */
+  private send(status: Exclude<Status, 'unknown'>, durationMs: number, now: number): void {
     if (!this.light.enabled) {
       return;
     }
     this.lastSendAt = now;
-    await this.light.send(status === 'notWorking' ? 'off' : this.config.colors[status], durationMs);
+    this.light.send(status === 'notWorking' ? 'off' : this.config.colors[status], durationMs)
+      .catch((err: unknown) => this.log.error(`Unexpected error: ${(err as Error).message}`));
   }
 
   /**

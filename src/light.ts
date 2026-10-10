@@ -15,6 +15,8 @@ import { bulbBack, bulbNotNamed, bulbSilent, bulbsFound, noBulb, severalBulbs } 
 export const REDISCOVER_MS = 5 * 60_000;
 /** Sends in a row without an answer before discovery runs again. */
 export const SILENT_SENDS = 3;
+/** The fade of a color sent to a bulb chosen later or found at a new address (SPEC 8.2 item 4). */
+const CHANGE_MS = 1000;
 
 export type Found = 'configured' | 'remembered' | 'discovered';
 
@@ -52,6 +54,25 @@ interface Chosen {
   lastSent: string | null;
   lastSentAt: number | null;
   answered: boolean | null;
+  /** The send in progress on this bulb's own lane (SPEC 13.3 item 1), and the next one waiting behind it. */
+  running: Promise<void> | null;
+  pending: Job | null;
+  /** A send of its own is waiting on a discovery for it, and will send to the address it finds. */
+  handling: boolean;
+}
+
+/** One send for one bulb, and everyone waiting for its result (a newer send replaces an older one still waiting). */
+interface Job {
+  color: string;
+  sendTo: (to: Chosen) => Promise<boolean>;
+  waiters: ((result: SendResult) => void)[];
+}
+
+/** The last send, replayed to a bulb that a discovery moves or chooses (SPEC 13.2 item 4, 13.3 items 2 and 4). */
+interface LastSend {
+  color: string;
+  /** For a color, sent with the 1 second fade of 8.2 item 4; for the meeting warning, the fade until the meeting. */
+  sendTo: (to: Chosen) => Promise<boolean>;
 }
 
 /** A bulb line and its level. */
@@ -84,7 +105,7 @@ export function matchesBulb(wanted: string, bulb: { label: string; serial: strin
 function chosen(bulb: { serial: string | null; label: string | null; host: string }, found: Found, wanted: string | null): Chosen {
   return {
     serial: bulb.serial, label: bulb.label || null, host: bulb.host, found, wanted, silent: 0, silentLogged: false,
-    untried: found === 'remembered', lastSent: null, lastSentAt: null, answered: null,
+    untried: found === 'remembered', lastSent: null, lastSentAt: null, answered: null, running: null, pending: null, handling: false,
   };
 }
 
@@ -106,6 +127,11 @@ export class LightController {
   private chosen: Chosen[] = [];
   private starting: Promise<void> | null = null;
   private discovering: Promise<void> | null = null;
+  /** How many discoveries have started, so a send can tell whether one ran while it was trying. */
+  private discoveries = 0;
+  private lastSend: LastSend | null = null;
+  /** Every lane's send in progress, for `settled`. */
+  private readonly inFlight = new Set<Promise<void>>();
   private lastDiscovery: number | null = null;
   private lastOutcome: string | null = null;
   private readonly now: () => number;
@@ -169,7 +195,7 @@ export class LightController {
       if (this.chosen.length > 0) {
         this.options.onChange?.();
       }
-      if (config.bulbs.every((w) => this.chosen.some((c) => c.wanted === w))) {
+      if (config.bulbs.every((w) => this.satisfied(w))) {
         return;
       }
     } else if (remembered.length === 1) {
@@ -228,6 +254,8 @@ export class LightController {
    */
   private async runDiscovery(): Promise<void> {
     this.lastDiscovery = this.now();
+    this.discoveries++;
+    const hostsBefore = new Map(this.chosen.map((c) => [c, c.host]));
     const bulbs = await this.options.client.discover();
     const wanted = this.options.config.bulbs;
     const previous = this.chosen;
@@ -302,6 +330,20 @@ export class LightController {
     this.log(signature, lines);
     this.remember();
     this.options.onChange?.();
+    // A bulb found at a new address, or chosen now, is sent the last color at once, on its own lane (SPEC 13.2 item 4,
+    // 13.3 items 2 and 4); one whose own send is waiting on this discovery sends there itself.
+    for (const c of next) {
+      if (!c.handling && hostsBefore.get(c) !== c.host) {
+        this.replay(c);
+      }
+    }
+  }
+
+  /** Sends the last color to one bulb, if there has been a send. */
+  private replay(bulb: Chosen): void {
+    if (this.lastSend) {
+      void this.enqueue(bulb, this.lastSend.color, this.lastSend.sendTo);
+    }
   }
 
   /** Writes the lines of an outcome once, when it differs from the last (SPEC 12 item 2). */
@@ -319,14 +361,19 @@ export class LightController {
     return this.options.config.hosts.length === 0 && (this.lastDiscovery === null || this.now() - this.lastDiscovery >= REDISCOVER_MS);
   }
 
+  /** Whether an entry of `lifx.bulbs` names a chosen bulb, its own or one another entry names by its serial or name. */
+  private satisfied(wanted: string): boolean {
+    return this.chosen.some((c) => c.wanted === wanted || (c.serial !== null && matchesBulb(wanted, { label: c.label ?? '', serial: c.serial })));
+  }
+
   /** Whether a bulb is still to be found: none chosen, or a bulb of `lifx.bulbs` not chosen yet. */
   private looking(): boolean {
-    return this.chosen.length === 0 || this.options.config.bulbs.some((w) => !this.chosen.some((c) => c.wanted === w));
+    return this.chosen.length === 0 || this.options.config.bulbs.some((w) => !this.satisfied(w));
   }
 
   /**
    * Called on every tick. While a bulb is still to be found, discovery runs again at most every 5 minutes. True when
-   * a bulb has just been chosen, so the caller can send the current color (to every bulb, SPEC 13.3 item 4).
+   * a bulb has just been chosen; it has been sent the last color already (SPEC 13.3 item 4).
    */
   async maintain(): Promise<boolean> {
     if (!this.enabled) {
@@ -342,12 +389,14 @@ export class LightController {
   }
 
   /**
-   * Sends a color (`#RRGGBB` or `off`) to every chosen bulb at the same moment, each on its own (SPEC 13.3). One result
-   * per bulb, none when there is no bulb to send to. A remembered address that does not answer its first send, or a
-   * bulb silent for three sends in a row, sends discovery out again, and the color goes to that bulb's new address.
+   * Sends a color (`#RRGGBB` or `off`) to every chosen bulb at the same moment, each on its own lane (SPEC 13.3): one
+   * result per bulb, none when there is no bulb to send to. A bulb still trying an earlier send gets this one next, in
+   * place of any older one waiting. A remembered address that does not answer its first send, or a bulb silent for
+   * three sends in a row, sends discovery out again, and the color goes to that bulb's new address.
    */
   async send(color: string, durationMs: number): Promise<SendResult[]> {
     const { client, config } = this.options;
+    this.lastSend = { color, sendTo: (to) => client.sendColor(to.host, to.serial, color, config.brightness, CHANGE_MS) };
     return this.deliver(color, (to) => client.sendColor(to.host, to.serial, color, config.brightness, durationMs));
   }
 
@@ -357,33 +406,93 @@ export class LightController {
    */
   async sendFade(fade: { from: string | null; to: string; until: number }): Promise<SendResult[]> {
     const { client, config } = this.options;
-    return this.deliver(fade.to, (to) => client.sendFade(to.host, to.serial,
-      { from: fade.from, to: fade.to, durationMs: Math.max(0, fade.until - this.now()) }, config.brightness));
+    const sendTo = (to: Chosen) => client.sendFade(to.host, to.serial,
+      { from: fade.from, to: fade.to, durationMs: Math.max(0, fade.until - this.now()) }, config.brightness);
+    this.lastSend = { color: fade.to, sendTo };
+    return this.deliver(fade.to, sendTo);
   }
 
-  /** Sends to every chosen bulb at once. `lastSent` records `color`. */
+  /** Resolves once no bulb has a send in progress or waiting. */
+  async settled(): Promise<void> {
+    while (this.inFlight.size > 0) {
+      await Promise.all([...this.inFlight]);
+    }
+  }
+
+  /** Puts a send on every chosen bulb's lane at once. `lastSent` records `color`. */
   private async deliver(color: string, sendTo: (to: Chosen) => Promise<boolean>): Promise<SendResult[]> {
     if (!this.enabled) {
       return [];
     }
     await this.start();
-    return Promise.all([...this.chosen].map((c) => this.deliverTo(c, color, sendTo)));
+    return Promise.all([...this.chosen].map((c) => this.enqueue(c, color, sendTo)));
   }
 
-  /** One bulb's send, with its own rediscovery: another bulb's send never waits for it (SPEC 13.3 item 1). */
+  /** One bulb's lane: the send starts now when the bulb is free, or waits behind its send in progress (SPEC 13.3 item 1). */
+  private enqueue(bulb: Chosen, color: string, sendTo: (to: Chosen) => Promise<boolean>): Promise<SendResult> {
+    return new Promise((resolve) => {
+      const job: Job = { color, sendTo, waiters: [resolve] };
+      if (bulb.pending) {
+        // A newer send replaces one still waiting; whoever waited for it gets this one's result.
+        job.waiters.unshift(...bulb.pending.waiters);
+      }
+      bulb.pending = job;
+      this.runLane(bulb);
+    });
+  }
+
+  private runLane(bulb: Chosen): void {
+    if (bulb.running || !bulb.pending) {
+      return;
+    }
+    const job = bulb.pending;
+    bulb.pending = null;
+    const running = this.deliverTo(bulb, job.color, job.sendTo)
+      .catch((): SendResult => ({ label: bulb.label, host: bulb.host, answered: false }))
+      .then((result) => {
+        for (const waiter of job.waiters) {
+          waiter(result);
+        }
+      })
+      .finally(() => {
+        bulb.running = null;
+        this.inFlight.delete(running);
+        this.runLane(bulb);
+      });
+    bulb.running = running;
+    this.inFlight.add(running);
+  }
+
+  /**
+   * One bulb's send, with its own rediscovery: another bulb's send never waits for it (SPEC 13.3 item 1). When a
+   * discovery runs while it is trying (its own, or one another silent bulb sent out), it sends again to the address
+   * that discovery finds.
+   */
   private async deliverTo(bulb: Chosen, color: string, sendTo: (to: Chosen) => Promise<boolean>): Promise<SendResult> {
     let target = bulb;
+    const discoveriesBefore = this.discoveries;
+    const before = bulb.host;
     let answered = await this.sendOnce(bulb, color, sendTo);
     const firstTry = bulb.untried;
     bulb.untried = false;
-    if (!answered && bulb.found !== 'configured' && (firstTry || (bulb.silent >= SILENT_SENDS && this.discoveryDue()))) {
-      const before = bulb.host;
-      await this.discover();
-      // The same record at a new address, or the bulb `lifx.bulbs` now names in its place.
-      const now = this.chosen.find((c) => c === bulb) ?? (bulb.wanted !== null ? this.chosen.find((c) => c.wanted === bulb.wanted) : undefined);
-      if (now && (now !== bulb || now.host !== before)) {
-        target = now;
-        answered = await this.sendOnce(now, color, sendTo);
+    if (!answered && bulb.found !== 'configured') {
+      bulb.handling = true;
+      try {
+        if (firstTry || (bulb.silent >= SILENT_SENDS && this.discoveryDue())) {
+          await this.discover();
+        } else if (this.discovering) {
+          await this.discovering;
+        }
+      } finally {
+        bulb.handling = false;
+      }
+      if (this.discoveries !== discoveriesBefore) {
+        // The same record at a new address, or the bulb `lifx.bulbs` now names in its place.
+        const now = this.chosen.find((c) => c === bulb) ?? (bulb.wanted !== null ? this.chosen.find((c) => c.wanted === bulb.wanted) : undefined);
+        if (now && (now !== bulb || now.host !== before)) {
+          target = now;
+          answered = await this.sendOnce(now, color, sendTo);
+        }
       }
     }
     return { label: target.label, host: target.host, answered };
