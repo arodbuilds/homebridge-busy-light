@@ -21,6 +21,8 @@ The configuration keys are now stable: from 1.0, a change that would break a `co
 - The settings page opens with three setup steps (add a calendar, choose how the light is controlled, save and restart) and says the rest is optional.
 - Help on the page for the three default sensors, the two Settings intervals, which of the address, key and setup code an app needs, and a line setting the Working, On a Call and Override switches side by side; a fourth Home app step that sets the light back after the meeting.
 - README: a Quick start, two screenshots of the settings page, Known limitations, the command line on the Homebridge Raspberry Pi image by its full path, and sections for upgrading from 0.1.0 and for development.
+- Right now and `homebridge-busy-light status` say which bulb is not answering, for example "Floor is not answering, so it may still show an old color.": a LIFX bulb that drops off the network keeps its last color, so it can stay red after a meeting ends while your other bulbs turn green. The line goes once the bulb answers again.
+- The state file's bulbs carry their serial numbers.
 
 ### Changed
 
@@ -29,6 +31,7 @@ The configuration keys are now stable: from 1.0, a change that would break a `co
 - Log and command line times always read `9:00 AM` and `9:00 PM`, whatever the computer's language (the Pi wrote `9:00 am`).
 - The masked setup code is a fixed row of dots on one line.
 - An app's name with an invisible format character (a zero-width space or a word joiner, say) is refused; emoji joined with a zero-width joiner stay allowed.
+- Working out each status change ahead now takes one pass over the events, so a calendar with a very dense series stays fast over the week ahead.
 
 ### Fixed
 
@@ -39,6 +42,9 @@ The configuration keys are now stable: from 1.0, a change that would break a `co
 - A meeting added inside the warning time started its fade only when a slow calendar check ended. It now starts at once.
 - The startup line said `light on at` one address with two bulbs chosen; it now says `light on (2 bulbs)`.
 - An app could appear as the On a Call switch's "Home app" by adding an invisible character to its name.
+- With two bulbs chosen and one missing, the settings page showed the missing bulb by its serial number ("d073d5... was not found just now", "No answer from d073d5..."); it now names it.
+- At startup, a calendar that answered first could start a meeting warning before the others had been read.
+- The log line and the card's message for a refused iCloud sign-in still said Apple ID.
 
 ## 0.1.0-beta.5 (2026-10-09)
 
