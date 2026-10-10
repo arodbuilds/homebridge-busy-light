@@ -20,8 +20,8 @@ The configuration keys are now stable: from 1.0, a change that would break a `co
 - Microsoft 365 sign-in is marked experimental: on the Add calendar choice, the card's badge and note, the standard settings form, and one line in the log at startup for each Microsoft 365 calendar asking you to say if it works. Nothing about it changes otherwise. The Outlook published link is tested and not marked.
 - The settings page opens with three setup steps (add a calendar, choose how the light is controlled, save and restart) and says the rest is optional.
 - Help on the page for the three default sensors, the two Settings intervals, which of the address, key and setup code an app needs, and a line setting the Working, On a Call and Override switches side by side; a fourth Home app step that sets the light back after the meeting.
-- README: a Quick start, two screenshots of the settings page, Known limitations, the command line on the Homebridge Raspberry Pi image by its full path, and sections for upgrading from 0.1.0 and for development.
-- Right now and `homebridge-busy-light status` say which bulb is not answering, for example "Floor is not answering, so it may still show an old color.": a LIFX bulb that drops off the network keeps its last color, so it can stay red after a meeting ends while your other bulbs turn green. The line goes once the bulb answers again.
+- README: a Quick start, two screenshots of the settings page, examples with documentation addresses (192.0.2.x), Known limitations, the command line on the Homebridge Raspberry Pi image by its full path, and sections for upgrading from 0.1.0 and for development.
+- Right now and `homebridge-busy-light status` say which bulb is not answering, for example "Floor is not answering, so it may still show an old color.": a LIFX bulb that drops off the network keeps its last color, so it can stay red after a meeting ends while your other bulbs turn green. A chosen bulb that has not been found since Homebridge started is said too, by its serial number unless a search on the page found it. The line goes once the bulb answers again.
 - The state file's bulbs carry their serial numbers.
 
 ### Changed
@@ -30,7 +30,7 @@ The configuration keys are now stable: from 1.0, a change that would break a `co
 - Plainer page copy, from a first-time setup review: the intro, the Calendars help, the Calendar URL help, Allow the plain key, the On a Call switch's help, and "Turn off automatically after (hours)". The closing line at the end of the page is gone.
 - Log and command line times always read `9:00 AM` and `9:00 PM`, whatever the computer's language (the Pi wrote `9:00 am`).
 - The masked setup code is a fixed row of dots on one line.
-- An app's name with an invisible format character (a zero-width space or a word joiner, say) is refused; emoji joined with a zero-width joiner stay allowed.
+- An app's name with an invisible format character (a zero-width space or a word joiner, say) is refused. The zero-width non-joiner and joiner stay allowed, for emoji built with them and for words in Persian, Sinhala and Malayalam.
 - Working out each status change ahead now takes one pass over the events, so a calendar with a very dense series stays fast over the week ahead.
 
 ### Fixed
