@@ -117,7 +117,7 @@ The page opens with three steps (add a calendar, choose how the light is control
 
 ### Right now
 
-What the running plugin shows at this moment: the color and the status, and why, for example "Until 2:30 PM, from Work." If a bulb is not answering, a line under the status names it, for example "Floor is not answering, so it may still show an old color.": a LIFX bulb that drops off the network keeps its last color, so it may still be red after a meeting ends. The line goes once the bulb answers again: with the default refresh, within about 5 minutes; otherwise at the next status change. A time that is not today carries its day, for example "Nothing on your calendars until Monday at 9:00 AM." During the meeting warning (see [Colors](#colors)) the status stays Available, with "A meeting starts at 2:30 PM."; with the Working switch off it says "Not working" and "The Working switch is off." It refreshes every 15 seconds while the page is open. If it says Homebridge may not be running, the plugin has not written its state for more than 5 minutes.
+What the running plugin shows at this moment: the color and the status, and why, for example "Until 2:30 PM, from Work." If a bulb is not answering, a line under the status names it, for example "Floor is not answering, so it may still show an old color.": a LIFX bulb that drops off the network keeps its last color, so it may still be red after a meeting ends. A bulb you chose that has not been found since Homebridge started gets the line too, named by its serial number unless a search on the page has found it. The line goes once the bulb answers again: with the default refresh, within about 5 minutes; otherwise at the next status change. A time that is not today carries its day, for example "Nothing on your calendars until Monday at 9:00 AM." During the meeting warning (see [Colors](#colors)) the status stays Available, with "A meeting starts at 2:30 PM."; with the Working switch off it says "Not working" and "The Working switch is off." It refreshes every 15 seconds while the page is open. If it says Homebridge may not be running, the plugin has not written its state for more than 5 minutes.
 
 ### Calendars
 
@@ -243,7 +243,7 @@ The list shows the statuses your setup can produce. With calendars alone (an Out
 
 ![The LIFX bulbs card: Use LIFX bulbs ticked, two bulbs found, Desk and Door, both ticked, the brightness and Test light](assets/screenshots/settings-lights.png)
 
-When the page opens, the card says which bulbs the running plugin uses, one line each, for example "Busy Light is using Floor (192.168.4.50).", or that one did not answer last time, without searching the network again.
+When the page opens, the card says which bulbs the running plugin uses, one line each, for example "Busy Light is using Floor (192.0.2.51).", or that one did not answer last time, without searching the network again.
 
 - **Brightness** scales every color, on every bulb.
 - **Test light** shows red, then green, then your Available color on each bulb ticked, all at once, and says whether each answered.
@@ -449,13 +449,13 @@ Add `-U <path>` to use a Homebridge storage directory other than `/var/lib/homeb
 
 **Test says "Busy Light is not listening yet."** Status from other apps is ticked but not yet running: click Save and restart Homebridge. If it still says so, look for the line above in the log.
 
-**An app gets `401`.** `unauthorized` means the app has an old key (after Replace key) or the plugin has not restarted since the key changed; `plain_key_off` means the app sent the key itself while Allow the plain key is off. The log names the address once an hour, for example `Status input: refused a request with a wrong key from 192.168.4.23.`
+**An app gets `401`.** `unauthorized` means the app has an old key (after Replace key) or the plugin has not restarted since the key changed; `plain_key_off` means the app sent the key itself while Allow the plain key is off. The log names the address once an hour, for example `Status input: refused a request with a wrong key from 192.0.2.23.`
 
 **An app cannot reach Busy Light.** Check that the app's computer is on the home network and that the address works from it (`curl http://homebridge.local:8582/v1/ping`). If the address by name does not work on your network, use the IP address and reserve it for Homebridge in your router.
 
 **The Address shows only an IP address, with the "reserve this address" help.** Busy Light could not confirm its name on your network: it asks once with multicast DNS, as a Mac or iPhone would, then the computer's own resolver. Apps can use the IP address; reserve it for Homebridge in your router so it does not change.
 
-**"Homebridge's address changed from 192.168.4.10 to 192.168.4.23."** With no name confirmed, the IP address apps were given changed (a router gave Homebridge a new one). Give your apps the new setup code from the page; the notice there stays until you save the page.
+**"Homebridge's address changed from 192.0.2.10 to 192.0.2.23."** With no name confirmed, the IP address apps were given changed (a router gave Homebridge a new one). Give your apps the new setup code from the page; the notice there stays until you save the page.
 
 **More detail:** turn on Debug logging under Settings. Debug lines report counts and times, never event details.
 
