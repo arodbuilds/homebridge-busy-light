@@ -83,7 +83,7 @@ const CONFIG = {
 
 const NOW = Date.now();
 const ANSWERS = {
-  '/version': { version: '0.1.0-beta.5' },
+  '/version': { version: '1.0.0' },
   '/status': {
     version: 1, updatedAt: new Date(NOW - 20_000).toISOString(), status: 'inMeeting',
     reason: { source: 'Work', until: new Date(NOW + 1_800_000).toISOString() }, override: false, signIn: null,

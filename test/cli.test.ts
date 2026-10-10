@@ -74,6 +74,7 @@ test('help lists the commands', async () => {
   const { code, out } = await run('help');
   assert.equal(code, 0);
   assert.deepEqual(out, USAGE);
+  assert.ok(!USAGE.some((line) => /beta/i.test(line)), 'no beta wording from version 1.0.0');
   const unknown = await run('frobnicate');
   assert.equal(unknown.code, 1);
   assert.deepEqual(unknown.err, USAGE);

@@ -42,3 +42,13 @@ test('names and version', () => {
   assert.equal(PLATFORM_NAME, 'BusyLight');
   assert.equal(packageVersion(), pkg.version);
 });
+
+test('version 1.0.0 as SPEC section 3 gives it, with no beta wording where a user reads it (build 3.3)', () => {
+  const spec = fs.readFileSync(path.join(root, 'SPEC.md'), 'utf8');
+  assert.equal(pkg.version, /^\| Version \| `([^`]+)`/m.exec(spec)![1]);
+  assert.equal(pkg.version, '1.0.0');
+  assert.equal(pkg.description, /^\| Description \| "([^"]+)" \|$/m.exec(spec)![1]);
+  assert.ok(!/beta/i.test(pkg.description));
+  const schema = fs.readFileSync(path.join(root, 'config.schema.json'), 'utf8');
+  assert.ok(!/beta/i.test(schema), 'the standard form');
+});

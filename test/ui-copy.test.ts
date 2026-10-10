@@ -167,3 +167,9 @@ test('no em dash, en dash, double hyphen or emoji in the copy', () => {
     assert.ok(!/[\u2013\u2014]|--|\p{Extended_Pictographic}/u.test(value), at);
   }
 });
+
+test('no beta wording and no Apple ID in the copy, from version 1.0.0 (build 3.3)', () => {
+  for (const [at, value] of strings()) {
+    assert.ok(!/\bbeta\b|Apple ID/i.test(value), `${at}: ${value}`);
+  }
+});
