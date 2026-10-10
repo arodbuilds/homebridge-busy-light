@@ -104,7 +104,7 @@ test('a status change: the line, the sensors, the state file and the bulb', asyn
     id: 'rota', name: 'Rota', type: 'url', state: 'connected', lastChecked: new Date(T0).toISOString(), events: 1, error: null,
   }]);
   assert.deepEqual(state.lights, [{
-    enabled: true, label: null, host: DOOR.host, found: 'configured', lastSent: '#FF0000', lastSentAt: new Date(T0).toISOString(), answered: true,
+    enabled: true, label: null, serial: null, host: DOOR.host, found: 'configured', lastSent: '#FF0000', lastSentAt: new Date(T0).toISOString(), answered: true,
   }]);
   assert.equal(state.light, undefined, 'from build 3.2 the state file has lights only');
   assert.equal(state.signIn, null);
@@ -1000,4 +1000,13 @@ test('the startup line counts the bulbs configured, not those remembered in ligh
   engine!.start();
   assert.equal(log.lines('info')[0], 'Busy Light 0.1.0-beta.1: 1 calendar, light on at 192.168.4.99, 3 sensors.', 'one bulb at its remembered address');
   await settle();
+});
+
+test('the state file\'s lights carry each bulb\'s serial number (SPEC 10.1 item 5, A7 of build 3.3)', async () => {
+  make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }], lifx: { enabled: true, bulbs: [DOOR.serial, STATUS_LIGHT.serial] } });
+  net.bulbs = [{ ...DOOR }, { ...STATUS_LIGHT }];
+  fake.on('https://calendar.example.com/', () => text(icsOf([])));
+  await engine!.light.start();
+  await engine!.tick();
+  assert.deepEqual(readState(dir)!.lights!.map((l) => [l.label, l.serial]), [[DOOR.label, DOOR.serial], [STATUS_LIGHT.label, STATUS_LIGHT.serial]]);
 });

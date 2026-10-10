@@ -2230,3 +2230,64 @@ describe('settings page: the first-time setup copy (build 3.3)', () => {
     assert.equal(text(section.querySelector('[data-path="callSwitch.hours"] label')), 'Turn off automatically after (hours)');
   });
 });
+
+// Addendum to build 3.3 (SPEC 11.3 B and E, 15 item 43): every bulb named, and the one not answering said.
+
+describe('settings page: a missing bulb named, and a bulb not answering (A7 and A8 of build 3.3)', () => {
+  const FLOOR = { label: 'Floor', serial: 'd073d5000001', ip: '192.168.4.99' };
+  const STATUS_LIGHT = { label: 'Status Light', serial: 'd073d5000004', ip: '192.168.4.21' };
+  const RAW = { platform: 'BusyLight', calendars: [ICLOUD_SOURCE], lifx: { enabled: true, bulbs: [FLOOR.serial, STATUS_LIGHT.serial] } };
+  const light = (bulb: typeof FLOOR, answered: boolean) => ({
+    enabled: true, label: bulb.label, serial: bulb.serial, host: bulb.ip, found: 'discovered', lastSent: '#00FF00', lastSentAt: null, answered,
+  });
+  const lifxCard = (root: FakeElement): FakeElement => root.querySelector('#section-lights .bl-lifx-card')!;
+  const silentLines = (root: FakeElement): string[] => root.querySelectorAll('#section-rightNow .bl-now-silent').map((l) => text(l));
+
+  async function open(lights: unknown[], status: Record<string, unknown> = {}): Promise<FakeElement> {
+    answers.set('/version', { version: '1.0.0' });
+    answers.set('/status', state({ status: 'available', reason: { source: null, until: null }, light: undefined, lights, ...status }));
+    const { root, page } = mount(RAW);
+    page.startPolling();
+    await flush();
+    return root;
+  }
+
+  it('with two bulbs saved and Floor missing, the missing line and Test light name it, not its serial number', async () => {
+    const root = await open([light(FLOOR, false), light(STATUS_LIGHT, true)]);
+    answers.set('/lifx/discover', { bulbs: [STATUS_LIGHT] });
+    buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
+    await settle();
+    const lines = lifxCard(root).querySelectorAll('.bl-lifx-results .bl-lifx-line').map((l) => text(l));
+    assert.ok(lines.includes('Floor was not found just now. It may be switched off.'), JSON.stringify(lines));
+    assert.ok(!lines.some((l) => l.includes(FLOOR.serial)));
+    answers.set('/lifx/test', { answered: false, results: [{ label: null, host: null, answered: false },
+      { label: 'Status Light', host: STATUS_LIGHT.ip, answered: true }] });
+    buttonNamed(lifxCard(root), copy.LIGHTS.testLight).click();
+    await settle();
+    assert.deepEqual(lifxCard(root).querySelectorAll('.bl-lifx-results-list .alert').map((r) => text(r)), [
+      'No answer from Floor. Check that it is on and on the same network as Homebridge.', 'Status Light answered.',
+    ]);
+  });
+
+  it('Right now says which bulb is not answering, under any status, and the line goes once it answers', async () => {
+    const root = await open([light(FLOOR, false), light(STATUS_LIGHT, true)]);
+    assert.deepEqual(silentLines(root), ['Floor is not answering, so it may still show an old color.']);
+    const row = root.querySelector('#section-rightNow .bl-now')!;
+    const kids = root.querySelector('#section-rightNow .section-body')!.children;
+    assert.ok(kids.indexOf(row) < kids.indexOf(root.querySelector('#section-rightNow .bl-now-silent')!), 'under the status');
+    for (const status of [{ status: 'unknown', reason: null }, { status: 'notWorking', reason: null }]) {
+      answers.set('/status', state({ ...status, light: undefined, lights: [light(FLOOR, false), light(STATUS_LIGHT, true)] }));
+      await dom.clock.advance(15_000);
+      assert.deepEqual(silentLines(root), ['Floor is not answering, so it may still show an old color.'], status.status);
+    }
+    // A bulb with no name is named by its address; a bulb back on the network clears its line.
+    answers.set('/status', state({ status: 'available', reason: { source: null, until: null }, light: undefined,
+      lights: [{ ...light(FLOOR, true) }, { ...light(STATUS_LIGHT, false), label: null }] }));
+    await dom.clock.advance(15_000);
+    assert.deepEqual(silentLines(root), ['192.168.4.21 is not answering, so it may still show an old color.']);
+    answers.set('/status', state({ status: 'available', reason: { source: null, until: null }, light: undefined,
+      lights: [light(FLOOR, true), light(STATUS_LIGHT, true)] }));
+    await dom.clock.advance(15_000);
+    assert.deepEqual(silentLines(root), []);
+  });
+});

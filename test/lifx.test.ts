@@ -183,7 +183,7 @@ test('choosing: exactly one bulb is used and remembered', async () => {
   const { light, log } = controller();
   await light.start();
   assert.deepEqual(first(light), {
-    enabled: true, label: 'Office Door', host: DOOR.host, found: 'discovered', lastSent: null, lastSentAt: null, answered: null,
+    enabled: true, label: 'Office Door', serial: DOOR.serial, host: DOOR.host, found: 'discovered', lastSent: null, lastSentAt: null, answered: null,
   });
   assert.deepEqual(log.lines('info'), ['LIFX bulbs found: Office Door (192.168.4.50). Using Office Door.']);
   assert.deepEqual(JSON.parse(fs.readFileSync(lightFile(dir), 'utf8')), { bulbs: [{ serial: DOOR.serial, label: 'Office Door', host: DOOR.host }] });

@@ -14,10 +14,10 @@ import type { BusyLightConfig } from './config.js';
 import { ensureStorageDir, readJson } from './files.js';
 import { sendTestReport } from './input-client.js';
 import { LifxClient } from './lifx.js';
-import { LightController, matchesBulb } from './light.js';
+import { LightController, matchesBulb, readRememberedBulbs, withRemembered } from './light.js';
 import type { Log } from './log.js';
 import {
-  bulbName, bulbNotNamed, bulbSilent, count, formatTime, microsoftCode, noBulb, noCalendars, notWorkingLine, statusLine, statusUnknown,
+  bulbName, bulbNotAnswering, bulbNotNamed, bulbSilent, count, formatTime, microsoftCode, noBulb, noCalendars, notWorkingLine, statusLine, statusUnknown,
   validation,
 } from './messages.js';
 import { MicrosoftAuth, TokenStore, tokenFile } from './microsoft.js';
@@ -134,8 +134,9 @@ async function cmdStatus(storage: string, io: CliIo): Promise<number> {
     const source = state.sources.find((s) => s.id === state.signIn!.id);
     io.out(microsoftCode(source?.name ?? state.signIn.id, state.signIn.verificationUri, state.signIn.userCode));
   }
-  // One line per bulb (SPEC 10.2 item 1, from build 3.2); a state file from before it has one `light`.
-  for (const light of lightsOf(state)) {
+  // One line per bulb (SPEC 10.2 item 1, from build 3.2); a state file from before it has one `light`. A missing serial
+  // number or name comes from light.json (from build 3.3).
+  for (const light of withRemembered(lightsOf(state), readRememberedBulbs(path.join(storage, STORAGE_DIR)))) {
     if (!light.enabled) {
       io.out('Light: not used.');
     } else if (!light.host) {
@@ -144,6 +145,10 @@ async function cmdStatus(storage: string, io: CliIo): Promise<number> {
       const name = light.label ? `${light.label} at ${light.host}` : light.host;
       const sent = light.lastSent ? `, last sent ${light.lastSent} at ${time(light.lastSentAt)}, ${light.answered ? 'answered' : 'no answer'}` : '';
       io.out(`Light: ${name}${sent}.`);
+      if (light.answered === false) {
+        // It may still show the color before the last change (SPEC 10.2 item 1, A8 of build 3.3).
+        io.out(`  ${bulbNotAnswering(light.label || light.host)}`);
+      }
     }
   }
   return 0;

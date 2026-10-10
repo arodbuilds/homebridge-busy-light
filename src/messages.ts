@@ -63,6 +63,14 @@ export function bulbBack(host: string): string {
   return `The LIFX bulb at ${host} is answering again.`;
 }
 
+/**
+ * The CLI `status` line under a bulb that did not answer its last send (SPEC 10.2 item 1, from build 3.3), the sentence
+ * Right now shows (11.3 B): a bulb that lost the network keeps its last color.
+ */
+export function bulbNotAnswering(label: string): string {
+  return `${label} is not answering, so it may still show an old color.`;
+}
+
 /** `1 minute`, `2 minutes`: a count with its noun, singular when the count is 1. */
 export function count(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? '' : 's'}`;

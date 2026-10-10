@@ -136,6 +136,8 @@ export interface MicrosoftState extends ListState {
 export interface LightEntry {
   enabled: boolean;
   label: string | null;
+  /** From build 3.3 (SPEC 10.1 item 5): the bulb's serial number, null for an address; absent before 1.0.0. */
+  serial?: string | null;
   host: string | null;
   found: string | null;
   answered?: boolean | null;

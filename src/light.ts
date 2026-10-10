@@ -24,6 +24,11 @@ export type Found = 'configured' | 'remembered' | 'discovered';
 export interface LightState {
   enabled: boolean;
   label: string | null;
+  /**
+   * The bulb's serial number (from build 3.3, SPEC 10.1 item 5), null for a bulb given only by its address or while none
+   * is chosen. Absent in a state file written before 1.0.0.
+   */
+  serial?: string | null;
   host: string | null;
   found: Found | null;
   lastSent: string | null;
@@ -82,7 +87,7 @@ interface Line {
 }
 
 /** One bulb of `busy-light/light.json`. */
-interface Remembered {
+export interface Remembered {
   serial: string;
   label: string;
   host: string;
@@ -90,6 +95,37 @@ interface Remembered {
 
 export function lightFile(storageDir: string): string {
   return path.join(storageDir, 'light.json');
+}
+
+/** The bulbs of `light.json`: `{ "bulbs": [...] }` from build 3.2, or the one object written before it. */
+export function readRememberedBulbs(storageDir: string): Remembered[] {
+  const raw = readJson(lightFile(storageDir)) as { bulbs?: unknown } | null;
+  const list: unknown[] = raw && Array.isArray(raw.bulbs) ? raw.bulbs : raw ? [raw] : [];
+  const out: Remembered[] = [];
+  for (const item of list) {
+    const r = item as Partial<Remembered> | null;
+    const serial = r && typeof r.serial === 'string' ? normalizeSerial(r.serial) : null;
+    if (r && serial && typeof r.host === 'string') {
+      out.push({ serial, label: typeof r.label === 'string' ? r.label : '', host: r.host });
+    }
+  }
+  return out;
+}
+
+/**
+ * The state file's bulbs with a missing serial number or name filled from light.json (SPEC 10.1 item 5, 10.3, from
+ * build 3.3): a state file written before 1.0.0 has no serial, matched here by address, and a bulb may be remembered
+ * with a name the state file lacks. A serial that is null (a bulb given by its address) stays null.
+ */
+export function withRemembered(lights: LightState[], remembered: Remembered[]): LightState[] {
+  return lights.map((light) => {
+    const match = (light.serial ? remembered.find((r) => r.serial === light.serial) : undefined)
+      ?? (light.host ? remembered.find((r) => r.host === light.host) : undefined);
+    if (!match || (light.serial !== undefined && light.label)) {
+      return light;
+    }
+    return { ...light, serial: light.serial === undefined ? match.serial : light.serial, label: light.label || match.label || null };
+  });
 }
 
 /** Whether a bulb is the one an entry of `lifx.bulbs` names, by name without regard to case or by serial number. */
@@ -152,11 +188,12 @@ export class LightController {
   /** The state file's `lights` (SPEC 10.1 item 5): one entry per chosen bulb, or one as `light` was while none is. */
   lights(): LightState[] {
     if (this.chosen.length === 0) {
-      return [{ enabled: this.enabled, label: null, host: null, found: null, lastSent: null, lastSentAt: null, answered: null }];
+      return [{ enabled: this.enabled, label: null, serial: null, host: null, found: null, lastSent: null, lastSentAt: null, answered: null }];
     }
     return this.chosen.map((c) => ({
       enabled: true,
       label: c.label,
+      serial: c.serial,
       host: c.host,
       found: c.found,
       lastSent: c.lastSent,
@@ -208,20 +245,7 @@ export class LightController {
 
   /** `light.json`: `{ "bulbs": [...] }` from build 3.2, or the one object written before it. */
   private readRemembered(): Remembered[] {
-    if (!this.options.storageDir) {
-      return [];
-    }
-    const raw = readJson(lightFile(this.options.storageDir)) as { bulbs?: unknown } | null;
-    const list: unknown[] = raw && Array.isArray(raw.bulbs) ? raw.bulbs : raw ? [raw] : [];
-    const out: Remembered[] = [];
-    for (const item of list) {
-      const r = item as Partial<Remembered> | null;
-      const serial = r && typeof r.serial === 'string' ? normalizeSerial(r.serial) : null;
-      if (r && serial && typeof r.host === 'string') {
-        out.push({ serial, label: typeof r.label === 'string' ? r.label : '', host: r.host });
-      }
-    }
-    return out;
+    return this.options.storageDir ? readRememberedBulbs(this.options.storageDir) : [];
   }
 
   private remember(): void {
