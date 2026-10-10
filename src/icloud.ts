@@ -1,5 +1,5 @@
 /**
- * iCloud calendars over CalDAV (SPEC 4.1 and 5.1): HTTP Basic with the Apple ID and an app-specific password,
+ * iCloud calendars over CalDAV (SPEC 4.1 and 5.1): HTTP Basic with the Apple Account email and an app-specific password,
  * discovery of the calendar list, and a time-range REPORT per calendar.
  */
 import { applyUse, readingWindow } from './calendar.js';
@@ -15,7 +15,7 @@ export const ICLOUD_ROOT = 'https://caldav.icloud.com/';
 /** Discovery is repeated after any failure and every 24 hours. */
 export const REDISCOVER_MS = 24 * 3_600_000;
 /** The short reason for a 401, also used in the state file. */
-export const ICLOUD_REJECTED = 'iCloud did not accept the Apple ID and app-specific password';
+export const ICLOUD_REJECTED = 'iCloud did not accept the Apple Account email and app-specific password';
 
 export interface ICloudCalendar {
   name: string;

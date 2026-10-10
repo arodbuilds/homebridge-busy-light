@@ -119,7 +119,7 @@ test('check: a failing source and a Microsoft source with no sign-in', async () 
     'Rota (Calendar URL): not reachable (calendar.example.com answered HTTP 404).',
     'Work (Microsoft 365): sign-in needed (not signed in).',
     '  Run "homebridge-busy-light login Work" to sign in.',
-    'Family (iCloud): sign-in needed (iCloud did not accept the Apple ID and app-specific password).',
+    'Family (iCloud): sign-in needed (iCloud did not accept the Apple Account email and app-specific password).',
     'Status unknown: none of your calendars could be read.',
   ]);
 });

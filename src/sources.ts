@@ -18,7 +18,7 @@ export type SourceState = 'checking' | 'connected' | 'signInNeeded' | 'notReacha
 
 /** After a failure a source is tried again after 1, 2, 5 and then 15 minutes (SPEC 8.3 item 1). */
 export const RETRY_MS = [60_000, 120_000, 300_000, 900_000];
-/** iCloud Sign-in needed is tried hourly only, so a wrong password cannot lock the Apple ID (item 2). */
+/** iCloud Sign-in needed is tried hourly only, so a wrong password cannot lock the Apple Account (item 2). */
 export const ICLOUD_SIGN_IN_RETRY_MS = 3_600_000;
 
 const RANK: Record<SourceState, number> = { connected: 0, checking: 1, notReachable: 2, signInNeeded: 3 };

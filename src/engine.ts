@@ -457,7 +457,9 @@ export class BusyLightEngine {
     if (begins !== null && begins > now && (next === null || begins < next)) {
       next = begins;
     }
-    if (fromData && ahead !== null && begins !== null && begins <= now && this.meetingWarning?.meetingAt !== ahead) {
+    // Not before the first apply: at startup the other calendars have not answered yet, and the first status waits for
+    // them (SPEC 6.7 item 2, 8.1 item 2).
+    if (fromData && this.status !== null && ahead !== null && begins !== null && begins <= now && this.meetingWarning?.meetingAt !== ahead) {
       // A meeting added or moved inside the warning time: the fade over the time left, without waiting for the tick,
       // whose other calendar checks may still be running.
       void this.applyStatus();

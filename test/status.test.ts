@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  EVENTS_FRESH_MS, INPUT_STATUSES, PRESENCE_FRESH_MS, TEAMS, freshData, isActive, isCounting, nextBoundary, resolve, resolveStatus,
+  EVENTS_FRESH_MS, INPUT_STATUSES, PRESENCE_FRESH_MS, TEAMS, boundariesAfter, freshData, isActive, isCounting, meetingAhead, nextBoundary, resolve,
+  resolveStatus,
 } from '../src/status.js';
 import type { CalEvent, InputReport, Presence, SourceData } from '../src/status.js';
 
@@ -265,4 +266,53 @@ test('reports and Unknown (SPEC 6.5): a report counts as fresh data; no calendar
   assert.deepEqual(resolve([stale], false, now, opts, on([])), { status: 'unknown', reason: null }, 'calendars configured, none fresh');
   assert.equal(resolve([stale], false, now, opts, on([report('inCall')])).status, 'inCall', 'a report is fresh data');
   assert.equal(resolve([], false, now, opts, on([report('away')])).status, 'away');
+});
+
+// Build 3.3 (from the independent review): one sweep over the events gives each boundary's status, so a week of events
+// stays fast, with the same `until` and meeting start as deciding over every event at every boundary.
+
+/** Deciding at each boundary over every event, through the public resolve: the reference the sweep must match. */
+function reference(presence: Presence | null, events: CalEvent[], at: number, reports: InputReport[] = []): { until: number | null; meeting: number | null } {
+  const statusAt = (t: number) => resolveStatus(false, presence, events, t, opts, reports).status;
+  const first = statusAt(at);
+  const times = boundariesAfter(events, at, opts);
+  const change = times.find((t) => statusAt(t) !== first) ?? null;
+  return { until: change, meeting: first === 'available' && change !== null && statusAt(change) === 'inMeeting' ? change : null };
+}
+
+test('until and the meeting ahead are the same as deciding at every boundary, over generated calendars (build 3.3)', () => {
+  let seed = 7;
+  const random = () => {
+    seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+    return seed / 2_147_483_648;
+  };
+  const kinds: CalEvent['showAs'][] = ['busy', 'busy', 'tentative', 'free', 'oof'];
+  for (let round = 0; round < 300; round++) {
+    const events: CalEvent[] = [];
+    for (let i = 0; i < 1 + Math.floor(random() * 12); i++) {
+      const start = now + Math.round((random() * 10 - 2) * 60) * MIN;
+      events.push(ev(kinds[Math.floor(random() * kinds.length)], {
+        start, end: start + Math.round(1 + random() * 120) * MIN, isAllDay: random() < 0.1, isCancelled: random() < 0.1,
+      }));
+    }
+    const presence = random() < 0.3 ? pres(['Available', 'Busy', 'Away', 'Offline'][Math.floor(random() * 4)]) : null;
+    const expected = reference(presence, events, now);
+    assert.equal(resolveStatus(false, presence, events, now, opts).reason?.until ?? null, expected.until, `round ${round}`);
+    assert.equal(meetingAhead(false, presence, events, now, opts), expected.meeting, `round ${round}`);
+  }
+});
+
+test('a minutely series over the 7 day window resolves in well under half a second (build 3.3)', () => {
+  const events: CalEvent[] = [];
+  for (let t = now - 86_400_000; t < now + 7 * 86_400_000; t += MIN) {
+    events.push(ev('busy', { start: t, end: t + MIN }));
+  }
+  const started = performance.now();
+  const r = resolveStatus(false, pres('DoNotDisturb', 'Presenting'), events, now + 30_000, opts);
+  const ahead = meetingAhead(false, null, events, now + 30_000, opts);
+  const took = performance.now() - started;
+  assert.equal(r.status, 'doNotDisturb');
+  assert.equal(r.reason?.until, null, 'Do not disturb holds over every boundary');
+  assert.equal(ahead, null, 'in a meeting now, so no warning');
+  assert.ok(took < 500, `${events.length} events took ${Math.round(took)} ms`);
 });

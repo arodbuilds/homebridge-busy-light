@@ -356,7 +356,7 @@ describe('settings page: the iCloud card (SPEC 11.3 C)', () => {
   it('shows the state pill and Last checked from /status, and the error line in the pill\'s tone', async () => {
     answers.set('/version', { version: '0.1.0-beta.2' });
     answers.set('/status', state({ sources: [{ id: 'icloud', name: 'iCloud', type: 'icloud', state: 'signInNeeded',
-      lastChecked: new Date(T - 120_000).toISOString(), events: null, error: 'iCloud did not accept the Apple ID and app-specific password' }] }));
+      lastChecked: new Date(T - 120_000).toISOString(), events: null, error: 'iCloud did not accept the Apple Account email and app-specific password' }] }));
     const { root, page } = mount(PI);
     page.startPolling();
     await flush();
@@ -364,7 +364,7 @@ describe('settings page: the iCloud card (SPEC 11.3 C)', () => {
     assert.deepEqual(node.querySelectorAll('.badge').map((b) => text(b)), ['iCloud', 'Sign-in needed']);
     assert.ok(node.querySelector('.bl-badge-warning'));
     assert.match(text(node.querySelector('.ns-card-meta')), /^Last checked \d+ minutes ago$/);
-    assert.equal(text(node.querySelector('.bl-card-error.bl-tone-warning')), 'iCloud did not accept the Apple ID and app-specific password');
+    assert.equal(text(node.querySelector('.bl-card-error.bl-tone-warning')), 'iCloud did not accept the Apple Account email and app-specific password');
   });
 
   it('Connect lists the calendars with counts and badges, ticks the saved one by its new id, and writes ids and Counts for', async () => {
@@ -440,7 +440,7 @@ describe('settings page: the iCloud card (SPEC 11.3 C)', () => {
     }
   });
 
-  it('Connect on a new card first asks for the Apple ID and password', async () => {
+  it('Connect on a new card first asks for the Apple Account email and password', async () => {
     const { root, page } = mount();
     buttonNamed(root, copy.CALENDARS.add).click();
     root.querySelectorAll('.ns-chooser-tile')[0].click();

@@ -185,11 +185,12 @@ test('iCloud Sign-in needed is retried hourly, with its own line', async () => {
   await engine!.tick();
   assert.equal(fake.calls.length, 2);
   assert.deepEqual(log.lines('warn'), [
-    'Family: iCloud did not accept the Apple ID and app-specific password. Check them in the plugin settings.',
+    'Family: iCloud did not accept the Apple Account email and app-specific password. Check them in the plugin settings.',
     'Status unknown: none of your calendars could be read.',
   ]);
   const state = readState(dir)!;
-  assert.deepEqual([state.sources[0].state, state.sources[0].error], ['signInNeeded', 'iCloud did not accept the Apple ID and app-specific password']);
+  assert.deepEqual([state.sources[0].state, state.sources[0].error],
+    ['signInNeeded', 'iCloud did not accept the Apple Account email and app-specific password']);
   assert.ok(!JSON.stringify(state).includes('synthetic-app-password'));
 });
 
@@ -1009,4 +1010,26 @@ test('the state file\'s lights carry each bulb\'s serial number (SPEC 10.1 item 
   await engine!.light.start();
   await engine!.tick();
   assert.deepEqual(readState(dir)!.lights!.map((l) => [l.label, l.serial]), [[DOOR.label, DOOR.serial], [STATUS_LIGHT.label, STATUS_LIGHT.serial]]);
+});
+
+test('at startup, a fast calendar alone does not start a warning before the others have answered (the review, SPEC 6.7 item 2)', async () => {
+  const statuses: Status[] = [];
+  const e = make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }, { type: 'url', name: 'Team', url: OTHER }],
+    lifx: { enabled: true, host: DOOR.host, refreshSeconds: 0 }, meetingWarningSeconds: 300 }, statuses);
+  net.bulbs = [{ ...DOOR }];
+  // Rota answers at once with a meeting in 3 minutes, inside the warning time; Team answers later with a meeting on now.
+  fake.on('https://calendar.example.com/', () => text(icsOf([['next', T0 + 3 * MIN, T0 + 33 * MIN]])));
+  const gate: { answer: (() => void) | null } = { answer: null };
+  fake.on('https://rota.example.net/', () => new Promise<Response>((resolve) => {
+    gate.answer = () => resolve(text(icsOf([['now', T0 - 10 * MIN, T0 + 30 * MIN]])));
+  }));
+  e.start();
+  await settle();
+  assert.ok(gate.answer, 'Team is still being read');
+  assert.deepEqual([statuses, lifxColors().length, e.meetingWarning], [[], 0, null], 'nothing is decided from Rota alone');
+  gate.answer!();
+  await settle();
+  await e.idle();
+  assert.deepEqual(statuses, ['inMeeting']);
+  assert.ok(lifxColors().every((s) => s.buf.readUInt32LE(45) <= 1000), 'no fade was started');
 });

@@ -208,6 +208,31 @@ export function nextBoundary(events: CalEvent[], now: number, opts: ResolveOptio
 }
 
 /**
+ * The status at each boundary after `now`, in order, as `decide` gives it there. One sweep over the counting events by
+ * start keeps the set active at each boundary, so a boundary costs only its active events: deciding over every event at
+ * every boundary grew with the square of the events, and with a week of a minutely series a resolve took seconds (from
+ * build 3.3, when the window reached 7 days ahead). `decide` reads only the events active at its instant, so the
+ * statuses are the same.
+ */
+function* statusesAfter(override: boolean, presence: Presence | null, events: CalEvent[], now: number, opts: ResolveOptions,
+  reports: InputReport[]): Generator<[number, StatusKey]> {
+  const counting = events.filter((e) => isCounting(e, opts)).sort((a, b) => a.start - b.start);
+  const active = new Set<CalEvent>();
+  let next = 0;
+  for (const t of boundariesAfter(counting, now, opts)) {
+    while (next < counting.length && counting[next].start <= t) {
+      active.add(counting[next++]);
+    }
+    for (const e of active) {
+      if (e.end <= t) {
+        active.delete(e);
+      }
+    }
+    yield [t, decide(override, presence, [...active], t, opts, reports).status];
+  }
+}
+
+/**
  * The status from fresh data, with its reason. `until` is the first event boundary at which the same rules, with
  * the same presence and override, give a different status: the end of the deciding event, or the start of the next
  * counting event.
@@ -230,8 +255,8 @@ export function resolveStatus(
     return { status: decision.status, reason };
   }
   let until: number | null = null;
-  for (const t of boundariesAfter(events, now, opts)) {
-    if (decide(override, presence, events, t, opts, reports).status !== decision.status) {
+  for (const [t, status] of statusesAfter(override, presence, events, now, opts, reports)) {
+    if (status !== decision.status) {
       until = t;
       break;
     }
@@ -248,8 +273,7 @@ export function meetingAhead(override: boolean, presence: Presence | null, event
   if (decide(override, presence, events, now, opts, reports).status !== 'available') {
     return null;
   }
-  for (const t of boundariesAfter(events, now, opts)) {
-    const status = decide(override, presence, events, t, opts, reports).status;
+  for (const [t, status] of statusesAfter(override, presence, events, now, opts, reports)) {
     if (status !== 'available') {
       return status === 'inMeeting' ? t : null;
     }

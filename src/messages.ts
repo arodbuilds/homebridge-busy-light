@@ -181,7 +181,7 @@ export function sourceRecovered(name: string): string {
 }
 
 export function icloudRejected(name: string): string {
-  return `${name}: iCloud did not accept the Apple ID and app-specific password. Check them in the plugin settings.`;
+  return `${name}: iCloud did not accept the Apple Account email and app-specific password. Check them in the plugin settings.`;
 }
 
 /** `{path}: {message}` for a configuration issue. */

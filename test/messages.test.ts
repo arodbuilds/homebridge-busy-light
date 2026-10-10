@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   addressChanged,
   callSwitchTimeout, calendarsNotInUse, inputClockOff, inputFailed, inputNotLocal, inputPlainKeyOff, inputStarted, inputWrongKey,
-  formatTime, formatWhen, listedCalendarGone, microsoftExperimental,
+  formatTime, formatWhen, icloudRejected, listedCalendarGone, microsoftExperimental,
   repeatLimit, senderCleared, senderExpired, senderReports, statusLine, workingOff, workingOn,
 } from '../src/messages.js';
 
@@ -117,4 +117,9 @@ test('log and CLI times read h:mm AM and h:mm PM whatever the host\'s locale (SP
 
 test('the Microsoft experimental line is verbatim from SPEC section 12 (build 3.3)', () => {
   assert.equal(microsoftExperimental('Work'), specLine('Microsoft experimental').replace('{name}', 'Work'));
+});
+
+test('the iCloud 401 line is verbatim from SPEC section 12, with Apple Account (build 3.3)', () => {
+  assert.equal(icloudRejected('Family'), specLine('iCloud 401').replace('{name}', 'Family'));
+  assert.ok(!icloudRejected('Family').includes('Apple ID'));
 });

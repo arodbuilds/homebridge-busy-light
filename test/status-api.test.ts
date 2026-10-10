@@ -396,6 +396,13 @@ test('format characters are refused, a joiner between emoji is not, and look-ali
   }
   // The reserved name is compared with every format character removed, so a joiner could never hide it.
   assert.ok(isReservedSender(`Home${zeroWidthSpace} app`) && isReservedSender(`Ho${wordJoiner}me\u00a0app`));
+  // Nor can another character a renderer shows as nothing (the review, build 3.3): the combining grapheme joiner, variation
+  // selectors, a Mongolian free variation selector, a Khmer inherent vowel. They pass the text rule, and are refused as the
+  // reserved name.
+  for (const value of ['Home app\u034f', 'Ho\u034fme app', 'Home app\ufe0f', 'Home\ufe00 app', 'Home app\u180b', 'Home app\u17b4']) {
+    assert.ok(isReservedSender(checkText(value) ?? ''), JSON.stringify(value));
+    assert.equal((await post({ sender: value, status: 'inCall' })).body.error, 'invalid_sender', JSON.stringify(value));
+  }
   // Emoji built with a zero-width joiner stay whole: a person at a laptop (with a skin tone), a rainbow flag.
   for (const emoji of ['\u{1F469}\u200d\u{1F4BB}', '\u{1F469}\u{1F3FD}\u200d\u{1F4BB}', '\u{1F3F3}\ufe0f\u200d\u{1F308}']) {
     const sender = `Mac ${emoji}`;
