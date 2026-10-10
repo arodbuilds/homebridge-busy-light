@@ -48,6 +48,8 @@ export const RIGHT_NOW = {
   noCalendars: 'Add a calendar to see your status here.',
   notStarted: 'Busy Light has not started yet. Save, then restart Homebridge.',
   unknown: 'Status unknown. None of your calendars could be read.',
+  /** A chosen bulb that did not answer its last send (SPEC 11.3 B, from build 3.3): it may still show an old color. */
+  notAnswering: (label: string): string => `${label} is not answering, so it may still show an old color.`,
   stale: (relative: string): string => `Last updated ${relative}. Is Homebridge running?`,
 };
 

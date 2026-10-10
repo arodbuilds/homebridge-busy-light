@@ -24,6 +24,7 @@ const PLACEHOLDERS: Record<string, string[]> = {
   'RIGHT_NOW.fromApp': ['{sender}', '{app}'],
   'RIGHT_NOW.nothingUntil': ['{when}'],
   'RIGHT_NOW.meetingAt': ['{time}'],
+  'RIGHT_NOW.notAnswering': ['{label}'],
   'WHEN.tomorrow': ['{time}'],
   'WHEN.weekday': ['{weekday}', '{time}'],
   'WHEN.date': ['{Month day}', '{time}'],
