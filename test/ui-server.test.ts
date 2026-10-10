@@ -504,6 +504,10 @@ test('/lifx/test with several bulbs tests each at the same moment and answers on
   assert.deepEqual(((await call(handlers({ configPath }), '/lifx/test', { brightness: 100 })) as { results: unknown[] }).results, [
     { label: 'Desk', host: DESK.host, answered: true }, { label: 'Floor', host: FLOOR.host, answered: true },
   ], 'with none given, the saved lifx.bulbs');
+  // A saved name the page could not find comes as an entry with neither a serial nor an address: it keeps its place,
+  // so each result stays with its bulb (from the review before the pull request).
+  assert.deepEqual(await call(handlers(), '/lifx/test', { bulbs: [{}, { serial: DESK.serial, host: DESK.host }], brightness: 100 }),
+    { answered: false, results: [{ label: null, host: null, answered: false }, { label: null, host: DESK.host, answered: true }] });
 });
 
 test('/reset deletes every file in busy-light/ and leaves only the marker (SPEC 10.3 item 6)', async () => {

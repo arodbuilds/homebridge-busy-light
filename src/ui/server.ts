@@ -505,11 +505,13 @@ export class BusyLightUiHandlers {
     const raw = field(payload, 'brightness');
     const brightness = typeof raw === 'number' && Number.isInteger(raw) && raw >= 1 && raw <= 100 ? raw : 100;
     const listed = field(payload, 'bulbs');
-    let targets: { serial: string | null; host: string | null; label: string | null }[] = (Array.isArray(listed) ? listed : [payload])
-      .map((b) => ({ serial: normalizeSerial(text(b, 'serial')), host: isHost(text(b, 'host')) ? text(b, 'host') : null, label: null }))
-      .filter((b) => b.serial !== null || b.host !== null);
+    const read = (b: unknown) => ({ serial: normalizeSerial(text(b, 'serial')), host: isHost(text(b, 'host')) ? text(b, 'host') : null, label: null });
+    // A list keeps every entry in its place, one result each, even one with neither a serial nor an address (a name the
+    // page could not find): its result is not answered. The single bulb of earlier builds is read as before.
+    let targets: { serial: string | null; host: string | null; label: string | null }[] = Array.isArray(listed) && listed.length > 0
+      ? listed.map(read) : [read(payload)].filter((b) => b.serial !== null || b.host !== null);
     try {
-      if (targets.some((b) => !b.host)) {
+      if (targets.some((b) => !b.host && b.serial)) {
         const found = await this.lifx.discover();
         targets = targets.map((b) => {
           const bulb = b.host ? undefined : found.find((f) => f.serial === b.serial);
