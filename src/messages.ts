@@ -20,6 +20,14 @@ export function microsoftRefused(name: string, reason: string): string {
     `Instructions to send them: ${ADMIN_HELP_URL}`;
 }
 
+/** The issues page, where a report that Microsoft 365 sign-in works lifts its experimental label (SPEC 4.3, 12). */
+export const ISSUES_URL = 'https://github.com/arodbuilds/homebridge-busy-light/issues';
+
+/** SPEC 12 "Microsoft experimental" (from build 3.3): once at startup for each Microsoft 365 calendar. */
+export function microsoftExperimental(name: string): string {
+  return `${name}: Microsoft 365 sign-in is experimental. If it works for you, please say so at ${ISSUES_URL}.`;
+}
+
 export function microsoftGaveUp(name: string): string {
   return `${name}: the sign-in code was not used. Restart Homebridge or run "homebridge-busy-light login" to try again.`;
 }

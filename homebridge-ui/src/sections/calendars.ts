@@ -406,8 +406,7 @@ function sourceCard(app: App, s: UiSource): HTMLElement {
   }
   return card({
     title,
-    badges: [badge(s.type === 'microsoft' ? RETIRING.MICROSOFT_TITLE : SOURCE_TYPES[s.type].title, 'type'),
-      el('span', { class: 'bl-pill-holder' }, parts.pill)],
+    badges: [badge(SOURCE_TYPES[s.type].title, 'type'), el('span', { class: 'bl-pill-holder' }, parts.pill)],
     meta: parts.meta,
     notice: parts.notice,
     toggle: {
@@ -489,7 +488,7 @@ function chooser(app: App): HTMLElement {
   const options = app.ui.chooserOutlook
     ? el('div', { class: 'ns-chooser-tiles bl-outlook-options' },
       outlookOption(CHOOSER.published, CHOOSER.publishedText, 'bl-outlook-published', () => addSource(app, 'url', true), true),
-      outlookOption(RETIRING.CHOOSER_SIGN_IN, CHOOSER.signInText, 'bl-outlook-signin', () => addSource(app, 'microsoft')),
+      outlookOption(CHOOSER.signIn, CHOOSER.signInText, 'bl-outlook-signin', () => addSource(app, 'microsoft')),
     )
     : null;
   return el('div', { class: 'ns-chooser' },

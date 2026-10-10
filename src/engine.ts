@@ -9,7 +9,9 @@ import type { Auth, NewReport, Via } from './inputs.js';
 import { LifxClient } from './lifx.js';
 import { LightController } from './light.js';
 import type { Log } from './log.js';
-import { noCalendars, senderCleared, senderExpired, senderReports, startup, statusLine, statusUnknown, workingOff, workingOn } from './messages.js';
+import {
+  microsoftExperimental, noCalendars, senderCleared, senderExpired, senderReports, startup, statusLine, statusUnknown, workingOff, workingOn,
+} from './messages.js';
 import { STATUS_NAMES } from './model.js';
 import type { Status } from './model.js';
 import { SourceRunner } from './sources.js';
@@ -195,6 +197,12 @@ export class BusyLightEngine {
     const configured = lifx.hosts.length > 0 ? lifx.hosts.length : lifx.bulbs.length;
     this.log.info(startup(this.options.version, this.sources.length, { enabled: this.light.enabled, configured, hosts: this.light.hosts },
       this.config.sensors.length));
+    // Microsoft 365 sign-in is marked experimental until someone confirms it on a work account (SPEC 4.3, 12).
+    for (const source of this.sources) {
+      if (source.config.type === 'microsoft') {
+        this.log.info(microsoftExperimental(source.config.name));
+      }
+    }
     if (this.sources.length === 0) {
       this.log.warn(noCalendars());
     }

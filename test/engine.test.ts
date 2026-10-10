@@ -424,6 +424,20 @@ test('Microsoft: Teams presence decides, and a calendar-only source works withou
   await engine!.idle();
   assert.equal(log.lines('info').at(-1), 'Status: Do not disturb (Teams).');
   assert.equal(readState(dir)!.sources[0].events, 0);
+  // Microsoft 365 sign-in is marked experimental: one line at startup, after the startup line (SPEC 4.3, 12, build 3.3).
+  assert.deepEqual(log.lines('info').slice(0, 2), ['Busy Light 0.1.0-beta.1: 1 calendar, light off, 3 sensors.',
+    'Work: Microsoft 365 sign-in is experimental. If it works for you, please say so at https://github.com/arodbuilds/homebridge-busy-light/issues.']);
+  assert.equal(log.lines('info').filter((l) => l.includes('experimental')).length, 1, 'once');
+});
+
+test('the experimental line is written only for Microsoft 365 calendars, once each (SPEC 12, build 3.3)', async () => {
+  make({ calendars: [{ type: 'url', name: 'Office', url: 'https://outlook.office365.com/owa/calendar/synthetic/reachcalendar.ics' },
+    { type: 'url', name: 'Rota', url: FEED }] });
+  fake.on('https://', () => text(icsOf([])));
+  engine!.start();
+  await settle();
+  await engine!.idle();
+  assert.deepEqual(log.lines('info').filter((l) => l.includes('experimental')), [], 'the published Outlook link is not marked');
 });
 
 test('redaction: a failing URL source names the host only, and no line carries an event title', async () => {

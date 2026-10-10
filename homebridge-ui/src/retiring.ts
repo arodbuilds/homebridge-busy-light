@@ -14,15 +14,12 @@ export const INTRO = {
 
 /** SPEC 11.3 C before build 3.3. */
 export const CALENDARS_HELP = 'Add every calendar that should count. Events from all of them are combined.';
-export const MICROSOFT_TITLE = 'Microsoft 365';
-export const CHOOSER_SIGN_IN = 'Sign in with Microsoft 365';
 export const ICLOUD = {
   appleId: 'Apple ID email',
   appPasswordHelp: 'Not your Apple ID password. Create one at account.apple.com under Sign-In and Security, then App-Specific Passwords.',
   rejected: 'iCloud did not accept that Apple ID and app-specific password. Check both, or create a new app-specific password.',
 };
 export const URL_ADDRESS_HELP = 'Any calendar link that starts with https:// or webcal://.';
-export const MICROSOFT_NOTE = 'Needs an app registration from your Microsoft 365 administrator.';
 
 /** SPEC 11.3 E before build 3.3: the three steps of the Home app example. */
 export const LIGHTS_STEPS = [

@@ -540,11 +540,19 @@ describe('settings page: the Microsoft 365 card (SPEC 11.3 C)', () => {
     return mounted;
   }
 
+  it('is marked experimental: the type badge and the note say so (SPEC 4.3, 11.3 C, build 3.3)', () => {
+    const { root } = work();
+    const node = cardOf(root, 'cal-work');
+    assert.ok(node.querySelectorAll('.badge').map((b) => text(b)).includes('Microsoft 365 (experimental)'));
+    assert.equal(text(node.querySelector('.bl-ms-note')), 'Experimental. Needs your Microsoft 365 administrator to set up an app registration first. '
+      + 'If you only need your calendar, the published Outlook link is simpler. What do I ask for?');
+  });
+
   it('shows the note with its link, the two IDs, the two checkboxes and, for a saved source with no list, the default calendar line', () => {
     const { root } = work();
     const node = cardOf(root, 'cal-work');
     const note = node.querySelector('.bl-ms-note')!;
-    assert.equal(text(note), `${RETIRING.MICROSOFT_NOTE} ${copy.MICROSOFT.whatToAsk}`);
+    assert.equal(text(note), `${copy.MICROSOFT.note} ${copy.MICROSOFT.whatToAsk}`);
     assert.equal(note.querySelector('a')!.getAttribute('href'), copy.MICROSOFT.adminUrl);
     assert.equal(field(root, 'calendars.cal-work.tenantId').getAttribute('placeholder'), 'e.g. 00000000-0000-0000-0000-000000000000');
     assert.ok(field(root, 'calendars.cal-work.clientId').className.includes('font-monospace'));
@@ -2009,7 +2017,7 @@ describe('settings page: Outlook or Microsoft 365 (SPEC 11.3 C)', () => {
     const title = (o: FakeElement): string => text(o.querySelector('.ns-tile-title')).replace(copy.CHOOSER.recommended, '').trim();
     assert.deepEqual(options.map((o) => [title(o), text(o.querySelector('.ns-tile-help'))]), [
       [copy.CHOOSER.published, copy.CHOOSER.publishedText],
-      [RETIRING.CHOOSER_SIGN_IN, copy.CHOOSER.signInText],
+      [copy.CHOOSER.signIn, copy.CHOOSER.signInText],
     ]);
     const recommended = options[0].querySelector('.badge')!;
     assert.equal(text(recommended), copy.CHOOSER.recommended);
@@ -2060,12 +2068,14 @@ describe('settings page: Outlook or Microsoft 365 (SPEC 11.3 C)', () => {
     const { root, page } = mount();
     const section = chooserOf(root);
     outlookTile(section).click();
+    assert.equal(text(section.querySelector('.bl-outlook-signin .ns-tile-title')), 'Sign in with Microsoft 365 (experimental)',
+      'marked experimental (build 3.3)');
     section.querySelector('.bl-outlook-signin')!.click();
     await settle();
     const s = page.config.calendars[0];
     assert.equal(s.type, 'microsoft');
     const node = cardOf(root, s.id);
-    assert.deepEqual(node.querySelectorAll('.badge').map((b) => text(b)), ['Microsoft 365', 'Not saved yet']);
+    assert.deepEqual(node.querySelectorAll('.badge').map((b) => text(b)), ['Microsoft 365 (experimental)', 'Not saved yet'], 'marked experimental (build 3.3)');
     assert.ok(node.querySelector(`[data-path="calendars.${s.id}.tenantId"]`));
     assert.equal(dom.document.activeElement, field(root, `calendars.${s.id}.name`));
   });
