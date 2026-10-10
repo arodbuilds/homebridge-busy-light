@@ -117,7 +117,7 @@ The page opens with three steps (add a calendar, choose how the light is control
 
 ### Right now
 
-What the running plugin shows at this moment: the color and the status, and why, for example "Until 2:30 PM, from Work." If a bulb is not answering, a line under the status names it, for example "Floor is not answering, so it may still show an old color.": a LIFX bulb that drops off the network keeps its last color, so it may still be red after a meeting ends. The line goes once the bulb answers again, within about 5 minutes. A time that is not today carries its day, for example "Nothing on your calendars until Monday at 9:00 AM." During the meeting warning (see [Colors](#colors)) the status stays Available, with "A meeting starts at 2:30 PM."; with the Working switch off it says "Not working" and "The Working switch is off." It refreshes every 15 seconds while the page is open. If it says Homebridge may not be running, the plugin has not written its state for more than 5 minutes.
+What the running plugin shows at this moment: the color and the status, and why, for example "Until 2:30 PM, from Work." If a bulb is not answering, a line under the status names it, for example "Floor is not answering, so it may still show an old color.": a LIFX bulb that drops off the network keeps its last color, so it may still be red after a meeting ends. The line goes once the bulb answers again: with the default refresh, within about 5 minutes; otherwise at the next status change. A time that is not today carries its day, for example "Nothing on your calendars until Monday at 9:00 AM." During the meeting warning (see [Colors](#colors)) the status stays Available, with "A meeting starts at 2:30 PM."; with the Working switch off it says "Not working" and "The Working switch is off." It refreshes every 15 seconds while the page is open. If it says Homebridge may not be running, the plugin has not written its state for more than 5 minutes.
 
 ### Calendars
 
@@ -372,7 +372,7 @@ The settings page covers everything; the `homebridge-busy-light` command is the 
   sudo -u homebridge /var/lib/homebridge/node_modules/.bin/homebridge-busy-light status
   ```
 
-  If that answers `env: 'node': No such file or directory`, the Node.js that Homebridge uses is not on `sudo`'s PATH; name it too:
+  If that answers `/usr/bin/env: 'node': No such file or directory`, the Node.js that Homebridge uses is not on `sudo`'s PATH; name it too:
 
   ```shell
   sudo -u homebridge /opt/homebridge/bin/node /var/lib/homebridge/node_modules/homebridge-busy-light/dist/cli.js status
