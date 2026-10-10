@@ -8,7 +8,7 @@ import {
   KELVIN, LifxClient, MSG, SOURCE_ID, buildGetLabel, buildGetService, buildSetColor, buildSetPower, header, hexToHsb,
   interfaceBroadcasts, normalizeSerial, parseHeader, parseStateLabel,
 } from '../src/lifx.js';
-import { LightController, REDISCOVER_MS, lightFile, matchesBulb } from '../src/light.js';
+import { LightController, REDISCOVER_MS, lightFile, matchesBulb, readRememberedBulbs, withRemembered } from '../src/light.js';
 import { FakeNetwork, fakeLog, settle, tmpDir } from './helpers.js';
 import type { FakeBulb } from './helpers.js';
 
@@ -591,3 +591,24 @@ test('two entries of lifx.bulbs naming the same bulb: no discovery at a restart,
   }
   assert.equal(discoveries(), after, 'every bulb wanted is found');
 });
+
+test('a bulb given by its address in lifx.host is not named from light.json, and a serial number matches by itself alone (SPEC 10.1 item 5, the second review)',
+  async () => {
+    // light.json from an earlier discovery, when Desk had this address. With lifx.host set the plugin never runs discovery,
+    // so light.json is never rewritten, and the address may now belong to another bulb.
+    fs.writeFileSync(lightFile(dir), JSON.stringify({ bulbs: [{ serial: DESK.serial, label: 'Desk', host: DOOR.host }] }));
+    net.bulbs = [{ ...DOOR, answers: false }];
+    const { light } = controller({ hosts: [DOOR.host] });
+    await light.start();
+    await light.send('#FF0000', 1000);
+    assert.deepEqual(withRemembered(light.lights(), readRememberedBulbs(dir)).map((l) => [l.label, l.serial, l.host, l.found, l.answered]),
+      [[null, null, DOOR.host, 'configured', false]]);
+
+    const entry = { enabled: true, label: null, host: DOOR.host, found: 'remembered' as const, lastSent: null, lastSentAt: null, answered: false };
+    const remembered = [{ serial: DESK.serial, label: 'Desk', host: DOOR.host }, { serial: DOOR.serial, label: 'Office Door', host: '192.168.4.40' }];
+    assert.deepEqual(withRemembered([{ ...entry, serial: DOOR.serial }], remembered).map((l) => [l.label, l.serial]), [['Office Door', DOOR.serial]],
+      'by its serial number, not by the address another bulb had');
+    assert.deepEqual(withRemembered([{ ...entry, serial: null }], remembered).map((l) => [l.label, l.serial]), [[null, null]], 'a null serial stays unnamed');
+    assert.deepEqual(withRemembered([entry], remembered).map((l) => [l.label, l.serial]), [['Desk', DESK.serial]],
+      'a state file written before 1.0.0, with no serial, by its address');
+  });

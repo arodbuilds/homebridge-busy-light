@@ -1033,3 +1033,27 @@ test('at startup, a fast calendar alone does not start a warning before the othe
   assert.deepEqual(statuses, ['inMeeting']);
   assert.ok(lifxColors().every((s) => s.buf.readUInt32LE(45) <= 1000), 'no fade was started');
 });
+
+test('at startup, a boundary that comes while the other calendars are read does not decide the first status (the second review, SPEC 6.7 item 2)',
+  async () => {
+    const statuses: Status[] = [];
+    const e = make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }, { type: 'url', name: 'Team', url: OTHER }],
+      lifx: { enabled: true, host: DOOR.host, refreshSeconds: 0 }, meetingWarningSeconds: 300 }, statuses);
+    net.bulbs = [{ ...DOOR }];
+    // Rota answers at once with a meeting at 3:05:10 PM, so its warning begins 10 seconds after startup; Team answers later
+    // with a meeting on until 3:30 PM.
+    fake.on('https://calendar.example.com/', () => text(icsOf([['next', T0 + 5 * MIN + 10_000, T0 + 35 * MIN]])));
+    const gate: { answer: (() => void) | null } = { answer: null };
+    fake.on('https://rota.example.net/', () => new Promise<Response>((resolve) => {
+      gate.answer = () => resolve(text(icsOf([['now', T0 - 10 * MIN, T0 + 30 * MIN]])));
+    }));
+    e.start();
+    await settle();
+    await clock.advance(10_000);
+    await settle();
+    assert.deepEqual([statuses, lifxColors().length, e.meetingWarning], [[], 0, null], 'nothing is decided from Rota alone');
+    gate.answer!();
+    await settle();
+    await e.idle();
+    assert.deepEqual(statuses, ['inMeeting']);
+  });

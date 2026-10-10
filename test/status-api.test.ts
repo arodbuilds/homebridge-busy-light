@@ -403,6 +403,12 @@ test('format characters are refused, a joiner between emoji is not, and look-ali
     assert.ok(isReservedSender(checkText(value) ?? ''), JSON.stringify(value));
     assert.equal((await post({ sender: value, status: 'inCall' })).body.error, 'invalid_sender', JSON.stringify(value));
   }
+  // Nor can a character drawn as a blank gap in place of the space (the second review): the Hangul fillers and the Braille
+  // blank, or two spaces, which a page shows as one.
+  for (const value of ['Home\u3164app', 'Home\uffa0app', 'Home\u2800app', 'Home\u1160app', 'Home\u115f app', 'Home  app', 'Home \u2800 app']) {
+    assert.ok(isReservedSender(checkText(value) ?? ''), JSON.stringify(value));
+    assert.equal((await post({ sender: value, status: 'inCall' })).body.error, 'invalid_sender', JSON.stringify(value));
+  }
   // Emoji built with a zero-width joiner stay whole: a person at a laptop (with a skin tone), a rainbow flag.
   for (const emoji of ['\u{1F469}\u200d\u{1F4BB}', '\u{1F469}\u{1F3FD}\u200d\u{1F4BB}', '\u{1F3F3}\ufe0f\u200d\u{1F308}']) {
     const sender = `Mac ${emoji}`;

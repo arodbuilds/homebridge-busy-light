@@ -446,7 +446,9 @@ export class BusyLightEngine {
    * events change (`fromData`) and a meeting warning should already be running, it begins at once (6.7 item 2).
    */
   private scheduleBoundary(now: number, fromData = false): void {
-    if (this.stopped) {
+    if (this.stopped || this.status === null) {
+      // Not before the first apply, which sets it: at startup the other calendars have not answered yet, and the first
+      // status waits for them (SPEC 6.7 item 2), whether a boundary or a warning's beginning would come first.
       return;
     }
     const events = freshData(this.sources.map((s) => s.data()), now).events;
@@ -457,9 +459,7 @@ export class BusyLightEngine {
     if (begins !== null && begins > now && (next === null || begins < next)) {
       next = begins;
     }
-    // Not before the first apply: at startup the other calendars have not answered yet, and the first status waits for
-    // them (SPEC 6.7 item 2, 8.1 item 2).
-    if (fromData && this.status !== null && ahead !== null && begins !== null && begins <= now && this.meetingWarning?.meetingAt !== ahead) {
+    if (fromData && ahead !== null && begins !== null && begins <= now && this.meetingWarning?.meetingAt !== ahead) {
       // A meeting added or moved inside the warning time: the fade over the time left, without waiting for the tick,
       // whose other calendar checks may still be running.
       void this.applyStatus();

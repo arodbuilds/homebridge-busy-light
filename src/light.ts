@@ -114,14 +114,18 @@ export function readRememberedBulbs(storageDir: string): Remembered[] {
 
 /**
  * The state file's bulbs with a missing serial number or name filled from light.json (SPEC 10.1 item 5, 10.3, from
- * build 3.3): a state file written before 1.0.0 has no serial, matched here by address, and a bulb may be remembered
- * with a name the state file lacks. A serial that is null (a bulb given by its address) stays null.
+ * build 3.3): a bulb with a serial number is matched by it, and only a state file written before 1.0.0, which has no
+ * serial numbers, is matched by address. A bulb given by its address in lifx.host is left as it is: the plugin never
+ * runs discovery for it, so light.json may name whatever bulb had that address before.
  */
 export function withRemembered(lights: LightState[], remembered: Remembered[]): LightState[] {
   return lights.map((light) => {
-    const match = (light.serial ? remembered.find((r) => r.serial === light.serial) : undefined)
-      ?? (light.host ? remembered.find((r) => r.host === light.host) : undefined);
-    if (!match || (light.serial !== undefined && light.label)) {
+    if (light.found === 'configured' || (light.serial !== undefined && light.label)) {
+      return light;
+    }
+    const match = light.serial ? remembered.find((r) => r.serial === light.serial)
+      : light.serial === undefined && light.host ? remembered.find((r) => r.host === light.host) : undefined;
+    if (!match) {
       return light;
     }
     return { ...light, serial: light.serial === undefined ? match.serial : light.serial, label: light.label || match.label || null };
