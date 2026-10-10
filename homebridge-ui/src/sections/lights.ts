@@ -8,7 +8,6 @@ import { callServer } from '../api.js';
 import { lightsOf, type App, type LifxBulb } from '../app.js';
 import { card, cardName } from '../card.js';
 import { LIGHTS, SENSOR_NAMES, SHELL, STATUS_NAMES, type StatusKey } from '../copy.js';
-import * as RETIRING from '../retiring.js';
 import {
   checkboxField, disclosure, el, footerAction, grid, gridCell, linkButton, numberField, paragraph, statusBox, textField, uniqueId, type Child,
 } from '../dom.js';
@@ -307,10 +306,13 @@ function sensorCanHappen(app: App, key: (typeof SENSOR_KEYS)[number]): boolean {
   return key in STATUS_NAMES ? canHappen(app, key as StatusKey) : true;
 }
 
-/** A sensor's help: Meeting Soon always says what it detects; one that cannot happen says so. */
+/**
+ * A sensor's help: each roll-up says when it is on (from build 3.3, so Busy is told apart from Busy in Teams), Meeting
+ * Soon always says what it detects, and one that cannot happen says so.
+ */
 function sensorHelp(app: App, key: (typeof SENSOR_KEYS)[number]): string | undefined {
-  const lines = [key === 'meetingSoon' ? LIGHTS.meetingSoonHelp : null, sensorCanHappen(app, key) ? null : LIGHTS.nothingReports]
-    .filter((l): l is string => l !== null);
+  const own = key === 'meetingSoon' ? LIGHTS.meetingSoonHelp : key in LIGHTS.sensorHelp ? LIGHTS.sensorHelp[key as keyof typeof LIGHTS.sensorHelp] : null;
+  const lines = [own, sensorCanHappen(app, key) ? null : LIGHTS.nothingReports].filter((l): l is string => l !== null);
   return lines.length ? lines.join(' ') : undefined;
 }
 
@@ -335,7 +337,7 @@ export function renderLights(app: App, container: HTMLElement): void {
       ...[...OTHERS.filter((k) => sensorCanHappen(app, k)), ...OTHERS.filter((k) => !sensorCanHappen(app, k))].map((k) => sensorBox(app, k)))], {
       cls: 'bl-all-sensors', open: OTHERS.some((k) => app.config.sensors.includes(k)),
     }),
-    el('ol', { class: 'ns-steps' }, ...RETIRING.LIGHTS_STEPS.map((step, i) => el('li', { class: 'ns-step' },
+    el('ol', { class: 'ns-steps' }, ...LIGHTS.steps.map((step, i) => el('li', { class: 'ns-step' },
       el('span', { class: 'ns-step-number', 'aria-hidden': 'true' }, String(i + 1)),
       el('span', { class: 'ns-step-text' }, step(name)),
     ))),
@@ -343,6 +345,8 @@ export function renderLights(app: App, container: HTMLElement): void {
     el('div', { class: 'bl-working-switch' }, checkboxField(LIGHTS.workingSwitch, app.config.workingSwitch.enabled, (v) => {
       app.config.workingSwitch.enabled = v;
       app.changed();
-    }, { path: 'workingSwitch.enabled', help: LIGHTS.workingSwitchHelp })),
+    }, { path: 'workingSwitch.enabled', help: LIGHTS.workingSwitchHelp }),
+    // The three switches side by side, and where each one is (SPEC 11.3 E, from build 3.3).
+    paragraph(LIGHTS.switches, 'form-text bl-switches')),
   ));
 }

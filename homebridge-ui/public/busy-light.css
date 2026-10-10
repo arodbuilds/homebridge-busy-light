@@ -589,3 +589,13 @@
   flex-wrap: wrap;
   gap: 4px;
 }
+
+/* The intro's setup steps (SPEC 11.3 A, from build 3.3) sit close to the lines around them. */
+.busy-light-ui .bl-intro-steps {
+  margin-bottom: 0.5rem;
+}
+
+/* The line on the three switches, under the Working switch (SPEC 11.3 E, from build 3.3). */
+.busy-light-ui .bl-switches {
+  margin: 0.25rem 0 0;
+}

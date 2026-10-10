@@ -9,7 +9,6 @@ import { callServer } from '../api.js';
 import type { App, ListState, StatusSource, TestResult } from '../app.js';
 import { badge, card, cardName, type BadgeKind } from '../card.js';
 import { CALENDARS, CHOOSER, GOOGLE, ICLOUD, OUTLOOK, PILLS, SHELL, SOURCE_TYPES, TEST, URL_CARD } from '../copy.js';
-import * as RETIRING from '../retiring.js';
 import {
   clear, dangerLinkButton, disclosure, el, footerAction, grid, gridCell, inlineConfirm, outLink, outlineButton, paragraph, passwordField,
   primaryButton, selectField, statusBox, textField, type Child,
@@ -131,7 +130,7 @@ function ready(app: App, s: UiSource, fields: string[]): boolean {
 type ICloudAnswer = { calendars: Array<{ id: string; name: string; shared: boolean; subscribed: boolean; eventsToday: number | null }> }
   | { error: 'rejected' | 'network' | 'unexpected' };
 
-const ICLOUD_ERRORS = { rejected: RETIRING.ICLOUD.rejected, network: ICLOUD.network, unexpected: ICLOUD.unexpected };
+const ICLOUD_ERRORS = { rejected: ICLOUD.rejected, network: ICLOUD.network, unexpected: ICLOUD.unexpected };
 
 async function connectICloud(app: App, s: UiSource): Promise<void> {
   const state = listState(app, s);
@@ -161,7 +160,7 @@ async function connectICloud(app: App, s: UiSource): Promise<void> {
 
 /** The App-specific password help, with account.apple.com as a link, then "How to create one" (SPEC 11.3 C, 17). */
 function appPasswordHelp(): Child[] {
-  const [before, after] = RETIRING.ICLOUD.appPasswordHelp.split(ICLOUD.accountSite);
+  const [before, after] = ICLOUD.appPasswordHelp.split(ICLOUD.accountSite);
   return [before, outLink(ICLOUD.accountSite, ICLOUD.accountUrl), after, ' ', outLink(ICLOUD.howTo, ICLOUD.howToUrl)];
 }
 
@@ -172,7 +171,7 @@ function icloudBody(app: App, s: UiSource, title: HTMLElement): Child[] {
   return [
     nameField(app, s, title),
     grid(
-      gridCell(6, textField(RETIRING.ICLOUD.appleId, s.appleId, (v) => {
+      gridCell(6, textField(ICLOUD.appleId, s.appleId, (v) => {
         s.appleId = v;
         app.changed();
       }, {
@@ -304,7 +303,7 @@ function addressBody(app: App, s: UiSource, title: HTMLElement): Child[] {
     textField(URL_CARD.address, s.url, (v) => {
       s.url = v;
       app.changed();
-    }, { path: sourcePath(s, 'url'), required: true, help: RETIRING.URL_ADDRESS_HELP, inputmode: 'url' }),
+    }, { path: sourcePath(s, 'url'), required: true, help: URL_CARD.addressHelp, inputmode: 'url' }),
     countsFor(app, s),
   ];
 }

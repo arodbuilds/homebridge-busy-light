@@ -111,14 +111,14 @@ export function renderSettings(app: App, container: HTMLElement): void {
       intervalOptions(INTERVALS.pollSeconds, c.pollSeconds, app.saved.pollSeconds, DEFAULTS.pollSeconds), (v) => {
         c.pollSeconds = Number(v);
         app.changed();
-      }, { path: 'pollSeconds' })),
+      }, { path: 'pollSeconds', help: SETTINGS.pollSecondsHelp })),
     gridCell(6, selectField(SETTINGS.calendarSeconds, String(c.calendarSeconds),
       intervalOptions(INTERVALS.calendarSeconds, c.calendarSeconds, app.saved.calendarSeconds, DEFAULTS.calendarSeconds), (v) => {
         c.calendarSeconds = Number(v);
         app.changed();
         // Each calendar card's `Same as Settings` option follows the value.
         followPlatformInterval(app);
-      }, { path: 'calendarSeconds' })),
+      }, { path: 'calendarSeconds', help: SETTINGS.calendarSecondsHelp })),
     gridCell(12, checkboxField(SETTINGS.ignoreAllDayBusy, c.ignoreAllDayBusy, (v) => {
       c.ignoreAllDayBusy = v;
       app.changed();

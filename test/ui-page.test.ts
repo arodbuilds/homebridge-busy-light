@@ -45,8 +45,6 @@ dom.window.homebridge = {
 const { Page } = await import('../homebridge-ui/src/main.js');
 const { readConfig, exportConfig, DEFAULTS } = await import('../homebridge-ui/src/model.js');
 const copy = await import('../homebridge-ui/src/copy.js');
-/** The strings build 3.3 takes off the page, shown until their scope item (SPEC 17). */
-const RETIRING = await import('../homebridge-ui/src/retiring.js');
 const { INTRO, SHELL, VALIDATION } = copy;
 
 type PageT = InstanceType<typeof Page>;
@@ -80,20 +78,19 @@ afterEach(() => {
 });
 
 describe('settings page: anatomy (SPEC 11.1)', () => {
-  it('draws the banner, the intro, the affiliation line, the six sections, the closing line and the footer, in order', () => {
+  it('draws the banner, the intro with its three steps, the affiliation line, the six sections and the footer, in order', () => {
     const { root } = mount();
     const kids = root.children.map((c) => `${c.tagName.toLowerCase()}${c.id ? `#${c.id}` : ''}.${c.className.split(' ').join('.')}`);
     assert.deepEqual(kids, [
-      'img.ns-banner', 'div.ns-draft-holder', 'p.lead-copy', 'p.lead-copy', 'p.form-text.bl-affiliation',
+      'img.ns-banner', 'div.ns-draft-holder', 'p.lead-copy', 'ol.ns-steps.bl-intro-steps', 'p.lead-copy.bl-intro-optional', 'p.form-text.bl-affiliation',
       'section#section-rightNow.ns-section', 'section#section-calendars.ns-section', 'section#section-statusInput.ns-section',
       'section#section-colors.ns-section',
-      'section#section-lights.ns-section', 'section#section-settings.ns-section', 'div.alert.alert-warning.ns-issues', 'p.lead-copy.mt-3',
+      'section#section-lights.ns-section', 'section#section-settings.ns-section', 'div.alert.alert-warning.ns-issues',
       'footer.ns-footer.form-text',
     ]);
     assert.equal(root.children[0].getAttribute('alt'), copy.BANNER.alt);
     assert.equal(root.children[0].getAttribute('src'), 'busy-light-banner.png');
-    assert.equal(text(root.children[4]), INTRO.affiliation);
-    assert.equal(text(root.children[12]), RETIRING.INTRO.closing);
+    assert.equal(text(root.children[5]), INTRO.affiliation);
     assert.deepEqual(root.querySelectorAll('h2').map((h) => text(h)), ['Right now', 'Calendars', 'Status from other apps', 'Colors', 'Lights', 'Settings']);
     const footer = root.querySelector('footer')!;
     assert.equal(text(footer), 'Busy Light · Made by Alex Rodriguez · alex-rodriguez.com · Report an issue');
@@ -435,7 +432,7 @@ describe('settings page: the iCloud card (SPEC 11.3 C)', () => {
   it('Connect errors: rejected, network and unexpected, under the body', async () => {
     const { root } = mount(PI);
     openCard(root, 'icloud');
-    for (const [error, message] of [['rejected', RETIRING.ICLOUD.rejected], ['network', copy.ICLOUD.network], ['unexpected', copy.ICLOUD.unexpected]]) {
+    for (const [error, message] of [['rejected', copy.ICLOUD.rejected], ['network', copy.ICLOUD.network], ['unexpected', copy.ICLOUD.unexpected]]) {
       answers.set('/icloud/calendars', { error });
       buttonNamed(cardOf(root, 'icloud'), copy.ICLOUD.connect).click();
       await settle();
@@ -450,13 +447,13 @@ describe('settings page: the iCloud card (SPEC 11.3 C)', () => {
     const id = page.config.calendars[0].id;
     buttonNamed(cardOf(root, id), copy.ICLOUD.connect).click();
     assert.equal(requests.length, 0);
-    assert.equal(feedback(root, `calendars.${id}.appleId`), 'Apple ID email is required.');
+    assert.equal(feedback(root, `calendars.${id}.appleId`), 'Apple Account email is required.');
     assert.equal(feedback(root, `calendars.${id}.appPassword`), 'App-specific password is required.');
     fill(root, `calendars.${id}.appleId`, 'not-an-email');
     assert.equal(feedback(root, `calendars.${id}.appleId`), VALIDATION.email);
     assert.equal(text(cardOf(root, id).querySelector('.bl-connect-line')), copy.CALENDARS.connectToSee);
     const help = cardOf(root, id).querySelector(`[data-path="calendars.${id}.appPassword"] .form-text`)!;
-    assert.equal(text(help), `${RETIRING.ICLOUD.appPasswordHelp} ${copy.ICLOUD.howTo}`);
+    assert.equal(text(help), `${copy.ICLOUD.appPasswordHelp} ${copy.ICLOUD.howTo}`);
     assert.deepEqual(help.querySelectorAll('a').map((a) => [text(a), a.getAttribute('href'), a.getAttribute('target')]), [
       ['account.apple.com', 'https://account.apple.com', '_blank'], ['How to create one', 'https://support.apple.com/en-us/102654', '_blank'],
     ]);
@@ -1115,7 +1112,7 @@ describe('settings page: Lights (SPEC 11.3 E)', () => {
     assert.deepEqual(page.config.lifx.bulbs, ['d073d5000002', 'd073d5000001'], 'the found bulb, then the saved one not found');
   });
 
-  it('the sensors to create, named from the platform name, the other seven under Show all statuses, and the three steps', async () => {
+  it('the sensors to create, named from the platform name, the other seven under Show all statuses, and the four steps', async () => {
     const { root, page } = mount({ platform: 'BusyLight', name: 'Door' });
     const section = root.querySelector('#section-lights')!;
     const labels = (node: FakeElement) => node.querySelectorAll('.form-check-label').map((l) => text(l));
@@ -1136,6 +1133,7 @@ describe('settings page: Lights (SPEC 11.3 E)', () => {
     assert.deepEqual(lastBlock().sensors, ['busyAny', 'outOfOffice', 'inMeeting']);
     assert.deepEqual(section.querySelectorAll('.ns-step-text').map((s) => text(s)), [
       'In the Home app, add an automation: A sensor detects something.', 'Choose Door Busy, then Detects occupancy.', 'Set your light to red.',
+      'Add a second automation: when Door Busy stops detecting occupancy, set your light back.',
     ]);
     assert.equal(mount({ platform: 'BusyLight', sensors: ['away'] }).root.querySelector('details.bl-all-sensors')!.open, true,
       'open when one of the seven is ticked');
@@ -1562,7 +1560,7 @@ describe('settings page: Status from other apps (SPEC 11.3 I)', () => {
     assert.equal(text(section(root).querySelector('.bl-input-error')), copy.STATUS_INPUT.portError(8582));
     const plain = field(root, 'statusInput.allowPlainKey');
     assert.equal(plain.checked, true, 'ticked by default');
-    assert.equal(text(section(root).querySelector('[data-path="statusInput.allowPlainKey"] .ns-help')), RETIRING.STATUS_INPUT.allowPlainKeyHelp);
+    assert.equal(text(section(root).querySelector('[data-path="statusInput.allowPlainKey"] .ns-help')), copy.STATUS_INPUT.allowPlainKeyHelp);
     tick(plain, false);
     await settle();
     assert.equal((lastBlock().statusInput as Record<string, unknown>).allowPlainKey, false);
@@ -1576,11 +1574,11 @@ describe('settings page: Status from other apps (SPEC 11.3 I)', () => {
     tick(field(root, 'callSwitch.enabled'), true);
     fill(root, 'callSwitch.hours', '13');
     assert.equal(feedback(root, 'callSwitch.hours'), 'Enter a whole number from 1 to 12.');
-    assert.equal(text(root.querySelector('[data-path="callSwitch.hours"] label')), RETIRING.STATUS_INPUT.callSwitchHours);
+    assert.equal(text(root.querySelector('[data-path="callSwitch.hours"] label')), copy.STATUS_INPUT.callSwitchHours);
     fill(root, 'callSwitch.hours', '2');
     await settle();
     assert.deepEqual(lastBlock().callSwitch, { enabled: true, hours: 2 });
-    assert.equal(text(root.querySelector('[data-path="callSwitch.enabled"] .ns-help')), RETIRING.STATUS_INPUT.callSwitchHelp);
+    assert.equal(text(root.querySelector('[data-path="callSwitch.enabled"] .ns-help')), copy.STATUS_INPUT.callSwitchHelp);
   });
 
   it('Apps reporting now: each sender\'s status, app, last heard, Active or Expired, and Signed or Plain key; the Home app has no auth badge', async () => {
@@ -2164,5 +2162,71 @@ describe('settings page: the owner\'s configuration, opened and saved back (buil
     assert.ok(root.querySelectorAll('#section-lights .form-check-label').some((l) => text(l) === 'Busy Light Meeting Soon'));
     assert.equal(requests.filter((r) => r.path !== '/version' && r.path !== '/status' && r.path !== '/input/info').length, 0,
       'opening it asks nothing else');
+  });
+});
+
+// Build 3.3 (SPEC 11.3, 15 item 42): the first-time setup copy, from Appendix A of the build prompt.
+
+describe('settings page: the first-time setup copy (build 3.3)', () => {
+  const NAME_HELP = (root: FakeElement, path: string): string => text(root.querySelector(`[data-path="${path}"] .ns-help`));
+
+  it('the intro: what Busy Light does, the three steps, that the rest is optional, and no closing line', () => {
+    const { root } = mount();
+    assert.equal(text(root.children[2]), 'Busy Light turns a light red when you are busy and green when you are free. '
+      + 'It reads your calendars, and can also take your status from other apps or from Teams.');
+    const steps = root.querySelector('.bl-intro-steps')!;
+    assert.deepEqual(steps.querySelectorAll('.ns-step-number').map((n) => text(n)), ['1', '2', '3']);
+    assert.deepEqual(steps.querySelectorAll('.ns-step-text').map((t) => text(t)), [
+      'Add a calendar.', 'Under Lights, tick Use LIFX bulbs, or use the sensors in the Home app.', 'Save, then restart Homebridge.',
+    ]);
+    assert.equal(text(root.querySelector('.bl-intro-optional')), 'The other sections are optional.');
+    assert.ok(!text(root).includes('Your status also appears in the Home app as sensors.'), 'no closing line');
+    assert.equal(text(root.querySelector('#section-calendars .section-copy')), 'Add the calendars that should make you busy. Busy Light combines them.');
+  });
+
+  it('Apple Account on the iCloud card, and the Calendar URL help says what such a link looks like', () => {
+    const rota = { type: 'url', id: 'rota', name: 'Rota', url: 'https://rota.example.net/a.ics' };
+    const { root } = mount({ platform: 'BusyLight', calendars: [ICLOUD_SOURCE, rota] });
+    openCard(root, 'icloud');
+    assert.ok(text(root.querySelector('[data-path="calendars.icloud.appleId"] label')).startsWith('Apple Account email'));
+    assert.ok(NAME_HELP(root, 'calendars.icloud.appPassword').startsWith('Not your Apple Account password.'));
+    assert.ok(!text(root).includes('Apple ID'));
+    openCard(root, 'rota');
+    assert.equal(NAME_HELP(root, 'calendars.rota.url'), 'A calendar subscription link (often ending in .ics) that starts with https:// or webcal://.');
+  });
+
+  it('Lights: the roll-ups say when they are on, a fourth Home app step sets the light back, and one line sets the three switches side by side', () => {
+    const { root } = mount();
+    const lights = root.querySelector('#section-lights')!;
+    assert.equal(NAME_HELP(lights, 'sensors.available'), 'On when you are free.');
+    assert.equal(NAME_HELP(lights, 'sensors.busyAny'), 'On during a meeting, a call, Do not disturb or Busy.');
+    assert.equal(NAME_HELP(lights, 'sensors.outOfOffice'), 'On while you are out of office.');
+    const steps = lights.querySelectorAll('.bl-other-lights .ns-step-text').map((t) => text(t));
+    assert.equal(steps.length, 4);
+    assert.equal(steps[3], 'Add a second automation: when Busy Light Busy stops detecting occupancy, set your light back.');
+    const working = lights.querySelector('.bl-working-switch')!;
+    assert.equal(text(working.querySelector('.bl-switches')), 'The Working switch keeps the light off while it is off. '
+      + 'On a Call, under Status from other apps, shows In a call. The Override switch, under Settings, shows Do not disturb.');
+  });
+
+  it('Settings: each interval says what it does', () => {
+    const { root } = mount();
+    assert.equal(NAME_HELP(root, 'pollSeconds'), 'How often Busy Light works out your status from what it has already read.');
+    assert.equal(NAME_HELP(root, 'calendarSeconds'), 'How often Busy Light downloads your calendars. Each calendar can change this under its Advanced.');
+  });
+
+  it('Status from other apps: which of the three to use, the plain key in plain words, and the On a Call switch', async () => {
+    answers.set('/input/info', { hostname: 'homebridge.local', addresses: ['192.168.4.10'], port: 8582, id: 'q3Lr8vT0cXw2mN5a', addressChange: null });
+    const { root } = mount({ platform: 'BusyLight', statusInput: { enabled: true, key: 'k'.repeat(43) }, callSwitch: { enabled: true } });
+    await settle();
+    const section = root.querySelector('#section-statusInput')!;
+    const hint = section.querySelector('.bl-setup-hint')!;
+    assert.equal(text(hint), 'Most apps need only the setup code. Some ask for the address and key separately.');
+    const kinds = ['bl-setup-hint', 'bl-input-addresses', 'bl-input-key', 'bl-setup-code'];
+    const order = section.querySelectorAll(kinds.map((k) => `.${k}`).join(', ')).map((n) => kinds.find((k) => n.className.includes(k)));
+    assert.deepEqual(order, kinds, 'above the address, the key and the setup code');
+    assert.ok(NAME_HELP(section, 'statusInput.allowPlainKey').startsWith('Leave this on if you use Apple Shortcuts or curl:'));
+    assert.equal(NAME_HELP(section, 'callSwitch.enabled'), 'Turn it on from a shortcut, Siri or a Home tile while you are on a call. No app needed.');
+    assert.equal(text(section.querySelector('[data-path="callSwitch.hours"] label')), 'Turn off automatically after (hours)');
   });
 });
