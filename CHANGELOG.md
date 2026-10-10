@@ -2,6 +2,44 @@
 
 All notable changes to Busy Light are recorded here. Versions follow [semantic versioning](https://semver.org).
 
+## 1.0.0 (2026-10-10)
+
+The first stable release. Busy Light turns a light red when you are busy and green when you are free:
+
+- It reads your calendars: iCloud, Google Calendar, an Outlook published link, any calendar subscription link, and Microsoft 365 by sign-in (experimental), any number of them combined.
+- It shows the status on one or more LIFX bulbs, found on your network and sent each color together, and as HomeKit occupancy sensors that a Home automation can use with any other light.
+- It adds optional switches to the Home app: Override (Do not disturb), On a Call (In a call) and Working (the light off outside work).
+- Other apps on your network can report your status through a small signed API, Status from other apps.
+- Warn before meetings fades the light from the Available color to the In a meeting color before a calendar meeting starts.
+
+The configuration keys are now stable: from 1.0, a change that would break a `config.json` that works today needs a new major version. A configuration written by any 0.1.0 pre-release loads and behaves as it did.
+
+### Added
+
+- Calendars are read a week ahead (from a day back to 7 days ahead, instead of a day each way), so on a Friday afternoon Right now and the log say "until Monday at 9:00 AM". `homebridge-busy-light check` and the state file's event counts cover the wider window.
+- Microsoft 365 sign-in is marked experimental: on the Add calendar choice, the card's badge and note, the standard settings form, and one line in the log at startup for each Microsoft 365 calendar asking you to say if it works. Nothing about it changes otherwise. The Outlook published link is tested and not marked.
+- The settings page opens with three setup steps (add a calendar, choose how the light is controlled, save and restart) and says the rest is optional.
+- Help on the page for the three default sensors, the two Settings intervals, which of the address, key and setup code an app needs, and a line setting the Working, On a Call and Override switches side by side; a fourth Home app step that sets the light back after the meeting.
+- README: a Quick start, two screenshots of the settings page, Known limitations, the command line on the Homebridge Raspberry Pi image by its full path, and sections for upgrading from 0.1.0 and for development.
+
+### Changed
+
+- The page, the standard form and the log say Apple Account instead of Apple ID, as Apple does.
+- Plainer page copy, from a first-time setup review: the intro, the Calendars help, the Calendar URL help, Allow the plain key, the On a Call switch's help, and "Turn off automatically after (hours)". The closing line at the end of the page is gone.
+- Log and command line times always read `9:00 AM` and `9:00 PM`, whatever the computer's language (the Pi wrote `9:00 am`).
+- The masked setup code is a fixed row of dots on one line.
+- An app's name with an invisible format character (a zero-width space or a word joiner, say) is refused; emoji joined with a zero-width joiner stay allowed.
+
+### Fixed
+
+- The setup code's dots ran past the right edge of its box in Safari.
+- After only looking (pressing Search again, opening a card, or the browser filling in a saved password), the page offered "You have unsaved changes from earlier" on the next visit. A draft is now kept only while the page differs from what is saved.
+- Clicking Save within a moment of a change saved the settings from before it.
+- If your calendars could not be read during a meeting warning, the bulbs finished fading to the In a meeting color while the status was unknown. They now go back to the Available color once, and are then left alone.
+- A meeting added inside the warning time started its fade only when a slow calendar check ended. It now starts at once.
+- The startup line said `light on at` one address with two bulbs chosen; it now says `light on (2 bulbs)`.
+- An app could appear as the On a Call switch's "Home app" by adding an invisible character to its name.
+
 ## 0.1.0-beta.5 (2026-10-09)
 
 The fixes from a code review and a test pass after the first public beta, the day in "until" times, and the owner's requests: several LIFX bulbs, a Working switch, a warning before meetings, and copy buttons for the addresses. A configuration written by an earlier beta loads and behaves as before, with the Working switch and the meeting warning off, and its one bulb as a list of one.
