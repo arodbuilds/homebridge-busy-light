@@ -72,7 +72,8 @@ for (const style of ['prefixed', 'default-ns'] as const) {
     const auth = `Basic ${Buffer.from(`person@example.com:${PASSWORD}`).toString('base64')}`;
     assert.ok(fake.calls.every((c) => c.headers.authorization === auth));
     const report = fake.calls[3].body ?? '';
-    assert.ok(report.includes(`<c:time-range start="${davStamp(now - 86_400_000)}" end="${davStamp(now + 86_400_000)}"/>`));
+    // The window of SPEC 5: 24 hours back and, from build 3.3, 7 days ahead.
+    assert.ok(report.includes(`<c:time-range start="${davStamp(now - 86_400_000)}" end="${davStamp(now + 7 * 86_400_000)}"/>`));
     assert.ok(report.includes('<c:comp-filter name="VEVENT">'));
 
     const at = (h: number, m = 0) => Date.UTC(2026, 9, 8, h, m);

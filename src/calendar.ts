@@ -1,15 +1,22 @@
 /**
  * What every calendar source shares (SPEC 5): one call that returns the events overlapping the window from 24 hours
- * before now to 24 hours after now, each already reduced to the event model.
+ * before now to 7 days after now, each already reduced to the event model.
  */
 import type { CalendarChoice, CalendarUse } from './config.js';
 import type { CalEvent } from './status.js';
 
-// TODO(alex): events are read from 24 hours before now to 24 hours after (SPEC 5), so an `until` time is at most a
-// day away and reads as a time today or `tomorrow at {time}`; the weekday and date forms of SPEC 11.3 G wait for a
-// wider window. Reading further ahead (Friday afternoon saying `until Monday at 9:00 AM`) costs more reading on every
-// check and changes the `events` count of SPEC 10.1, so it is left as it was (SPEC 17, open in build 3.2).
-export const WINDOW_MS = 24 * 3_600_000;
+/** The window reaches back 24 hours, for events that started before now and are still on (SPEC 5). */
+export const WINDOW_BEFORE_MS = 24 * 3_600_000;
+/**
+ * And 7 days ahead (from build 3.3, the owner's decision for 1.0; 24 hours before it), so a Friday afternoon with
+ * nothing until Monday morning says `until Monday at 9:00 AM` (SPEC 5, 11.3 G, 12).
+ */
+export const WINDOW_AFTER_MS = 7 * 24 * 3_600_000;
+
+/** The window of SPEC 5 at `now`, for the iCloud REPORT, the Graph calendarView range and the events kept from an address. */
+export function readingWindow(now: number): { from: number; to: number } {
+  return { from: now - WINDOW_BEFORE_MS, to: now + WINDOW_AFTER_MS };
+}
 
 export interface CalendarSource {
   fetchEvents(now: number): Promise<CalEvent[]>;

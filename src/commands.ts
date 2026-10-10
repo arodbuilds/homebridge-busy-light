@@ -34,7 +34,7 @@ export const USAGE = [
   '',
   'Commands:',
   '  status                          Show what the plugin is doing, from its state file.',
-  '  check                           Read every calendar once and show the status they give.',
+  '  check                           Read every calendar once, from a day back to a week ahead, and show the status they give.',
   '  login [name]                    Sign in to a Microsoft 365 calendar.',
   '  lights                          Search the network for LIFX bulbs.',
   '  light [name|ip] [#RRGGBB|off]   Send a color to a bulb (the Available color by default).',

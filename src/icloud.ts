@@ -2,7 +2,7 @@
  * iCloud calendars over CalDAV (SPEC 4.1 and 5.1): HTTP Basic with the Apple ID and an app-specific password,
  * discovery of the calendar list, and a time-range REPORT per calendar.
  */
-import { WINDOW_MS, applyUse } from './calendar.js';
+import { applyUse, readingWindow } from './calendar.js';
 import type { CalendarReport, CalendarSource, IcsSettings } from './calendar.js';
 import type { CalendarChoice, CalendarUse, ICloudSourceConfig } from './config.js';
 import { SourceError } from './errors.js';
@@ -219,8 +219,7 @@ export class ICloudSource implements CalendarSource {
   }
 
   async fetchEvents(now: number): Promise<CalEvent[]> {
-    const from = now - WINDOW_MS;
-    const to = now + WINDOW_MS;
+    const { from, to } = readingWindow(now);
     try {
       if (!this.calendars || now - this.discoveredAt >= REDISCOVER_MS) {
         this.calendars = null;

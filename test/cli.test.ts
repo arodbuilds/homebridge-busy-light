@@ -64,6 +64,12 @@ async function run(...argv: string[]): Promise<{ code: number; out: string[]; er
   return { code, out, err };
 }
 
+test('help names the reading window for check, as SPEC 10.2 item 6 gives it (build 3.3)', () => {
+  const spec = fs.readFileSync(path.resolve(import.meta.dirname, '..', '..', 'SPEC.md'), 'utf8');
+  const quoted = /the usage line for `check` names the window: `([^`]+)`/.exec(spec)![1];
+  assert.ok(USAGE.some((line) => /^ {2}check +/.test(line) && line.endsWith(quoted)), quoted);
+});
+
 test('help lists the commands', async () => {
   const { code, out } = await run('help');
   assert.equal(code, 0);
