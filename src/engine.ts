@@ -151,8 +151,9 @@ export class BusyLightEngine {
     const now = () => this.clock.now();
     this.sources = this.config.calendars.map((config) => new SourceRunner({
       config, storageDir: options.storageDir, ics, log: this.log, now, sleep: options.sleep, onChange: () => this.writeState(),
-      // SPEC 8.1 item 3: the boundary timer follows the cached events as soon as they change, not when the tick ends.
-      onData: () => this.scheduleBoundary(this.clock.now()),
+      // SPEC 8.1 item 3: the boundary timer follows the cached events as soon as they change, not when the tick ends, and
+      // a meeting warning already due begins at once (6.7 item 2).
+      onData: () => this.scheduleBoundary(this.clock.now(), true),
     }));
     this.inputs = new SenderStore(inputsFile(options.storageDir), (err) => this.log.debug(`Could not write inputs.json: ${err.message}`));
     const id = readInstanceId(options.storageDir);
@@ -189,7 +190,10 @@ export class BusyLightEngine {
   start(): void {
     this.inputs.load(this.clock.now());
     void this.light.start();
-    this.log.info(startup(this.options.version, this.sources.length, { enabled: this.light.enabled, hosts: this.light.hosts },
+    // The bulbs configured, not those remembered in light.json, give the count (SPEC 12, from build 3.3).
+    const lifx = this.config.lifx;
+    const configured = lifx.hosts.length > 0 ? lifx.hosts.length : lifx.bulbs.length;
+    this.log.info(startup(this.options.version, this.sources.length, { enabled: this.light.enabled, configured, hosts: this.light.hosts },
       this.config.sensors.length));
     if (this.sources.length === 0) {
       this.log.warn(noCalendars());
@@ -347,6 +351,10 @@ export class BusyLightEngine {
         this.sendWarning(warning, now, true);
       } else if (result.status !== 'unknown') {
         this.send(result.status, CHANGE_DURATION_MS, now);
+      } else if (hadWarning) {
+        // Unknown ended the warning: the Available color once, so the fade does not finish on the In a meeting color while
+        // nothing is known; after that the bulb is left alone (SPEC 6.5 item 4, 6.7 item 4).
+        this.send('available', CHANGE_DURATION_MS, now);
       }
     } else if (result.status !== 'unknown') {
       if (warningChanged) {
@@ -426,9 +434,10 @@ export class BusyLightEngine {
 
   /**
    * SPEC 8.1 item 3: one timer for the next event boundary, set after every apply and whenever a source's events
-   * change, whether or not the next tick comes first: a tick resolves only once its calendar checks finish.
+   * change, whether or not the next tick comes first: a tick resolves only once its calendar checks finish. When the
+   * events change (`fromData`) and a meeting warning should already be running, it begins at once (6.7 item 2).
    */
-  private scheduleBoundary(now: number): void {
+  private scheduleBoundary(now: number, fromData = false): void {
     if (this.stopped) {
       return;
     }
@@ -439,6 +448,11 @@ export class BusyLightEngine {
     const begins = ahead === null ? null : ahead - this.config.meetingWarningSeconds * 1000;
     if (begins !== null && begins > now && (next === null || begins < next)) {
       next = begins;
+    }
+    if (fromData && ahead !== null && begins !== null && begins <= now && this.meetingWarning?.meetingAt !== ahead) {
+      // A meeting added or moved inside the warning time: the fade over the time left, without waiting for the tick,
+      // whose other calendar checks may still be running.
+      void this.applyStatus();
     }
     if (next === null) {
       this.boundaryTimer.clear();

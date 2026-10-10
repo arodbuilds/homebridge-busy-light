@@ -60,11 +60,14 @@ export function count(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? '' : 's'}`;
 }
 
-/** A time as `h:mm AM/PM` in the host's locale and time zone, 12-hour (SPEC 12). */
+/**
+ * A time as `h:mm AM` or `h:mm PM` in the host's time zone (SPEC 12). From build 3.3 it is built from the clock, not the
+ * locale, so every locale writes it the same way: on the Pi the locale gave `9:00 am`.
+ */
 export function formatTime(ms: number): string {
-  return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', hour12: true })
-    .format(new Date(ms))
-    .replace(/[\u202f\u00a0]/g, ' ');
+  const d = new Date(ms);
+  const hours = d.getHours();
+  return `${hours % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')} ${hours < 12 ? 'AM' : 'PM'}`;
 }
 
 /** Calendar days from one time to another in the host's time zone: 0 the same day, 1 the next, and so on. */
@@ -97,11 +100,16 @@ export function formatWhen(ms: number, now: number): string {
   return `${date.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} at ${time}`;
 }
 
-/** `light on at {host}`, `light on` while the bulb is still being found, or `light off`. */
-/** `light on ({n} bulbs)` from build 3.2, when more than one bulb is chosen (SPEC 12). */
-export function startup(version: string, calendars: number, light: { enabled: boolean; hosts: string[] }, sensors: number): string {
-  const n = light.hosts.length;
-  const lightPart = !light.enabled ? 'off' : n > 1 ? `on (${n} bulbs)` : n === 1 ? `on at ${light.hosts[0]}` : 'on';
+/**
+ * `light on ({n} bulbs)` when more than one bulb is configured, `light on at {host}` for one bulb (or none named) at a
+ * known address, `light on` while it is still being found, or `light off` (SPEC 12). From build 3.3 `configured` counts
+ * the entries of `lifx.host`, or else of `lifx.bulbs`, not the bulbs remembered in light.json; `hosts` are the
+ * addresses known at startup.
+ */
+export function startup(version: string, calendars: number, light: { enabled: boolean; configured: number; hosts: string[] }, sensors: number): string {
+  const lightPart = !light.enabled ? 'off'
+    : light.configured > 1 ? `on (${light.configured} bulbs)`
+      : light.hosts.length === 1 ? `on at ${light.hosts[0]}` : 'on';
   return `Busy Light ${version}: ${count(calendars, 'calendar')}, light ${lightPart}, ${count(sensors, 'sensor')}.`;
 }
 

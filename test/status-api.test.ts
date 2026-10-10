@@ -382,6 +382,34 @@ test('the sender name Home app is reserved for the On a Call switch, in any form
   assert.ok(!engine!.inputs.list(clock.now()).some((e) => e.sender.normalize('NFKC') === 'Home app'));
 });
 
+test('format characters are refused, a joiner between emoji is not, and look-alike letters are accepted (18.4 item 3, build 3.3)', async () => {
+  const api = setup();
+  const post = (fields: Record<string, unknown>) => send(api, 'POST', '/v1/status', body(fields), plain());
+  const zeroWidthSpace = '\u200b';
+  const wordJoiner = '\u2060';
+  for (const value of [`Home${zeroWidthSpace} app`, `Home app${zeroWidthSpace}`, `Ho${wordJoiner}me app`, `My${zeroWidthSpace}Mac`, `My${wordJoiner}Mac`,
+    'Soft\u00adhyphen', 'Joined\u200dletters', 'Tag\u{e0067}']) {
+    assert.equal(checkText(value), null, JSON.stringify(value));
+    assert.deepEqual((await post({ sender: value, status: 'inCall' })).body, { error: 'invalid_sender', message: ERROR_MESSAGES.invalid_sender },
+      JSON.stringify(value));
+    assert.equal((await post({ sender: 'S', status: 'inCall', app: value })).body.error, 'invalid_app', JSON.stringify(value));
+  }
+  // The reserved name is compared with every format character removed, so a joiner could never hide it.
+  assert.ok(isReservedSender(`Home${zeroWidthSpace} app`) && isReservedSender(`Ho${wordJoiner}me\u00a0app`));
+  // Emoji built with a zero-width joiner stay whole: a person at a laptop (with a skin tone), a rainbow flag.
+  for (const emoji of ['\u{1F469}\u200d\u{1F4BB}', '\u{1F469}\u{1F3FD}\u200d\u{1F4BB}', '\u{1F3F3}\ufe0f\u200d\u{1F308}']) {
+    const sender = `Mac ${emoji}`;
+    assert.equal(checkText(sender), sender);
+    assert.equal((await post({ sender, status: 'busy', app: emoji })).status, 200, JSON.stringify(sender));
+  }
+  // Look-alike letters from other scripts cannot be refused in general: Home app with a Cyrillic En and o is accepted (SPEC 17).
+  const cyrillic = '\u041d\u043eme app';
+  assert.equal(isReservedSender(cyrillic), false);
+  assert.equal((await post({ sender: cyrillic, status: 'busy' })).status, 200);
+  assert.deepEqual(engine!.inputs.list(clock.now()).filter((e) => e.sender === cyrillic).map((e) => e.auth), ['plain'],
+    'listed with its own authentication badge, which the switch never has');
+});
+
 test('fields: unknown_field, invalid_status (tentative and unknown too), invalid_ttl, invalid_json', async () => {
   const api = setup();
   const post = (fields: unknown) => send(api, 'POST', '/v1/status', typeof fields === 'string' ? fields : JSON.stringify(fields), plain());

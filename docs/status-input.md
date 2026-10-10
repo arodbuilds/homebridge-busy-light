@@ -9,7 +9,7 @@ There are two ways in:
 
 Both lead to the same place: Busy Light combines what senders report with your calendars and Microsoft Teams status, and the light and the Home app sensors follow.
 
-Status of this document: describes Busy Light 0.1.0-beta.5. The status API (API version 1) and the On a Call switch came in 0.1.0-beta.3; 0.1.0-beta.4 finds Busy Light by name more reliably (section 2.1) and changes nothing a sender sends or receives; 0.1.0-beta.5 reserves the sender name `Home app` for the On a Call switch and adds `notWorking`, an overall status a sender may see but never sends (section 2.3). Written October 8, 2026 and revised the same day (signed requests, names in Unicode, `clear`, finding Busy Light by name, sending from a laptop that leaves home, replay memory, the plain key setting and sender restarts), then updated for what the build settled: the error messages, `null` fields, the body as an object, and the order of the checks. Updated October 9, 2026 for 0.1.0-beta.5. Section and rule numbers refer to Busy Light's `SPEC.md`, section 18.
+Status of this document: describes Busy Light 1.0.0. The status API (API version 1) and the On a Call switch came in 0.1.0-beta.3; 0.1.0-beta.4 finds Busy Light by name more reliably (section 2.1) and changes nothing a sender sends or receives; 0.1.0-beta.5 reserves the sender name `Home app` for the On a Call switch and adds `notWorking`, an overall status a sender may see but never sends (section 2.3); 1.0.0 refuses invisible format characters in `sender` and `app` (section 2.3). Written October 8, 2026 and revised the same day (signed requests, names in Unicode, `clear`, finding Busy Light by name, sending from a laptop that leaves home, replay memory, the plain key setting and sender restarts), then updated for what the build settled: the error messages, `null` fields, the body as an object, and the order of the checks. Updated October 9, 2026 for 0.1.0-beta.5, and October 10, 2026 for 1.0.0. Section and rule numbers refer to Busy Light's `SPEC.md`, section 18.
 
 ## 1. What a sender can report
 
@@ -72,7 +72,7 @@ Every request except `/v1/ping` carries an `Authorization` header (section 2.4).
 No key needed. Use it to check an address and confirm it is the right Busy Light before you send anything (section 2.7).
 
 ```json
-{ "service": "busy-light", "apiVersion": 1, "version": "0.1.0-beta.3", "id": "q3Lr8vT0cXw2mN5a" }
+{ "service": "busy-light", "apiVersion": 1, "version": "1.0.0", "id": "q3Lr8vT0cXw2mN5a" }
 ```
 
 #### `POST /v1/status`
@@ -99,8 +99,9 @@ Text rule for `sender` and `app`:
 
 1. Any Unicode text, from 1 to 64 characters, where a character is a Unicode code point: not a byte, and not a UTF-16 unit. Curly apostrophes, accented letters and emoji are fine. The macOS default computer name ("Alex’s iMac", with a curly apostrophe) is fine as it is.
 2. Busy Light normalizes the text to Unicode NFC before checking, storing and comparing it, so the same name typed two ways is one sender.
-3. Not allowed: leading or trailing spaces, control characters (newlines and tabs included), U+2028, U+2029, and the bidirectional formatting characters U+202A to U+202E and U+2066 to U+2069. Busy Light never trims or rewrites a name; it refuses it with `invalid_sender` or `invalid_app`.
-4. The sender name `Home app` is reserved for the On a Call switch (section 3): from Busy Light 0.1.0-beta.5, a `sender` that is `Home app` in any Unicode form that normalizes to it (with a no-break space or fullwidth letters, for example) is refused with `400 invalid_sender`.
+3. Not allowed: leading or trailing spaces, control characters (newlines and tabs included), U+2028, U+2029, the bidirectional formatting characters U+202A to U+202E and U+2066 to U+2069, and from Busy Light 1.0.0 any other Unicode format character (category Cf), such as a zero-width space (U+200B), a word joiner (U+2060) or a soft hyphen (U+00AD): they are invisible, and could make one name look like another. A zero-width joiner (U+200D) between two emoji, as in the emoji of a person at a laptop, is allowed, so joined emoji stay whole. Busy Light never trims or rewrites a name; it refuses it with `invalid_sender` or `invalid_app`.
+4. The sender name `Home app` is reserved for the On a Call switch (section 3): from Busy Light 0.1.0-beta.5, a `sender` that is `Home app` in any Unicode form that normalizes to it (with a no-break space or fullwidth letters, for example) is refused with `400 invalid_sender`, and from 1.0.0 also with any format character inside it.
+5. Look-alike letters from other scripts are accepted: `Ноme app`, written with a Cyrillic `Н` and `о`, is a different name, and Busy Light cannot refuse such names in general, since a name may be in any script. This is a known limitation, accepted because a sender needs the key to report at all, and because the user's list of apps shows each app's own row with its Signed or Plain key badge, which the switch's own `Home app` row never has.
 
 The body must be a JSON object; anything else (an array, a string, `null`) is `400 invalid_json`. `"app": null` and `"ttlSeconds": null` are read as if the field were absent. Any field other than the four above is rejected with `400 unknown_field`.
 

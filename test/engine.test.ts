@@ -911,3 +911,79 @@ test('one silent bulb\'s tries do not hold up the next color on the bulb that an
   assert.deepEqual(sentTo.filter(([h]) => h === STATUS_LIGHT.host).map(([, c]) => c), ['#00FF00', config.colors.doNotDisturb],
     'then Status Light is sent the newest color, once');
 });
+
+// Build 3.3: the review fixes (A1, A2 and A4 of the build prompt).
+
+test('the calendars going stale during the fade: Unknown sends the Available color once, then nothing (SPEC 6.7 item 4, 6.5 item 4)', async () => {
+  const start = T0 + 17 * MIN;
+  const statuses: Status[] = [];
+  const e = make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }], lifx: { enabled: true, host: DOOR.host, refreshSeconds: 60 },
+    meetingWarningSeconds: 300 }, statuses);
+  net.bulbs = [{ ...DOOR }];
+  let up = true;
+  fake.on('https://calendar.example.com/', () => (up ? text(icsOf([['meeting', start, start + 30 * MIN]])) : text('', 500)));
+  e.start();
+  await settle();
+  await e.idle();
+  up = false;
+  await clock.advance(12 * MIN);
+  await e.idle();
+  assert.deepEqual(e.meetingWarning, { meetingAt: start }, 'the warning is running');
+  assert.deepEqual(packets().slice(-2), [['power', FULL, 0], ['color', RED, FULL, 300_000]]);
+  net.sent = [];
+  await clock.advance(3 * MIN);
+  await e.idle();
+  assert.deepEqual(statuses, ['available', 'unknown'], 'the events went stale 15 minutes after the last check that worked');
+  assert.equal(e.meetingWarning, null);
+  assert.deepEqual(packets(), [['color', GREEN, FULL, 1000], ['power', FULL, 1000]], 'the Available color once, with the 1 second fade');
+  net.sent = [];
+  await clock.advance(30 * MIN);
+  await e.idle();
+  assert.deepEqual(packets(), [], 'then nothing: no refresh, and nothing at the meeting\'s start');
+  assert.deepEqual(statuses, ['available', 'unknown']);
+});
+
+test('a meeting read inside the warning time starts its fade at once while another calendar is still being read (SPEC 6.7 item 2)', async () => {
+  const e = make({ calendars: [{ type: 'url', name: 'Rota', url: FEED, calendarSeconds: 60 }, { type: 'url', name: 'Team', url: OTHER, calendarSeconds: 60 }],
+    lifx: { enabled: true, host: DOOR.host, refreshSeconds: 0 }, meetingWarningSeconds: 300 });
+  net.bulbs = [{ ...DOOR }];
+  const start = T0 + 5 * MIN; // read at T0 + 1 minute, 4 minutes ahead
+  let added = false;
+  fake.on('https://calendar.example.com/', () => text(icsOf(added ? [['meeting', start, start + 30 * MIN]] : [])));
+  fake.on('https://rota.example.net/', (_call, index) => (index === 0 ? text(icsOf([])) : new Promise<Response>(() => undefined)));
+  e.start();
+  await settle();
+  await e.idle();
+  assert.equal(e.status, 'available');
+  net.sent = [];
+  added = true;
+  await clock.advance(MIN);
+  await e.idle();
+  assert.equal(fake.callsTo('https://rota.example.net/').length, 2, 'Team is still being read');
+  assert.deepEqual(e.meetingWarning, { meetingAt: start }, 'begun at once, not when the slow check ends');
+  assert.deepEqual(packets(), [['power', FULL, 0], ['color', RED, FULL, 4 * MIN]], 'the fade over the time left');
+});
+
+test('the startup line counts the bulbs configured, not those remembered in light.json (SPEC 12)', async () => {
+  // Floor and Status Light chosen, and light.json still remembering one bulb at an old address, as on the Pi.
+  fs.writeFileSync(`${dir}/light.json`, JSON.stringify({ serial: DOOR.serial, label: DOOR.label, host: '192.168.4.99' }));
+  make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }], lifx: { enabled: true, bulbs: [DOOR.serial, STATUS_LIGHT.serial] } });
+  fake.on('https://calendar.example.com/', () => text(icsOf([])));
+  engine!.start();
+  assert.equal(log.lines('info')[0], 'Busy Light 0.1.0-beta.1: 1 calendar, light on (2 bulbs), 3 sensors.');
+  await settle();
+  engine!.stop();
+
+  log = fakeLog();
+  make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }], lifx: { enabled: true, host: `${DOOR.host}, ${STATUS_LIGHT.host}` } });
+  engine!.start();
+  assert.equal(log.lines('info')[0], 'Busy Light 0.1.0-beta.1: 1 calendar, light on (2 bulbs), 3 sensors.', 'two addresses in lifx.host');
+  await settle();
+  engine!.stop();
+
+  log = fakeLog();
+  make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }], lifx: { enabled: true, bulbs: [DOOR.serial] } });
+  engine!.start();
+  assert.equal(log.lines('info')[0], 'Busy Light 0.1.0-beta.1: 1 calendar, light on at 192.168.4.99, 3 sensors.', 'one bulb at its remembered address');
+  await settle();
+});

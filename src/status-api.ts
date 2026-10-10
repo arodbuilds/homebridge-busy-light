@@ -132,10 +132,28 @@ export function isLocalAddress(address: string): boolean {
   return net.isIPv6(a) && LOCAL.check(a, 'ipv6');
 }
 
+/** A Unicode format character (category Cf), such as a zero-width space or a word joiner: invisible (SPEC 18.4 item 3). */
+const FORMAT = /\p{Cf}/u;
+const FORMAT_ALL = /\p{Cf}/gu;
+const PICTOGRAPHIC = /\p{Extended_Pictographic}/u;
+/** What may follow an emoji before a zero-width joiner: the emoji presentation selector or a skin tone. */
+const EMOJI_TRAIL = /^(?:\uFE0F|\p{Emoji_Modifier})$/u;
+const ZWJ = 0x200d;
+
+/** Whether the zero-width joiner at `i` joins two emoji, as in the emoji of a person at a laptop (SPEC 18.4 item 3). */
+function joinsEmoji(points: string[], i: number): boolean {
+  let before = i - 1;
+  if (before >= 0 && EMOJI_TRAIL.test(points[before])) {
+    before--;
+  }
+  return before >= 0 && PICTOGRAPHIC.test(points[before]) && i + 1 < points.length && PICTOGRAPHIC.test(points[i + 1]);
+}
+
 /**
  * `sender` and `app` (SPEC 18.4 item 3): a string, normalized to NFC, of 1 to 64 code points, with no leading or
- * trailing white space, no control characters, no U+2028 or U+2029, and no bidirectional formatting characters.
- * Returns the NFC form, or null when the rule is broken. Nothing is trimmed or rewritten silently.
+ * trailing white space, no control characters, no U+2028 or U+2029, no bidirectional formatting characters, and from
+ * build 3.3 no other format character (category Cf), except a zero-width joiner between two emoji. Returns the NFC
+ * form, or null when the rule is broken. Nothing is trimmed or rewritten silently.
  */
 export function checkText(value: unknown): string | null {
   if (typeof value !== 'string') {
@@ -146,9 +164,12 @@ export function checkText(value: unknown): string | null {
   if (points.length < 1 || points.length > 64 || /^\s|\s$/u.test(nfc)) {
     return null;
   }
-  for (const ch of points) {
+  for (const [i, ch] of points.entries()) {
     const c = ch.codePointAt(0)!;
     if (c < 0x20 || (c >= 0x7f && c <= 0x9f) || c === 0x2028 || c === 0x2029 || (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069)) {
+      return null;
+    }
+    if (FORMAT.test(ch) && !(c === ZWJ && joinsEmoji(points, i))) {
       return null;
     }
   }
@@ -157,11 +178,12 @@ export function checkText(value: unknown): string | null {
 
 /**
  * The sender name of the On a Call switch is reserved for it (SPEC 18.4 item 3, from build 3.2), in any form that
- * normalizes to it under NFKC (a no-break space or fullwidth letters, say), so no app can appear as the switch. Case
- * is kept, as senders are matched with case kept.
+ * normalizes to it under NFKC (a no-break space or fullwidth letters, say), and from build 3.3 with every format
+ * character removed, so no app can appear as the switch. Case is kept, as senders are matched with case kept.
+ * Look-alike letters from other scripts are not caught, and are accepted (SPEC 17).
  */
 export function isReservedSender(sender: string): boolean {
-  return sender.normalize('NFKC') === HOME_APP_SENDER;
+  return sender.normalize('NFKC').replace(FORMAT_ALL, '') === HOME_APP_SENDER;
 }
 
 // ---------------------------------------------------------------------------

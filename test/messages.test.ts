@@ -93,3 +93,23 @@ test('the Working lines are verbatim from SPEC section 12', () => {
   assert.equal(workingOff('Busy Light'), specLine('Working off').replace('{name}', 'Busy Light'));
   assert.equal(workingOn('Busy Light'), specLine('Working on').replace('{name}', 'Busy Light'));
 });
+
+test('log and CLI times read h:mm AM and h:mm PM whatever the host\'s locale (SPEC 12, build 3.3)', () => {
+  const original = Intl.DateTimeFormat;
+  // A host whose locale writes "9:00 am", as the Pi's did.
+  Intl.DateTimeFormat = function (_locales?: string | string[], options?: Intl.DateTimeFormatOptions) {
+    return new original('en-GB', options);
+  } as unknown as typeof Intl.DateTimeFormat;
+  try {
+    assert.notEqual(new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(2026, 9, 12, 9)), '9:00 AM');
+    assert.equal(formatTime(new Date(2026, 9, 12, 9).getTime()), '9:00 AM');
+    assert.equal(formatTime(new Date(2026, 9, 12, 0, 5).getTime()), '12:05 AM');
+    assert.equal(formatTime(new Date(2026, 9, 12, 12).getTime()), '12:00 PM');
+    assert.equal(formatTime(new Date(2026, 9, 12, 21, 30).getTime()), '9:30 PM');
+    // Friday October 9, 2026, 3:00 PM, with nothing until Monday morning.
+    assert.equal(statusLine('Available', { source: null, until: new Date(2026, 9, 12, 9).getTime() }, new Date(2026, 9, 9, 15).getTime()),
+      'Status: Available (until Monday at 9:00 AM).');
+  } finally {
+    Intl.DateTimeFormat = original;
+  }
+});
