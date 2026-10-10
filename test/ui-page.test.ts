@@ -1279,10 +1279,104 @@ describe('settings page: the draft (shell rule M1)', () => {
   it('a draft equal to the saved block (it was saved) is deleted without a banner', () => {
     const first = mount(RAW);
     fill(first.root, 'name', 'Door');
-    fill(first.root, 'name', 'Busy Light');
     assert.ok(dom.storage.getItem('homebridge-busy-light:draft'));
-    assert.equal(mount(RAW).root.querySelector('.ns-draft-banner'), null);
+    first.root.remove();
+    assert.equal(mount({ ...RAW, name: 'Door' }).root.querySelector('.ns-draft-banner'), null);
     assert.equal(dom.storage.getItem('homebridge-busy-light:draft'), null);
+  });
+
+  it('a change undone deletes the draft (SPEC 11.2 item 12, build 3.3)', () => {
+    const { root } = mount(RAW);
+    fill(root, 'name', 'Door');
+    assert.ok(dom.storage.getItem('homebridge-busy-light:draft'));
+    fill(root, 'name', 'Busy Light');
+    assert.equal(dom.storage.getItem('homebridge-busy-light:draft'), null);
+  });
+});
+
+// Build 3.3 (SPEC 11.2 items 12 and 13, 15 item 42): a draft only when the page differs from the saved configuration,
+// and every change given to the host at once.
+
+describe('settings page: only looking leaves no draft, and Save right after a change keeps it (build 3.3)', () => {
+  const FLOOR = { label: 'Floor', serial: 'd073d5000001', ip: '192.168.4.50' };
+  const STATUS_LIGHT = { label: 'Status Light', serial: 'd073d5000004', ip: '192.168.4.21' };
+  /** The owner's configuration, with synthetic values (CLAUDE.md). */
+  const OWNER = {
+    platform: 'BusyLight', name: 'Busy Light',
+    calendars: [
+      { type: 'icloud', id: 'cal-icloud', name: 'iCloud', appleId: 'person@example.com', appPassword: 'abcd-efgh-ijkl-mnop',
+        calendars: [{ id: '/123456789/calendars/home/', name: 'Alex', use: 'all' }] },
+      { type: 'url', id: 'cal-office', name: 'Office', url: 'https://outlook.office365.com/owa/calendar/synthetic/reachcalendar.ics', use: 'all' },
+    ],
+    lifx: { enabled: true, bulbs: [FLOOR.serial, STATUS_LIGHT.serial], host: '', brightness: 100, refreshSeconds: 300 },
+    sensors: ['available', 'busyAny', 'outOfOffice'],
+    statusInput: { enabled: true, port: 8582, key: 'k'.repeat(43), allowPlainKey: true },
+    callSwitch: { enabled: true, hours: 3 },
+    workingSwitch: { enabled: true },
+    meetingWarningSeconds: 60,
+  };
+  const draft = (): string | null => dom.storage.getItem('homebridge-busy-light:draft');
+  const lifxCard = (root: FakeElement): FakeElement => root.querySelector('#section-lights .bl-lifx-card')!;
+  const info = { hostname: 'homebridge.local', addresses: ['192.168.4.10'], port: 8582, id: 'q3Lr8vT0cXw2mN5a', addressChange: null };
+
+  it('the owner\'s configuration opens with no banner, and Search again finding the saved bulbs leaves no draft', async () => {
+    answers.set('/input/info', info);
+    const { root } = mount(OWNER);
+    await settle();
+    assert.equal(root.querySelector('.ns-draft-banner'), null);
+    answers.set('/lifx/discover', { bulbs: [STATUS_LIGHT, FLOOR] });
+    buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
+    await settle();
+    assert.equal(draft(), null, 'found in another order, and nothing else changed');
+    root.remove();
+    assert.equal(mount(OWNER).root.querySelector('.ns-draft-banner'), null, 'the next visit opens with no banner');
+  });
+
+  it('a saved name or serial in another form that a search finds is not a change, nor is lifx.bulb read as lifx.bulbs', async () => {
+    for (const lifx of [{ enabled: true, bulb: 'Floor' }, { enabled: true, bulb: 'D0:73:D5:00:00:01' }, { enabled: true, bulbs: ['floor'] }]) {
+      const { root, page } = mount({ platform: 'BusyLight', lifx });
+      assert.equal(draft(), null, JSON.stringify(lifx));
+      answers.set('/lifx/discover', { bulbs: [FLOOR] });
+      buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
+      await settle();
+      assert.deepEqual(page.config.lifx.bulbs, [FLOOR.serial], 'written as its serial number from now on');
+      assert.equal(draft(), null, JSON.stringify(lifx));
+      root.remove();
+      assert.equal(mount({ platform: 'BusyLight', lifx }).root.querySelector('.ns-draft-banner'), null);
+    }
+  });
+
+  it('a draft written by an earlier beta with lifx.bulb, equal to the saved block, is not offered', () => {
+    dom.storage.setItem('homebridge-busy-light:draft', JSON.stringify({ savedAt: Date.now(),
+      config: { platform: 'BusyLight', lifx: { enabled: true, bulb: FLOOR.serial } } }));
+    const { root } = mount({ platform: 'BusyLight', lifx: { enabled: true, bulbs: [FLOOR.serial] } });
+    assert.equal(root.querySelector('.ns-draft-banner'), null);
+    assert.equal(draft(), null);
+  });
+
+  it('opening a card or a disclosure, or a browser filling in the saved password again, is not a change', async () => {
+    answers.set('/input/info', info);
+    const { root } = mount(OWNER);
+    await settle();
+    openCard(root, 'cal-icloud');
+    openCard(root, 'cal-office');
+    for (const details of root.querySelectorAll('details')) {
+      details.open = true;
+      details.dispatchEvent(new FakeEvent('toggle', false));
+    }
+    // A password manager fills the field with what it already holds, and the browser sends an input event.
+    field(root, 'calendars.cal-icloud.appPassword').dispatchEvent(new FakeEvent('input', true));
+    await settle();
+    assert.equal(draft(), null);
+  });
+
+  it('a change and then Save 10 ms later saves the change', async () => {
+    const { root } = mount(OWNER);
+    pushed.length = 0;
+    fill(root, 'name', 'Office Light');
+    await dom.clock.advance(10);
+    // The host's Save reads the block it was last given.
+    assert.equal(lastBlock().name, 'Office Light');
   });
 });
 
@@ -1718,10 +1812,11 @@ describe('settings page: the masked setup code (SPEC 11.3 I)', () => {
     return root;
   }
 
-  it('is masked when the section opens, one dot per character, with no part of the key', async () => {
+  it('is masked when the section opens, with 20 dots on one line whatever its length, and no part of the key (build 3.3)', async () => {
     const root = await open();
     assert.equal(keyInput(root).getAttribute('type'), 'password');
-    assert.equal(codeLine(root), '\u2022'.repeat(CODE.length));
+    assert.equal(codeLine(root), '\u2022'.repeat(20));
+    assert.ok(section(root).querySelector('.bl-setup-code .bl-readonly-line')!.className.includes('bl-masked'), 'kept on one line');
     assert.ok(!text(section(root)).includes(KEY), 'the key is nowhere in the text of the section');
     assert.equal(text(toggle(root)), copy.SHELL.show);
   });
@@ -1731,12 +1826,13 @@ describe('settings page: the masked setup code (SPEC 11.3 I)', () => {
     toggle(root).click();
     assert.equal(keyInput(root).getAttribute('type'), 'text');
     assert.equal(codeLine(root), CODE);
+    assert.ok(!section(root).querySelector('.bl-setup-code .bl-readonly-line')!.className.includes('bl-masked'), 'shown, it wraps');
     assert.equal(text(toggle(root)), copy.SHELL.hide);
     assert.equal(section(root).querySelectorAll('button').filter((b) => text(b) === copy.SHELL.show || text(b) === copy.SHELL.hide).length, 1,
       'one toggle for both');
     toggle(root).click();
     assert.equal(keyInput(root).getAttribute('type'), 'password');
-    assert.equal(codeLine(root), '\u2022'.repeat(CODE.length));
+    assert.equal(codeLine(root), '\u2022'.repeat(20));
     assert.equal(text(toggle(root)), copy.SHELL.show);
   });
 

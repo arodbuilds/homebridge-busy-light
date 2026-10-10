@@ -123,9 +123,15 @@ function addressField(app: App, lines: string[]): HTMLElement {
   );
 }
 
-/** The setup code as the masked field shows it: one dot per character, so it wraps as the code would. */
-function masked(code: string): string {
-  return '\u2022'.repeat([...code].length);
+/** The dots of the masked setup code (SPEC 11.3 I, from build 3.3). */
+export const MASK_DOTS = 20;
+
+/**
+ * The setup code as the masked field shows it: a fixed row of dots, as the Key field shows, on one line whatever the
+ * code's length. One dot per character made an unbroken run that Safari does not break, past the box's edge.
+ */
+function masked(): string {
+  return '\u2022'.repeat(MASK_DOTS);
 }
 
 /**
@@ -174,11 +180,13 @@ function enabledBody(app: App): HTMLElement {
   }
   const host = info ? info.hostname ?? info.addresses[0] : undefined;
   const code = info && host ? setupCode(host, input.port, input.key, info.id) : null;
-  const codeField = code === null ? null : readOnlyLines(STATUS_INPUT.setupCode, [state.revealed ? code : masked(code)], 'mb-0');
+  const codeField = code === null ? null : readOnlyLines(STATUS_INPUT.setupCode, [state.revealed ? code : masked()], 'mb-0');
+  const codeLine = codeField?.querySelector<HTMLElement>('.bl-readonly-line');
+  codeLine?.classList.toggle('bl-masked', !state.revealed);
   body.appendChild(keyField(app, input.key, (revealed) => {
-    const line = codeField?.querySelector<HTMLElement>('.bl-readonly-line');
-    if (line && code !== null) {
-      line.textContent = revealed ? code : masked(code);
+    if (codeLine && code !== null) {
+      codeLine.textContent = revealed ? code : masked();
+      codeLine.classList.toggle('bl-masked', !revealed);
     }
   }));
   if (codeField && code !== null) {

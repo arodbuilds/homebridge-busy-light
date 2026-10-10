@@ -7,6 +7,7 @@
  */
 
 import { withoutSecrets } from './model.js';
+import { serialOf } from './sections/lights.js';
 
 export const DRAFT_KEY = 'homebridge-busy-light:draft';
 
@@ -95,4 +96,22 @@ export function stableStringify(value: unknown): string {
     return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(',')}}`;
   }
   return JSON.stringify(value) ?? 'null';
+}
+
+/**
+ * The block as a draft compares it with the saved configuration (SPEC 11.2 item 12, from build 3.3): without secrets,
+ * and with the bulbs as the set of bulbs they name, each a serial number in any form, or a saved name that `names`
+ * (serial number to name, from the searches in this visit) gives a serial number for. So a search that finds the saved
+ * bulbs, or writes a saved name as its serial number, is not a change.
+ */
+export function comparableBlock(block: Record<string, unknown>, names: Record<string, string> = {}): string {
+  const plain = withoutSecrets(block);
+  const lifx = plain.lifx as { bulbs?: unknown } | undefined;
+  if (lifx && typeof lifx === 'object' && Array.isArray(lifx.bulbs)) {
+    const byName = new Map(Object.entries(names).map(([serial, label]) => [label.trim().toLowerCase(), serial]));
+    const bulbs = lifx.bulbs.filter((b): b is string => typeof b === 'string')
+      .map((b) => serialOf(b) ?? byName.get(b.trim().toLowerCase()) ?? b.trim().toLowerCase());
+    plain.lifx = { ...lifx, bulbs: [...new Set(bulbs)].sort() };
+  }
+  return stableStringify(plain);
 }
