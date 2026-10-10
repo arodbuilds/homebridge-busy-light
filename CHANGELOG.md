@@ -41,9 +41,9 @@ The configuration keys are now stable: from 1.0, a change that would break a `co
 - If your calendars could not be read during a meeting warning, the bulbs finished fading to the In a meeting color while the status was unknown. They now go back to the Available color once, and are then left alone.
 - A meeting added inside the warning time started its fade only when a slow calendar check ended. It now starts at once.
 - The startup line said `light on at` one address with two bulbs chosen; it now says `light on (2 bulbs)`.
-- An app could appear as the On a Call switch's "Home app" by adding an invisible character to its name.
+- An app could appear as the On a Call switch's "Home app" by adding an invisible character to its name, or a blank one in place of the space.
 - With two bulbs chosen and one missing, the settings page showed the missing bulb by its serial number ("d073d5... was not found just now", "No answer from d073d5..."); it now names it.
-- At startup, a calendar that answered first could start a meeting warning before the others had been read.
+- At startup, a calendar that answered first could start a meeting warning, or decide the first status, before the others had been read.
 - The log line and the card's message for a refused iCloud sign-in still said Apple ID.
 
 ## 0.1.0-beta.5 (2026-10-09)
