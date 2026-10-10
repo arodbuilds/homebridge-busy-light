@@ -77,10 +77,12 @@ export function renderRightNow(app: App, container: HTMLElement): void {
     ));
   }
   // A chosen bulb that did not answer its last send keeps its last color, so it may still show an old one (SPEC 11.3 B,
-  // from build 3.3).
+  // from build 3.3), and so may a bulb of lifx.bulbs not found since startup, named by a search in this visit if one
+  // found it, else by its serial number.
   for (const light of lightsOf(status)) {
-    if (light.enabled && light.host && light.answered === false) {
-      container.appendChild(paragraph(RIGHT_NOW.notAnswering(light.label || light.host), 'form-text bl-now-silent'));
+    const name = light.label || light.host || (light.serial ? app.ui.lifx.names[light.serial] || light.serial : null);
+    if (light.enabled && name && light.answered === false) {
+      container.appendChild(paragraph(RIGHT_NOW.notAnswering(name), 'form-text bl-now-silent'));
     }
   }
   const updated = parseDate(status.updatedAt);

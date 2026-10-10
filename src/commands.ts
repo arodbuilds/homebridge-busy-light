@@ -139,6 +139,11 @@ async function cmdStatus(storage: string, io: CliIo): Promise<number> {
   for (const light of withRemembered(lightsOf(state), readRememberedBulbs(path.join(storage, STORAGE_DIR)))) {
     if (!light.enabled) {
       io.out('Light: not used.');
+    } else if (!light.host && light.answered === false && (light.label || light.serial)) {
+      // A bulb of lifx.bulbs not found since startup (SPEC 10.1 item 5, 10.2 item 1, from build 3.3).
+      const name = light.label || light.serial!;
+      io.out(`Light: ${name}, not found.`);
+      io.out(`  ${bulbNotAnswering(name)}`);
     } else if (!light.host) {
       io.out('Light: no bulb chosen yet.');
     } else {

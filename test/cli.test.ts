@@ -357,6 +357,30 @@ test('status names a bulb from light.json when an older state file has no name, 
     ]);
   });
 
+test('status says a bulb of lifx.bulbs never found is not answering, by its serial number or its name (SPEC 10.2 item 1, the release review)', async () => {
+  writeConfig({});
+  fs.mkdirSync(path.join(storage, 'busy-light'));
+  const missing = { enabled: true, host: null, found: null, lastSent: null, lastSentAt: null, answered: false };
+  fs.writeFileSync(path.join(storage, 'busy-light', 'state.json'), JSON.stringify({
+    version: 1, updatedAt: new Date(T0).toISOString(), status: 'available', reason: null, override: false, sources: [], signIn: null,
+    lights: [
+      { ...missing, label: null, serial: 'd073d5000003' },
+      { enabled: true, label: 'Office Door', serial: DOOR.serial, host: DOOR.host, found: 'discovered', lastSent: '#00FF00',
+        lastSentAt: new Date(T0).toISOString(), answered: true },
+      { ...missing, label: 'Kitchen', serial: null },
+    ],
+  }));
+  const { code, out } = await run('status');
+  assert.equal(code, 0);
+  assert.deepEqual(out.slice(-5), [
+    'Light: d073d5000003, not found.',
+    '  d073d5000003 is not answering, so it may still show an old color.',
+    `Light: Office Door at ${DOOR.host}, last sent #00FF00 at ${formatTime(T0)}, answered.`,
+    'Light: Kitchen, not found.',
+    '  Kitchen is not answering, so it may still show an old color.',
+  ]);
+});
+
 test('light with no bulb given sends to every chosen bulb, one answer line each, in the order of lifx.bulbs (SPEC 10.2 item 5)', async () => {
   writeConfig({ lifx: { bulbs: ['Desk', DOOR.serial] } });
   net.bulbs = [{ ...DOOR }, { ...DESK }];

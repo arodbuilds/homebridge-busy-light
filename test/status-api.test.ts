@@ -382,13 +382,13 @@ test('the sender name Home app is reserved for the On a Call switch, in any form
   assert.ok(!engine!.inputs.list(clock.now()).some((e) => e.sender.normalize('NFKC') === 'Home app'));
 });
 
-test('format characters are refused, a joiner between emoji is not, and look-alike letters are accepted (18.4 item 3, build 3.3)', async () => {
+test('format characters are refused, the zero-width non-joiner and joiner are not, and look-alike letters are accepted (18.4 item 3, build 3.3)', async () => {
   const api = setup();
   const post = (fields: Record<string, unknown>) => send(api, 'POST', '/v1/status', body(fields), plain());
   const zeroWidthSpace = '\u200b';
   const wordJoiner = '\u2060';
   for (const value of [`Home${zeroWidthSpace} app`, `Home app${zeroWidthSpace}`, `Ho${wordJoiner}me app`, `My${zeroWidthSpace}Mac`, `My${wordJoiner}Mac`,
-    'Soft\u00adhyphen', 'Joined\u200dletters', 'Tag\u{e0067}']) {
+    'Soft\u00adhyphen', 'Tag\u{e0067}']) {
     assert.equal(checkText(value), null, JSON.stringify(value));
     assert.deepEqual((await post({ sender: value, status: 'inCall' })).body, { error: 'invalid_sender', message: ERROR_MESSAGES.invalid_sender },
       JSON.stringify(value));
@@ -414,6 +414,18 @@ test('format characters are refused, a joiner between emoji is not, and look-ali
     const sender = `Mac ${emoji}`;
     assert.equal(checkText(sender), sender);
     assert.equal((await post({ sender, status: 'busy', app: emoji })).status, 200, JSON.stringify(sender));
+  }
+  // From the release review, the zero-width non-joiner and joiner anywhere: a Persian word with a non-joiner, a Sinhala
+  // word with a joiner, and a joiner between two Latin letters. Removed for the comparison, so Home app stays reserved.
+  const persian = '\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645';
+  const sinhala = '\u0dc1\u0dca\u200d\u0dbb\u0dd3';
+  for (const value of [`Mac ${persian}`, `${sinhala} Mac`, 'Joined\u200dletters', 'Non\u200cjoined']) {
+    assert.equal(checkText(value), value, JSON.stringify(value));
+    assert.equal((await post({ sender: value, status: 'busy', app: value })).status, 200, JSON.stringify(value));
+  }
+  for (const value of ['Home\u200c app', 'Home app\u200d', 'Ho\u200dme\u200c app']) {
+    assert.ok(isReservedSender(checkText(value) ?? ''), JSON.stringify(value));
+    assert.equal((await post({ sender: value, status: 'inCall' })).body.error, 'invalid_sender', JSON.stringify(value));
   }
   // Look-alike letters from other scripts cannot be refused in general: Home app with a Cyrillic En and o is accepted (SPEC 17).
   const cyrillic = '\u041d\u043eme app';

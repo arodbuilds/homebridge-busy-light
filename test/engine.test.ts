@@ -1012,6 +1012,16 @@ test('the state file\'s lights carry each bulb\'s serial number (SPEC 10.1 item 
   assert.deepEqual(readState(dir)!.lights!.map((l) => [l.label, l.serial]), [[DOOR.label, DOOR.serial], [STATUS_LIGHT.label, STATUS_LIGHT.serial]]);
 });
 
+test('a bulb of lifx.bulbs never found is in the state file, marked not answering (SPEC 10.1 item 5, the release review)', async () => {
+  make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }], lifx: { enabled: true, bulbs: [DOOR.serial, STATUS_LIGHT.serial] } });
+  net.bulbs = [{ ...DOOR }];
+  fake.on('https://calendar.example.com/', () => text(icsOf([])));
+  await engine!.light.start();
+  await engine!.tick();
+  assert.deepEqual(readState(dir)!.lights!.map((l) => [l.label, l.serial, l.host, l.answered]),
+    [[DOOR.label, DOOR.serial, DOOR.host, true], [null, STATUS_LIGHT.serial, null, false]]);
+});
+
 test('at startup, a fast calendar alone does not start a warning before the others have answered (the review, SPEC 6.7 item 2)', async () => {
   const statuses: Status[] = [];
   const e = make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }, { type: 'url', name: 'Team', url: OTHER }],

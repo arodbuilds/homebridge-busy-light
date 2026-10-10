@@ -142,6 +142,19 @@ export function matchesBulb(wanted: string, bulb: { label: string; serial: strin
   return (serial !== null && serial === bulb.serial) || bulb.label.toLowerCase() === w.toLowerCase();
 }
 
+function stateOf(c: Chosen): LightState {
+  return {
+    enabled: true,
+    label: c.label,
+    serial: c.serial,
+    host: c.host,
+    found: c.found,
+    lastSent: c.lastSent,
+    lastSentAt: c.lastSentAt === null ? null : new Date(c.lastSentAt).toISOString(),
+    answered: c.answered,
+  };
+}
+
 function chosen(bulb: { serial: string | null; label: string | null; host: string }, found: Found, wanted: string | null): Chosen {
   return {
     serial: bulb.serial, label: bulb.label || null, host: bulb.host, found, wanted, silent: 0, silentLogged: false,
@@ -173,6 +186,8 @@ export class LightController {
   /** Every lane's send in progress, for `settled`. */
   private readonly inFlight = new Set<Promise<void>>();
   private lastDiscovery: number | null = null;
+  /** Whether a discovery has finished, so a bulb of `lifx.bulbs` still not chosen counts as not found (SPEC 10.1 item 5). */
+  private searched = false;
   private lastOutcome: string | null = null;
   private readonly now: () => number;
 
@@ -189,21 +204,32 @@ export class LightController {
     return this.chosen.map((c) => c.host);
   }
 
-  /** The state file's `lights` (SPEC 10.1 item 5): one entry per chosen bulb, or one as `light` was while none is. */
+  /**
+   * The state file's `lights` (SPEC 10.1 item 5): one entry per chosen bulb, or one as `light` was while none is. From
+   * build 3.3 a bulb of `lifx.bulbs` that a finished search has not found, and that light.json does not remember, has an
+   * entry too, in its place in the order of `lifx.bulbs`, marked not answering, so Right now and the CLI say so.
+   */
   lights(): LightState[] {
-    if (this.chosen.length === 0) {
+    const entries: LightState[] = [];
+    const listed = new Set<Chosen>();
+    if (this.enabled && this.searched && this.options.config.hosts.length === 0) {
+      for (const wanted of this.options.config.bulbs) {
+        const c = this.chosen.find((x) => x.wanted === wanted && !listed.has(x));
+        if (c) {
+          listed.add(c);
+          entries.push(stateOf(c));
+        } else if (!this.satisfied(wanted)) {
+          const serial = normalizeSerial(wanted);
+          entries.push({ enabled: true, label: serial === null ? wanted.trim() : null, serial, host: null, found: null, lastSent: null,
+            lastSentAt: null, answered: false });
+        }
+      }
+    }
+    entries.push(...this.chosen.filter((c) => !listed.has(c)).map(stateOf));
+    if (entries.length === 0) {
       return [{ enabled: this.enabled, label: null, serial: null, host: null, found: null, lastSent: null, lastSentAt: null, answered: null }];
     }
-    return this.chosen.map((c) => ({
-      enabled: true,
-      label: c.label,
-      serial: c.serial,
-      host: c.host,
-      found: c.found,
-      lastSent: c.lastSent,
-      lastSentAt: c.lastSentAt === null ? null : new Date(c.lastSentAt).toISOString(),
-      answered: c.answered,
-    }));
+    return entries;
   }
 
   /**
@@ -290,6 +316,7 @@ export class LightController {
     if (bulbs.length === 0) {
       // Keep every bulb we had: it may only be switched off.
       this.log(`none|${previous.map((c) => c.serial).join(',')}`, [{ level: 'warn', text: () => noBulb() }]);
+      this.searchFinished();
       return;
     }
     const next: Chosen[] = [];
@@ -357,6 +384,7 @@ export class LightController {
     }
     this.log(signature, lines);
     this.remember();
+    this.searched = true;
     this.options.onChange?.();
     // A bulb found at a new address, or chosen now, is sent the last color at once, on its own lane (SPEC 13.2 item 4,
     // 13.3 items 2 and 4); one whose own send is waiting on this discovery sends there itself.
@@ -364,6 +392,14 @@ export class LightController {
       if (!c.handling && hostsBefore.get(c) !== c.host) {
         this.replay(c);
       }
+    }
+  }
+
+  /** The first finished search makes the bulbs of `lifx.bulbs` it did not find count as not answering (SPEC 10.1 item 5). */
+  private searchFinished(): void {
+    if (!this.searched) {
+      this.searched = true;
+      this.options.onChange?.();
     }
   }
 

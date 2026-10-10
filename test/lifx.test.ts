@@ -612,3 +612,47 @@ test('a bulb given by its address in lifx.host is not named from light.json, and
     assert.deepEqual(withRemembered([entry], remembered).map((l) => [l.label, l.serial]), [['Desk', DESK.serial]],
       'a state file written before 1.0.0, with no serial, by its address');
   });
+
+test('a bulb of lifx.bulbs never found has an entry marked not answering after a search, in the order of lifx.bulbs (SPEC 10.1 item 5, the release review)',
+  async () => {
+    const MISSING = 'd073d5000003';
+    net.bulbs = [{ ...DOOR }];
+    const { light, log } = controller({ bulbs: [MISSING, DOOR.serial] });
+    const starting = light.start();
+    assert.deepEqual(light.lights().map((l) => [l.host, l.answered]), [[null, null]], 'while the first search runs: not found yet');
+    await starting;
+    const row = (l: { label: string | null; serial?: string | null; host: string | null; found: string | null; answered: boolean | null }) =>
+      [l.label, l.serial, l.host, l.found, l.answered];
+    assert.deepEqual(light.lights().map(row), [[null, MISSING, null, null, false], ['Office Door', DOOR.serial, DOOR.host, 'discovered', null]]);
+    assert.deepEqual(withRemembered(light.lights(), readRememberedBulbs(dir)).map(row)[0], [null, MISSING, null, null, false], 'nothing in light.json');
+    assert.deepEqual(log.lines('warn'), [`No LIFX bulb named ${MISSING} was found. Bulbs found: Office Door (${DOOR.host}).`],
+      'the log line is unchanged');
+    assert.deepEqual((await light.send('#FF0000', 1000)).map((r) => r.host), [DOOR.host], 'only the bulb found is sent the color');
+
+    // Found later: rediscovery chooses it, and its entry is the bulb's own.
+    net.bulbs = [{ ...DOOR }, { serial: MISSING, label: 'Floor', host: '192.168.4.52', answers: true }];
+    clock += REDISCOVER_MS;
+    assert.equal(await light.maintain(), true);
+    assert.deepEqual(light.lights().map(row),
+      [['Floor', MISSING, '192.168.4.52', 'discovered', null], ['Office Door', DOOR.serial, DOOR.host, 'discovered', true]]);
+  });
+
+test('a bulb never found that lifx.bulbs names keeps its name, and with no bulb found each bulb wanted has an entry (SPEC 10.1 item 5, the release review)',
+  async () => {
+    net.bulbs = [{ ...DOOR }];
+    const named = controller({ bulbs: ['Kitchen', DOOR.serial] });
+    await named.light.start();
+    assert.deepEqual(named.light.lights().map((l) => [l.label, l.serial, l.host, l.answered]),
+      [['Kitchen', null, null, false], ['Office Door', DOOR.serial, DOOR.host, null]]);
+    net.bulbs = [];
+    fs.rmSync(lightFile(dir), { force: true });
+    const none = controller({ bulbs: [DOOR.serial, DESK.serial] });
+    await none.light.start();
+    assert.deepEqual(none.light.lights().map((l) => [l.label, l.serial, l.host, l.answered]),
+      [[null, DOOR.serial, null, false], [null, DESK.serial, null, false]],
+      'in place of the one entry with no address');
+    // Without lifx.bulbs, a search that finds no bulb still gives the one entry with no address.
+    const unnamed = controller();
+    await unnamed.light.start();
+    assert.deepEqual(unnamed.light.lights().map((l) => [l.host, l.answered]), [[null, null]]);
+  });

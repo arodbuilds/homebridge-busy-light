@@ -2316,4 +2316,17 @@ describe('settings page: a missing bulb named, and a bulb not answering (A7 and 
     await dom.clock.advance(15_000);
     assert.deepEqual(silentLines(root), []);
   });
+
+  it('a bulb never found is said not answering by its serial number, or by the name a search in this visit found (the release review)', async () => {
+    const missing = { enabled: true, label: null, serial: FLOOR.serial, host: null, found: null, lastSent: null, lastSentAt: null, answered: false };
+    const root = await open([missing, light(STATUS_LIGHT, true)]);
+    assert.deepEqual(silentLines(root), [`${FLOOR.serial} is not answering, so it may still show an old color.`]);
+    assert.deepEqual(lifxCard(root).querySelectorAll('.bl-lifx-in-use').map((l) => text(l)), [`Busy Light is using Status Light (${STATUS_LIGHT.ip}).`],
+      'the card lists the bulbs in use, with an address');
+    answers.set('/lifx/discover', { bulbs: [FLOOR, STATUS_LIGHT] });
+    buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
+    await settle();
+    await dom.clock.advance(15_000);
+    assert.deepEqual(silentLines(root), ['Floor is not answering, so it may still show an old color.']);
+  });
 });

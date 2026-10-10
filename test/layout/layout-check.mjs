@@ -94,8 +94,8 @@ const ANSWERS = {
       { id: 'cal-work', name: 'Work', type: 'microsoft', state: 'signInNeeded', lastChecked: null, events: null, error: 'waiting for sign-in' },
     ],
     lights: [
-      { enabled: true, label: 'Floor', host: '192.168.4.50', found: 'discovered', lastSent: '#FF0000', lastSentAt: null, answered: true },
-      { enabled: true, label: 'Status Light', host: '192.168.4.21', found: 'remembered', lastSent: '#FF0000', lastSentAt: null, answered: false },
+      { enabled: true, label: 'Floor', host: '192.0.2.51', found: 'discovered', lastSent: '#FF0000', lastSentAt: null, answered: true },
+      { enabled: true, label: 'Status Light', host: '192.0.2.52', found: 'remembered', lastSent: '#FF0000', lastSentAt: null, answered: false },
     ],
     inputs: [
       { sender: 'CallWatch on Alex’s iMac', status: 'inCall', app: 'Microsoft Teams', via: 'api', auth: 'signed',
@@ -111,8 +111,8 @@ const ANSWERS = {
       reported: { doNotDisturb: new Date(NOW - 900_000).toISOString() } },
     meetingWarning: null,
   },
-  '/input/info': { hostname: 'homebridge.local', addresses: ['192.168.4.10', 'fd00:1234:5678:9abc::10'], port: 8582, id: 'q3Lr8vT0cXw2mN5a',
-    addressChange: { from: '192.168.4.23', to: '192.168.4.10' } },
+  '/input/info': { hostname: 'homebridge.local', addresses: ['192.0.2.10', 'fd00:1234:5678:9abc::10'], port: 8582, id: 'q3Lr8vT0cXw2mN5a',
+    addressChange: { from: '192.0.2.23', to: '192.0.2.10' } },
   '/input/test': { error: 'notListening', message: 'Nothing is listening on port 8582.' },
   '/icloud/calendars': { calendars: [
     { id: '/123456789/calendars/home/', name: 'Alex', shared: false, subscribed: false, eventsToday: 3 },
@@ -124,10 +124,10 @@ const ANSWERS = {
   '/microsoft/cancel': { ok: true },
   '/url/test': { error: 'http', host: 'calendar.example.com', code: 404 },
   '/lifx/discover': { bulbs: [
-    { label: 'Floor', serial: 'd073d5000001', ip: '192.168.4.50' },
-    { label: 'Desk', serial: 'd073d5000002', ip: '192.168.4.51' },
+    { label: 'Floor', serial: 'd073d5000001', ip: '192.0.2.51' },
+    { label: 'Desk', serial: 'd073d5000002', ip: '192.0.2.53' },
   ] },
-  '/lifx/test': { answered: false, results: [{ label: 'Floor', host: '192.168.4.50', answered: true },
+  '/lifx/test': { answered: false, results: [{ label: 'Floor', host: '192.0.2.51', answered: true },
     { label: null, host: null, answered: false }] },
 };
 
