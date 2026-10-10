@@ -8,6 +8,7 @@
 import { callServer } from '../api.js';
 import type { App, MicrosoftListed, MicrosoftState } from '../app.js';
 import { CALENDARS, ICLOUD, MICROSOFT } from '../copy.js';
+import * as RETIRING from '../retiring.js';
 import {
   button, checkboxField, copyText, el, footerAction, grid, gridCell, inlineConfirm, linkButton, outLink, paragraph, statusBox, textField, type Child,
 } from '../dom.js';
@@ -234,7 +235,7 @@ export function microsoftBody(app: App, s: UiSource, title: HTMLElement, nameFie
     return [codeView(app, s, state)];
   }
   return [
-    el('p', { class: 'form-text bl-ms-note' }, MICROSOFT.note, ' ', outLink(MICROSOFT.whatToAsk, MICROSOFT.adminUrl)),
+    el('p', { class: 'form-text bl-ms-note' }, RETIRING.MICROSOFT_NOTE, ' ', outLink(MICROSOFT.whatToAsk, MICROSOFT.adminUrl)),
     nameField(app, s, title),
     grid(
       gridCell(6, textField(MICROSOFT.tenantId, s.tenantId, (v) => {

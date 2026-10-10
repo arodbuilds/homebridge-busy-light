@@ -8,6 +8,7 @@ import { callServer } from '../api.js';
 import { lightsOf, type App, type LifxBulb } from '../app.js';
 import { card, cardName } from '../card.js';
 import { LIGHTS, SENSOR_NAMES, SHELL, STATUS_NAMES, type StatusKey } from '../copy.js';
+import * as RETIRING from '../retiring.js';
 import {
   checkboxField, disclosure, el, footerAction, grid, gridCell, linkButton, numberField, paragraph, statusBox, textField, uniqueId, type Child,
 } from '../dom.js';
@@ -334,7 +335,7 @@ export function renderLights(app: App, container: HTMLElement): void {
       ...[...OTHERS.filter((k) => sensorCanHappen(app, k)), ...OTHERS.filter((k) => !sensorCanHappen(app, k))].map((k) => sensorBox(app, k)))], {
       cls: 'bl-all-sensors', open: OTHERS.some((k) => app.config.sensors.includes(k)),
     }),
-    el('ol', { class: 'ns-steps' }, ...LIGHTS.steps.map((step, i) => el('li', { class: 'ns-step' },
+    el('ol', { class: 'ns-steps' }, ...RETIRING.LIGHTS_STEPS.map((step, i) => el('li', { class: 'ns-step' },
       el('span', { class: 'ns-step-number', 'aria-hidden': 'true' }, String(i + 1)),
       el('span', { class: 'ns-step-text' }, step(name)),
     ))),

@@ -11,6 +11,7 @@ import { lightsOnStatus, renderLights } from './sections/lights.js';
 import { renderRightNow } from './sections/right-now.js';
 import { renderSettings } from './sections/settings.js';
 import { renderStatusInput, statusInputOnStatus } from './sections/status-input.js';
+import * as RETIRING from './retiring.js';
 import { validate, type UiIssue, type ValidationContext } from './validate.js';
 
 /**
@@ -37,7 +38,7 @@ interface SectionDef {
 
 const SECTIONS: SectionDef[] = [
   { key: 'rightNow', title: RIGHT_NOW.heading, help: '', render: renderRightNow, onStatus: (app) => app.rerender('rightNow') },
-  { key: 'calendars', title: CALENDARS.heading, help: CALENDARS.help, render: renderCalendars, onStatus: calendarsOnStatus },
+  { key: 'calendars', title: CALENDARS.heading, help: RETIRING.CALENDARS_HELP, render: renderCalendars, onStatus: calendarsOnStatus },
   { key: 'statusInput', title: STATUS_INPUT.heading, help: '', render: renderStatusInput, onStatus: statusInputOnStatus },
   { key: 'colors', title: COLORS.heading, help: COLORS.help, render: renderColors, onStatus: colorsOnStatus },
   { key: 'lights', title: LIGHTS.heading, help: '', render: renderLights, onStatus: lightsOnStatus },
@@ -96,8 +97,8 @@ export class Page implements App {
     root.appendChild(el('img', { class: 'ns-banner', src: BANNER.file, alt: BANNER.alt, width: '1280', height: '320' }));
     this.draftHolder = el('div', { class: 'ns-draft-holder' });
     root.appendChild(this.draftHolder);
-    root.appendChild(el('p', { class: 'lead-copy' }, INTRO.one));
-    root.appendChild(el('p', { class: 'lead-copy' }, INTRO.two));
+    root.appendChild(el('p', { class: 'lead-copy' }, RETIRING.INTRO.one));
+    root.appendChild(el('p', { class: 'lead-copy' }, RETIRING.INTRO.two));
     root.appendChild(el('p', { class: 'form-text bl-affiliation' }, INTRO.affiliation));
     for (const section of SECTIONS) {
       const container = el('div', { class: 'section-body' });
@@ -110,7 +111,7 @@ export class Page implements App {
     }
     this.issuesBox = el('div', { class: 'alert alert-warning ns-issues', role: 'status', hidden: true });
     root.appendChild(this.issuesBox);
-    root.appendChild(el('p', { class: 'lead-copy mt-3' }, INTRO.closing));
+    root.appendChild(el('p', { class: 'lead-copy mt-3' }, RETIRING.INTRO.closing));
     this.footer = renderFooter();
     root.appendChild(this.footer.el);
 

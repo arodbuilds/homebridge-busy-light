@@ -45,6 +45,8 @@ dom.window.homebridge = {
 const { Page } = await import('../homebridge-ui/src/main.js');
 const { readConfig, exportConfig, DEFAULTS } = await import('../homebridge-ui/src/model.js');
 const copy = await import('../homebridge-ui/src/copy.js');
+/** The strings build 3.3 takes off the page, shown until their scope item (SPEC 17). */
+const RETIRING = await import('../homebridge-ui/src/retiring.js');
 const { INTRO, SHELL, VALIDATION } = copy;
 
 type PageT = InstanceType<typeof Page>;
@@ -91,7 +93,7 @@ describe('settings page: anatomy (SPEC 11.1)', () => {
     assert.equal(root.children[0].getAttribute('alt'), copy.BANNER.alt);
     assert.equal(root.children[0].getAttribute('src'), 'busy-light-banner.png');
     assert.equal(text(root.children[4]), INTRO.affiliation);
-    assert.equal(text(root.children[12]), INTRO.closing);
+    assert.equal(text(root.children[12]), RETIRING.INTRO.closing);
     assert.deepEqual(root.querySelectorAll('h2').map((h) => text(h)), ['Right now', 'Calendars', 'Status from other apps', 'Colors', 'Lights', 'Settings']);
     const footer = root.querySelector('footer')!;
     assert.equal(text(footer), 'Busy Light · Made by Alex Rodriguez · alex-rodriguez.com · Report an issue');
@@ -433,7 +435,7 @@ describe('settings page: the iCloud card (SPEC 11.3 C)', () => {
   it('Connect errors: rejected, network and unexpected, under the body', async () => {
     const { root } = mount(PI);
     openCard(root, 'icloud');
-    for (const [error, message] of [['rejected', copy.ICLOUD.rejected], ['network', copy.ICLOUD.network], ['unexpected', copy.ICLOUD.unexpected]]) {
+    for (const [error, message] of [['rejected', RETIRING.ICLOUD.rejected], ['network', copy.ICLOUD.network], ['unexpected', copy.ICLOUD.unexpected]]) {
       answers.set('/icloud/calendars', { error });
       buttonNamed(cardOf(root, 'icloud'), copy.ICLOUD.connect).click();
       await settle();
@@ -454,7 +456,7 @@ describe('settings page: the iCloud card (SPEC 11.3 C)', () => {
     assert.equal(feedback(root, `calendars.${id}.appleId`), VALIDATION.email);
     assert.equal(text(cardOf(root, id).querySelector('.bl-connect-line')), copy.CALENDARS.connectToSee);
     const help = cardOf(root, id).querySelector(`[data-path="calendars.${id}.appPassword"] .form-text`)!;
-    assert.equal(text(help), `${copy.ICLOUD.appPasswordHelp} ${copy.ICLOUD.howTo}`);
+    assert.equal(text(help), `${RETIRING.ICLOUD.appPasswordHelp} ${copy.ICLOUD.howTo}`);
     assert.deepEqual(help.querySelectorAll('a').map((a) => [text(a), a.getAttribute('href'), a.getAttribute('target')]), [
       ['account.apple.com', 'https://account.apple.com', '_blank'], ['How to create one', 'https://support.apple.com/en-us/102654', '_blank'],
     ]);
@@ -542,7 +544,7 @@ describe('settings page: the Microsoft 365 card (SPEC 11.3 C)', () => {
     const { root } = work();
     const node = cardOf(root, 'cal-work');
     const note = node.querySelector('.bl-ms-note')!;
-    assert.equal(text(note), `${copy.MICROSOFT.note} ${copy.MICROSOFT.whatToAsk}`);
+    assert.equal(text(note), `${RETIRING.MICROSOFT_NOTE} ${copy.MICROSOFT.whatToAsk}`);
     assert.equal(note.querySelector('a')!.getAttribute('href'), copy.MICROSOFT.adminUrl);
     assert.equal(field(root, 'calendars.cal-work.tenantId').getAttribute('placeholder'), 'e.g. 00000000-0000-0000-0000-000000000000');
     assert.ok(field(root, 'calendars.cal-work.clientId').className.includes('font-monospace'));
@@ -1458,7 +1460,7 @@ describe('settings page: Status from other apps (SPEC 11.3 I)', () => {
     assert.equal(text(section(root).querySelector('.bl-input-error')), copy.STATUS_INPUT.portError(8582));
     const plain = field(root, 'statusInput.allowPlainKey');
     assert.equal(plain.checked, true, 'ticked by default');
-    assert.equal(text(section(root).querySelector('[data-path="statusInput.allowPlainKey"] .ns-help')), copy.STATUS_INPUT.allowPlainKeyHelp);
+    assert.equal(text(section(root).querySelector('[data-path="statusInput.allowPlainKey"] .ns-help')), RETIRING.STATUS_INPUT.allowPlainKeyHelp);
     tick(plain, false);
     await settle();
     assert.equal((lastBlock().statusInput as Record<string, unknown>).allowPlainKey, false);
@@ -1472,11 +1474,11 @@ describe('settings page: Status from other apps (SPEC 11.3 I)', () => {
     tick(field(root, 'callSwitch.enabled'), true);
     fill(root, 'callSwitch.hours', '13');
     assert.equal(feedback(root, 'callSwitch.hours'), 'Enter a whole number from 1 to 12.');
-    assert.equal(text(root.querySelector('[data-path="callSwitch.hours"] label')), copy.STATUS_INPUT.callSwitchHours);
+    assert.equal(text(root.querySelector('[data-path="callSwitch.hours"] label')), RETIRING.STATUS_INPUT.callSwitchHours);
     fill(root, 'callSwitch.hours', '2');
     await settle();
     assert.deepEqual(lastBlock().callSwitch, { enabled: true, hours: 2 });
-    assert.equal(text(root.querySelector('[data-path="callSwitch.enabled"] .ns-help')), copy.STATUS_INPUT.callSwitchHelp);
+    assert.equal(text(root.querySelector('[data-path="callSwitch.enabled"] .ns-help')), RETIRING.STATUS_INPUT.callSwitchHelp);
   });
 
   it('Apps reporting now: each sender\'s status, app, last heard, Active or Expired, and Signed or Plain key; the Home app has no auth badge', async () => {
@@ -1911,7 +1913,7 @@ describe('settings page: Outlook or Microsoft 365 (SPEC 11.3 C)', () => {
     const title = (o: FakeElement): string => text(o.querySelector('.ns-tile-title')).replace(copy.CHOOSER.recommended, '').trim();
     assert.deepEqual(options.map((o) => [title(o), text(o.querySelector('.ns-tile-help'))]), [
       [copy.CHOOSER.published, copy.CHOOSER.publishedText],
-      [copy.CHOOSER.signIn, copy.CHOOSER.signInText],
+      [RETIRING.CHOOSER_SIGN_IN, copy.CHOOSER.signInText],
     ]);
     const recommended = options[0].querySelector('.badge')!;
     assert.equal(text(recommended), copy.CHOOSER.recommended);

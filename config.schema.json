@@ -3,7 +3,7 @@
   "pluginType": "platform",
   "singular": true,
   "customUi": true,
-  "headerDisplay": "Busy Light shows whether you are free on a light. Add at least one calendar, then choose how the light is controlled. Not affiliated with or endorsed by Apple, Google, Microsoft or LIFX.",
+  "headerDisplay": "Busy Light turns a light red when you are busy and green when you are free. Add a calendar, then choose how the light is controlled. Not affiliated with or endorsed by Apple, Google, Microsoft or LIFX.",
   "schema": {
     "type": "object",
     "properties": {
@@ -15,7 +15,7 @@
       },
       "calendars": {
         "title": "Calendars",
-        "description": "Add every calendar that should count. Events from all of them are combined.",
+        "description": "Add the calendars that should make you busy. Busy Light combines them.",
         "type": "array",
         "items": {
           "type": "object",
@@ -66,12 +66,12 @@
               "pattern": "^[a-z0-9-]{1,64}$"
             },
             "appleId": {
-              "title": "Apple ID email",
+              "title": "Apple Account email",
               "type": "string"
             },
             "appPassword": {
               "title": "App-specific password",
-              "description": "Create one at <a href=\"https://account.apple.com\" target=\"_blank\" rel=\"noopener noreferrer\">account.apple.com</a> under Sign-In and Security, then App-Specific Passwords (<a href=\"https://support.apple.com/en-us/102654\" target=\"_blank\" rel=\"noopener noreferrer\">how to</a>). This is not your Apple ID password.",
+              "description": "Create one at <a href=\"https://account.apple.com\" target=\"_blank\" rel=\"noopener noreferrer\">account.apple.com</a> under Sign-In and Security, then App-Specific Passwords (<a href=\"https://support.apple.com/en-us/102654\" target=\"_blank\" rel=\"noopener noreferrer\">how to</a>). This is not your Apple Account password.",
               "type": "string"
             },
             "calendars": {
@@ -107,7 +107,7 @@
             },
             "url": {
               "title": "Address",
-              "description": "Any calendar link that starts with https:// or webcal://.",
+              "description": "A calendar subscription link (often ending in .ics) that starts with https:// or webcal://.",
               "type": "string",
               "pattern": "^([Hh][Tt][Tt][Pp][Ss]|[Ww][Ee][Bb][Cc][Aa][Ll])://.+"
             },
@@ -372,12 +372,12 @@
         "properties": {
           "enabled": {
             "title": "Add an On a Call switch to the Home app",
-            "description": "Turn it on from a shortcut, Siri or a Home tile while you are on a call. Useful for apps that should not make network requests themselves.",
+            "description": "Turn it on from a shortcut, Siri or a Home tile while you are on a call. No app needed.",
             "type": "boolean",
             "default": false
           },
           "hours": {
-            "title": "Turn it off by itself after (hours)",
+            "title": "Turn off automatically after (hours)",
             "type": "integer",
             "default": 3,
             "minimum": 1,
@@ -443,7 +443,7 @@
       "key": "calendars",
       "type": "array",
       "title": "Calendars",
-      "description": "Add every calendar that should count. Events from all of them are combined.",
+      "description": "Add the calendars that should make you busy. Busy Light combines them.",
       "items": [
         "calendars[].type",
         "calendars[].name",
@@ -487,7 +487,7 @@
         {
           "key": "calendars[].url",
           "title": "Address",
-          "description": "Any calendar link that starts with https:// or webcal://.",
+          "description": "A calendar subscription link (often ending in .ics) that starts with https:// or webcal://.",
           "condition": {
             "functionBody": "return model.calendars[arrayIndices].type === 'url';"
           }

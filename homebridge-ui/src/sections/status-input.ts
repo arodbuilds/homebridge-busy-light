@@ -9,6 +9,7 @@ import { callServer } from '../api.js';
 import type { App, InputUiState } from '../app.js';
 import { badge } from '../card.js';
 import { SHELL, STATUS_INPUT, STATUS_NAMES } from '../copy.js';
+import * as RETIRING from '../retiring.js';
 import {
   button, checkboxField, copyText, disclosure, el, grid, gridCell, helpText, inlineConfirm, linkButton, numberField, outLink, paragraph,
   statusBox, uniqueId,
@@ -217,7 +218,7 @@ function enabledBody(app: App): HTMLElement {
   body.appendChild(checkboxField(STATUS_INPUT.allowPlainKey, input.allowPlainKey, (v) => {
     input.allowPlainKey = v;
     app.changed();
-  }, { path: 'statusInput.allowPlainKey', help: STATUS_INPUT.allowPlainKeyHelp }));
+  }, { path: 'statusInput.allowPlainKey', help: RETIRING.STATUS_INPUT.allowPlainKeyHelp }));
   body.appendChild(disclosure(SHELL.advanced, [grid(gridCell(6, numberField(STATUS_INPUT.port, input.port, (v) => {
     input.port = v;
     app.changed();
@@ -293,9 +294,9 @@ export function renderStatusInput(app: App, container: HTMLElement): void {
     app.rerender('statusInput');
     statusesChanged(app);
     app.focusLater('callSwitch.enabled');
-  }, { path: 'callSwitch.enabled', help: STATUS_INPUT.callSwitchHelp }));
+  }, { path: 'callSwitch.enabled', help: RETIRING.STATUS_INPUT.callSwitchHelp }));
   if (call.enabled) {
-    container.appendChild(grid(gridCell(6, numberField(STATUS_INPUT.callSwitchHours, call.hours, (v) => {
+    container.appendChild(grid(gridCell(6, numberField(RETIRING.STATUS_INPUT.callSwitchHours, call.hours, (v) => {
       call.hours = v;
       app.changed();
     }, { path: 'callSwitch.hours', min: LIMITS.hours[0], max: LIMITS.hours[1] }))));

@@ -60,6 +60,7 @@ const PLACEHOLDERS: Record<string, string[]> = {
   'LIGHTS.steps.0': [],
   'LIGHTS.steps.1': ['{name}'],
   'LIGHTS.steps.2': [],
+  'LIGHTS.steps.3': ['{name}'],
   'SHELL.issuesCount': ['{n}'],
   'SHELL.issue': ['{Card name}', '{message}'],
   'FOOTER.version': ['{version}'],
