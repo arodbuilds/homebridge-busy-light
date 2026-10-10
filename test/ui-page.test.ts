@@ -1376,6 +1376,32 @@ describe('settings page: only looking leaves no draft, and Save right after a ch
     assert.equal(draft(), null);
   });
 
+  it('two bulbs sharing the saved name: Search again finding them leaves no draft (the review)', async () => {
+    const LAMP_A = { label: 'Lamp', serial: 'd073d5000001', ip: '192.168.4.50' };
+    const LAMP_B = { label: 'Lamp', serial: 'd073d5000002', ip: '192.168.4.51' };
+    const { root } = mount({ platform: 'BusyLight', lifx: { enabled: true, bulbs: ['Lamp'] } });
+    answers.set('/lifx/discover', { bulbs: [LAMP_A, LAMP_B] });
+    buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
+    await settle();
+    assert.equal(draft(), null);
+  });
+
+  it('a draft offered under the banner stays when nothing is changed, until Restore or Discard (the review)', async () => {
+    const raw = { platform: 'BusyLight', calendars: [{ type: 'icloud', id: 'icloud', name: 'iCloud', appleId: 'person@example.com',
+      appPassword: 'abcd-efgh-ijkl-mnop', calendars: [] }] };
+    const first = mount(raw);
+    fill(first.root, 'name', 'Door');
+    assert.ok(draft());
+    first.root.remove();
+    const { root } = mount(raw);
+    assert.ok(root.querySelector('.ns-draft-banner'));
+    openCard(root, 'icloud');
+    field(root, 'calendars.icloud.appPassword').dispatchEvent(new FakeEvent('input', true));
+    await settle();
+    assert.ok(root.querySelector('.ns-draft-banner'), 'the banner still offers it');
+    assert.ok(draft()?.includes('"name":"Door"'), 'and it is still there for the next visit');
+  });
+
   it('a change and then Save 10 ms later saves the change', async () => {
     const { root } = mount(OWNER);
     pushed.length = 0;

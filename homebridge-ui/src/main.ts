@@ -84,6 +84,8 @@ export class Page implements App {
   private otherBlocks: Array<Record<string, unknown>> = [];
   /** A draft is written only once the user has changed something (shell rule M1). */
   private draftAllowed = false;
+  /** This visit wrote the stored draft, so it may delete it; a draft offered under the banner is left for Restore or Discard. */
+  private wroteDraft = false;
   /** A pointer button is down; a message from leaving a field waits until it is released (SPEC 11.2 item 11). */
   private pointerDown = false;
   /** Fields left while a pointer was down: touched once it is released, so no redraw meanwhile shows their message. */
@@ -205,20 +207,23 @@ export class Page implements App {
 
   /** Whether the page's block differs from the saved configuration, as a draft compares them (SPEC 11.2 item 12). */
   private differsFromSaved(): boolean {
-    const names = this.ui.lifx.names;
-    return comparableBlock(exportConfig(this.config), names) !== comparableBlock(exportConfig(this.saved), names);
+    const { names, bulbs } = this.ui.lifx;
+    return comparableBlock(exportConfig(this.config), names, bulbs ?? []) !== comparableBlock(exportConfig(this.saved), names, bulbs ?? []);
   }
 
   /**
    * The draft (shell rule M1) is kept only while the page differs from the saved configuration: a search that finds the
    * saved bulbs, the rewrite of lifx.bulb to lifx.bulbs, or opening a card is not a change, and a change undone deletes
-   * the draft (SPEC 11.2 item 12, from build 3.3).
+   * the draft this visit wrote. A draft from an earlier visit, offered under the banner, stays until Restore, Discard or
+   * a change (SPEC 11.2 item 12, from build 3.3).
    */
   private keepDraft(): void {
     if (this.differsFromSaved()) {
       saveDraft(exportConfig(this.config));
-    } else {
+      this.wroteDraft = true;
+    } else if (this.wroteDraft) {
       clearDraft();
+      this.wroteDraft = false;
     }
   }
 

@@ -100,15 +100,22 @@ export function stableStringify(value: unknown): string {
 
 /**
  * The block as a draft compares it with the saved configuration (SPEC 11.2 item 12, from build 3.3): without secrets,
- * and with the bulbs as the set of bulbs they name, each a serial number in any form, or a saved name that `names`
- * (serial number to name, from the searches in this visit) gives a serial number for. So a search that finds the saved
- * bulbs, or writes a saved name as its serial number, is not a change.
+ * and with the bulbs as the set of bulbs they name, each a serial number in any form, or a saved name that a search in
+ * this visit found as a bulb: in the order of `found` (the last search's bulbs), then of `names` (serial number to name,
+ * from every search in the visit), the first bulb of a name winning, as the search's own rewrite does. So a search that
+ * finds the saved bulbs, or writes a saved name as its serial number, is not a change.
  */
-export function comparableBlock(block: Record<string, unknown>, names: Record<string, string> = {}): string {
+export function comparableBlock(block: Record<string, unknown>, names: Record<string, string> = {},
+  found: { serial: string; label: string }[] = []): string {
   const plain = withoutSecrets(block);
   const lifx = plain.lifx as { bulbs?: unknown } | undefined;
   if (lifx && typeof lifx === 'object' && Array.isArray(lifx.bulbs)) {
-    const byName = new Map(Object.entries(names).map(([serial, label]) => [label.trim().toLowerCase(), serial]));
+    const byName = new Map<string, string>();
+    for (const [serial, label] of [...found.map((b): [string, string] => [b.serial, b.label]), ...Object.entries(names)]) {
+      if (label && !byName.has(label.trim().toLowerCase())) {
+        byName.set(label.trim().toLowerCase(), serial);
+      }
+    }
     const bulbs = lifx.bulbs.filter((b): b is string => typeof b === 'string')
       .map((b) => serialOf(b) ?? byName.get(b.trim().toLowerCase()) ?? b.trim().toLowerCase());
     plain.lifx = { ...lifx, bulbs: [...new Set(bulbs)].sort() };
