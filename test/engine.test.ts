@@ -2,7 +2,7 @@ import { afterEach, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { parseConfig } from '../src/config.js';
-import { BusyLightEngine } from '../src/engine.js';
+import { BusyLightEngine, MAX_TIMER_MS } from '../src/engine.js';
 import { ensureStorageDir } from '../src/files.js';
 import type { NewReport } from '../src/inputs.js';
 import { LifxClient, MSG, parseHeader } from '../src/lifx.js';
@@ -103,9 +103,10 @@ test('a status change: the line, the sensors, the state file and the bulb', asyn
   assert.deepEqual(state.sources, [{
     id: 'rota', name: 'Rota', type: 'url', state: 'connected', lastChecked: new Date(T0).toISOString(), events: 1, error: null,
   }]);
-  assert.deepEqual(state.light, {
+  assert.deepEqual(state.lights, [{
     enabled: true, label: null, host: DOOR.host, found: 'configured', lastSent: '#FF0000', lastSentAt: new Date(T0).toISOString(), answered: true,
-  });
+  }]);
+  assert.equal(state.light, undefined, 'from build 3.2 the state file has lights only');
   assert.equal(state.signIn, null);
   assert.equal(state.override, false);
   const color = lifxColors();
@@ -219,7 +220,72 @@ test('the boundary timer changes the status at the minute a meeting ends, with n
   assert.deepEqual(statuses, ['inMeeting', 'available']);
   assert.equal(fake.calls.length, calls);
   assert.equal(log.lines('info').at(-1), `Status: Available (until ${formatTime(end + 60 * MIN)}).`);
-  assert.deepEqual(clock.pending(), [], 'the next boundary is after the next tick');
+  assert.deepEqual(clock.pending().map((p) => p.at), [end + 60 * MIN], 'the next boundary, whether or not a tick comes first (SPEC 8.1 item 3)');
+});
+
+test('a meeting that starts while a calendar check waits on a slow server changes the status within one second of its start (SPEC 8.1 item 3)',
+  async () => {
+    const start = T0 + 5 * MIN;
+    make({ calendars: [{ type: 'url', name: 'Rota', url: FEED, calendarSeconds: 60 }], pollSeconds: 30 });
+    let release: (() => void) | null = null;
+    const feed = icsOf([['meeting', start, start + 30 * MIN]]);
+    fake.on('https://calendar.example.com/', (_call, index) => (index === 0 ? text(feed)
+      : new Promise<Response>((resolve) => {
+        release = () => resolve(text(feed));
+      })));
+    engine!.start();
+    await settle();
+    await engine!.idle();
+    assert.equal(engine!.status, 'available');
+    await clock.advance(5 * MIN - 1);
+    assert.equal(fake.callsTo('https://calendar.example.com/').length, 2, 'the second check is still waiting');
+    assert.equal(engine!.status, 'available');
+    await clock.advance(1000);
+    assert.equal(engine!.status, 'inMeeting', 'changed at the start, while the check waits');
+    release!();
+    await settle();
+  });
+
+test('the boundary timer is set from the clock after a send to an offline bulb (SPEC 8.1 item 3)', async () => {
+  const end = T0 + 30 * MIN;
+  class SlowBulb extends LifxClient {
+    override async sendColor(): Promise<boolean> {
+      clock.t += 3000; // three tries of each packet, unanswered
+      return false;
+    }
+  }
+  const { config } = parseConfig({ platform: 'BusyLight', calendars: [{ type: 'url', name: 'Rota', url: FEED }],
+    lifx: { enabled: true, host: DOOR.host } });
+  const statuses: [Status, number][] = [];
+  engine = new BusyLightEngine({ config, storageDir: dir, log: log.log, version: '0.1.0-beta.5', clock, lifx: new SlowBulb(),
+    onStatus: (s) => statuses.push([s, clock.t]) });
+  fake.on('https://calendar.example.com/', () => text(icsOf([['meeting', T0 - 30 * MIN, end]])));
+  clock.t = end - 10_000;
+  await engine.tick();
+  assert.deepEqual(clock.pending().map((p) => p.at), [end], 'at the end, not 3 seconds after it');
+  await clock.advance(10_000);
+  await engine.idle();
+  assert.deepEqual(statuses, [['inMeeting', end - 10_000], ['available', end]]);
+});
+
+test('every timer delay is at most Node\'s maximum, and a far expiry does not fire at once (SPEC 8.1 item 5)', async () => {
+  const far = T0 + 60 * 86_400_000;
+  fs.writeFileSync(`${dir}/inputs.json`, JSON.stringify({ version: 1, replay: [], senders: [{ sender: 'Far sender on a test Mac', status: 'doNotDisturb',
+    app: null, via: 'api', auth: 'signed', lastHeard: new Date(T0).toISOString(), expiresAt: new Date(far).toISOString(), active: true }] }));
+  make({ statusInput: { enabled: true, key: 'Synthetic-engine-key-000000000000000000000' } });
+  engine!.start();
+  await settle();
+  await engine!.idle();
+  assert.equal(engine!.status, 'doNotDisturb');
+  const delays = () => clock.pending().filter((p) => p.every === null).map((p) => p.at - clock.t);
+  assert.ok(delays().length > 0 && delays().every((d) => d <= MAX_TIMER_MS), String(delays()));
+  await clock.advance(MAX_TIMER_MS);
+  await engine!.idle();
+  assert.equal(engine!.status, 'doNotDisturb', 'the clamped timer fired early and was set again');
+  assert.ok(delays().every((d) => d > 0 && d <= MAX_TIMER_MS));
+  await clock.advance(far - clock.t);
+  await engine!.idle();
+  assert.equal(engine!.status, 'available', 'expired at its time');
 });
 
 test('the bulb is sent its color again every refreshSeconds, instantly, and never with 0', async () => {
@@ -275,8 +341,8 @@ test('Unknown turns every sensor off and leaves the bulb alone', async () => {
   assert.equal(readState(dir)!.reason, null);
 });
 
-test('a bulb found later is sent the current color', async () => {
-  make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }], lifx: { enabled: true } });
+test('a bulb found later is sent the current color, with the 1 second fade (SPEC 8.2 item 4)', async () => {
+  make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }], lifx: { enabled: true, refreshSeconds: 600 } });
   fake.on('https://calendar.example.com/', () => text(icsOf([])));
   await engine!.light.start();
   await engine!.tick();
@@ -286,6 +352,7 @@ test('a bulb found later is sent the current color', async () => {
   await engine!.tick();
   assert.equal(lifxColors().length, 1);
   assert.equal(lifxColors()[0].to, DOOR.host);
+  assert.equal(lifxColors()[0].buf.readUInt32LE(45), 1000);
 });
 
 test('ticks never overlap', async () => {
@@ -397,6 +464,18 @@ test('review: presence and calendar failing together write one warning', async (
   ]);
 });
 
+test('a series repeating too often writes the Repeat limit line once per source (SPEC 5.4 item 3, 12)', async () => {
+  make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }, { type: 'url', name: 'Team', url: OTHER }], calendarSeconds: 60 });
+  const everySecond = icsOf([['every-second', T0 - 2 * 86_400_000, T0 - 2 * 86_400_000 + 1000, ['RRULE:FREQ=SECONDLY']]]);
+  fake.on('https://calendar.example.com/', () => text(everySecond));
+  fake.on(OTHER, () => text(icsOf([])));
+  await engine!.tick();
+  clock.t += 60_000;
+  await engine!.tick();
+  assert.equal(fake.callsTo('https://calendar.example.com/').length, 2, 'read twice');
+  assert.deepEqual(log.lines('warn'), ['Rota: a recurring event repeats too often to read in full, so some of its occurrences are left out.']);
+});
+
 // Build 3: the sender store in the loop (SPEC 6.3, 6.5, 18.7).
 
 const INPUT_KEY = 'Synthetic-engine-key-000000000000000000000';
@@ -489,17 +568,346 @@ test('the state file carries the status input, the senders with how they authent
   await engine!.report(call());
   await engine!.report(call({ sender: 'Test on my laptop', status: 'away', app: null, auth: 'plain' }));
   const state = readState(dir)!;
-  assert.deepEqual(state.statusInput, { enabled: true, port: 8582, listening: false, error: null, id: null });
+  assert.deepEqual(state.statusInput, { enabled: true, port: 8582, listening: false, error: null, id: null,
+    reported: { inCall: new Date(T0).toISOString(), away: new Date(T0).toISOString() } });
   assert.deepEqual(state.reason, { source: MAC, until: null, app: 'Microsoft Teams' });
   assert.deepEqual(state.inputs, [
     { sender: MAC, status: 'inCall', app: 'Microsoft Teams', via: 'api', auth: 'signed', lastHeard: new Date(T0).toISOString(),
-      expiresAt: new Date(T0 + 60_000).toISOString(), active: true },
+      expiresAt: new Date(T0 + 60_000).toISOString(), active: true, ended: null },
     { sender: 'Test on my laptop', status: 'away', app: null, via: 'api', auth: 'plain', lastHeard: new Date(T0).toISOString(),
-      expiresAt: new Date(T0 + 60_000).toISOString(), active: true },
+      expiresAt: new Date(T0 + 60_000).toISOString(), active: true, ended: null },
   ]);
   const raw = fs.readFileSync(`${dir}/state.json`, 'utf8');
   assert.ok(!raw.includes(INPUT_KEY), 'the key is never in the state file');
   engine!.inputServerStatus = () => ({ listening: true, error: null, id: 'q3Lr8vT0cXw2mN5a' });
   engine!.writeState();
-  assert.deepEqual(readState(dir)!.statusInput, { enabled: true, port: 8582, listening: true, error: null, id: 'q3Lr8vT0cXw2mN5a' });
+  assert.deepEqual(readState(dir)!.statusInput, { enabled: true, port: 8582, listening: true, error: null, id: 'q3Lr8vT0cXw2mN5a',
+    reported: { inCall: new Date(T0).toISOString(), away: new Date(T0).toISOString() } });
+});
+
+// Build 3.2: the Working switch (SPEC 6.6).
+
+test('not working: the bulb off whatever the Offline color, every status ignored, the override too, and the lines (SPEC 6.6)', async () => {
+  const statuses: Status[] = [];
+  make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }], lifx: { enabled: true, host: DOOR.host, refreshSeconds: 60 },
+    colors: { offline: '#FFFFFF' }, ...inputOn }, statuses);
+  net.bulbs = [{ ...DOOR }];
+  fake.on('https://calendar.example.com/', () => text(icsOf([['meeting', T0 - 30 * MIN, T0 + 30 * MIN]])));
+  await engine!.tick();
+  assert.equal(engine!.status, 'inMeeting');
+  net.sent = [];
+  await engine!.setWorking(false);
+  assert.equal(engine!.status, 'notWorking');
+  assert.deepEqual(statuses, ['inMeeting', 'notWorking'], 'the sensors are told, and turn off');
+  assert.deepEqual(net.sent.map((s) => parseHeader(s.buf)!.type), [MSG.SetPower], 'one packet: power off');
+  assert.equal(net.sent[0].buf.readUInt16LE(36), 0);
+  assert.equal(readState(dir)!.status, 'notWorking');
+  assert.equal(readState(dir)!.reason, null);
+  assert.equal(log.lines('info').at(-1), 'Busy Light Working turned off. The light stays off until it is turned on.');
+  assert.ok(!log.lines('info').some((l) => l.startsWith('Status: Not')), 'no status line for not working');
+
+  // Reports, the override and boundaries change nothing; the report is still kept.
+  await engine!.report(call());
+  await engine!.setOverride(true);
+  await clock.advance(31 * MIN);
+  await engine!.tick();
+  assert.equal(engine!.status, 'notWorking');
+  assert.deepEqual(statuses, ['inMeeting', 'notWorking']);
+  assert.ok(engine!.inputs.list(clock.t).some((e) => e.sender === MAC));
+  assert.ok(net.sent.every((s) => parseHeader(s.buf)!.type === MSG.SetPower && s.buf.readUInt16LE(36) === 0), 'only off, refreshed');
+  assert.ok(net.sent.length >= 2, 'the refresh sends off again');
+
+  // Turned on: resolved at once, with the status line and the bulb's color.
+  net.sent = [];
+  await engine!.setWorking(true);
+  assert.equal(engine!.status, 'doNotDisturb', 'the override applies again');
+  assert.deepEqual(log.lines('info').slice(-2), ['Busy Light Working turned on.', 'Status: Do not disturb.']);
+  assert.equal(lifxColors().length, 1);
+  await engine!.setWorking(true);
+  assert.equal(log.lines('info').filter((l) => l.includes('Working turned on')).length, 1, 'a line only when the state changes');
+});
+
+test('not working at startup: the off line once, and it wins over Unknown (SPEC 6.6)', async () => {
+  const { config } = parseConfig({ platform: 'BusyLight', calendars: [{ type: 'url', name: 'Rota', url: FEED }], lifx: { enabled: true, host: DOOR.host } });
+  net.bulbs = [{ ...DOOR }];
+  fake.on('https://calendar.example.com/', () => networkError('ECONNREFUSED'));
+  engine = new BusyLightEngine({ config, storageDir: dir, log: log.log, version: '0.1.0-beta.5', clock, working: false,
+    lifx: new LifxClient({ socket: net.factory, timings: { replyMs: 40, collectMs: 100 }, interfaces: () => ({}) }) });
+  engine.start();
+  await settle();
+  await engine.idle();
+  assert.equal(engine.status, 'notWorking');
+  assert.deepEqual(log.lines('info').filter((l) => l.includes('Working')), ['Busy Light Working turned off. The light stays off until it is turned on.']);
+  assert.ok(!log.lines('warn').some((l) => l.startsWith('Status unknown')));
+  assert.deepEqual(net.sent.map((s) => parseHeader(s.buf)!.type), [MSG.SetPower]);
+});
+
+// Build 3.2: the meeting warning (SPEC 6.7), with a fake clock and a fake socket.
+
+/** The colors and powers sent to the bulb, in order: hue, brightness and duration of a SetColor, level and duration of a SetPower. */
+type Packet = ['color', number, number, number] | ['power', number, number];
+function packets(): Packet[] {
+  return net.sent.filter((s) => s.to === DOOR.host).flatMap((s): Packet[] => {
+    const h = parseHeader(s.buf)!;
+    if (h.type === MSG.SetColor) {
+      return [['color', s.buf.readUInt16LE(37), s.buf.readUInt16LE(41), s.buf.readUInt32LE(45)]];
+    }
+    return h.type === MSG.SetPower ? [['power', s.buf.readUInt16LE(36), s.buf.readUInt32LE(38)]] : [];
+  });
+}
+const RED = 0;
+const GREEN = 21845;
+const FULL = 65535;
+
+function warned(feed: () => string, extra: Record<string, unknown> = {}, statuses: Status[] = []): BusyLightEngine {
+  const e = make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }], lifx: { enabled: true, host: DOOR.host, refreshSeconds: 60 },
+    meetingWarningSeconds: 120, ...extra }, statuses);
+  net.bulbs = [{ ...DOOR }];
+  fake.on('https://calendar.example.com/', () => text(feed()));
+  return e;
+}
+
+test('the warning is one SetColor to the In a meeting color lasting until the start, sent when it begins (SPEC 6.7)', async () => {
+  const start = T0 + 10 * MIN;
+  const e = warned(() => icsOf([['meeting', start, start + 30 * MIN]]));
+  e.start();
+  await settle();
+  await e.idle();
+  assert.equal(e.status, 'available');
+  assert.deepEqual(packets(), [['color', GREEN, FULL, 1000], ['power', FULL, 1000]]);
+  net.sent = [];
+  await clock.advance(8 * MIN - 1);
+  assert.ok(packets().length > 0 && packets().every((p) => (p[0] === 'color' ? p[1] === GREEN && p[3] === 0 : p[1] === FULL && p[2] === 0)),
+    'before the warning, only the refreshes of the Available color');
+  net.sent = [];
+  await clock.advance(1);
+  await e.idle();
+  assert.equal(e.status, 'available', 'the status stays Available');
+  assert.deepEqual(e.meetingWarning, { meetingAt: start });
+  assert.deepEqual(packets(), [['power', FULL, 0], ['color', RED, FULL, 120_000]], 'one fade of 2 minutes: the bulb fades by itself');
+  assert.deepEqual(readState(dir)!.meetingWarning, { meetingAt: new Date(start).toISOString() });
+  net.sent = [];
+  await clock.advance(2 * MIN - 1);
+  assert.deepEqual(packets(), [], 'no stream of packets, and no refresh during the fade');
+  await clock.advance(1);
+  await e.idle();
+  assert.equal(e.status, 'inMeeting');
+  assert.equal(e.meetingWarning, null);
+  assert.deepEqual(packets(), [['color', RED, FULL, 1000], ['power', FULL, 1000]], 'the start changes the status as usual');
+  assert.equal(readState(dir)!.meetingWarning, null);
+});
+
+test('with Available Off, the bulb comes on dim at the In a meeting color and the same SetColor fades it up (SPEC 6.7 item 3)', async () => {
+  const start = T0 + 10 * MIN;
+  const e = warned(() => icsOf([['meeting', start, start + 30 * MIN]]), { colors: { available: 'off' }, lifx: { enabled: true, host: DOOR.host,
+    brightness: 80 } });
+  e.start();
+  await settle();
+  await e.idle();
+  assert.deepEqual(packets(), [['power', 0, 1000]], 'off while Available');
+  net.sent = [];
+  await clock.advance(8 * MIN);
+  await e.idle();
+  assert.deepEqual(packets().slice(-3), [['color', RED, Math.round(FULL / 100), 0], ['power', FULL, 0], ['color', RED, Math.round(FULL * 0.8), 120_000]]);
+  assert.deepEqual(packets().slice(0, -3).filter((p) => !(p[0] === 'power' && p[1] === 0)), [], 'before it, only refreshes of off');
+});
+
+test('a meeting cancelled during the fade: the Available color comes back at once (SPEC 6.7 item 4)', async () => {
+  const start = T0 + 10 * MIN;
+  let cancelled = false;
+  const e = warned(() => icsOf(cancelled ? [] : [['meeting', start, start + 30 * MIN]]), { calendarSeconds: 60 });
+  e.start();
+  await settle();
+  await clock.advance(8 * MIN + 30_000);
+  await e.idle();
+  assert.deepEqual(e.meetingWarning, { meetingAt: start });
+  cancelled = true;
+  net.sent = [];
+  await clock.advance(30_000);
+  await e.idle();
+  assert.equal(e.meetingWarning, null);
+  assert.equal(e.status, 'available');
+  assert.deepEqual(packets(), [['color', GREEN, FULL, 1000], ['power', FULL, 1000]], 'the normal apply replaces the fade');
+  net.sent = [];
+  await clock.advance(5 * MIN);
+  assert.ok(packets().every((p) => p[0] !== 'color' || p[1] === GREEN), 'nothing fades to red later');
+});
+
+test('a call starting during the fade replaces it at once (SPEC 6.7 item 4)', async () => {
+  const start = T0 + 10 * MIN;
+  const e = warned(() => icsOf([['meeting', start, start + 30 * MIN]]), inputOn);
+  e.start();
+  await settle();
+  await clock.advance(9 * MIN);
+  await e.idle();
+  assert.ok(e.meetingWarning);
+  net.sent = [];
+  await e.report(call());
+  assert.equal(e.status, 'inCall');
+  assert.equal(e.meetingWarning, null);
+  await e.idle(); // the answer to the report does not wait for the bulb's acknowledgements (SPEC 13.3 item 1)
+  assert.deepEqual(packets(), [['color', RED, FULL, 1000], ['power', FULL, 1000]]);
+});
+
+test('no warning between back-to-back meetings, and none while another status shows (SPEC 6.7 item 1)', async () => {
+  const first = T0 + 10 * MIN;
+  const e = warned(() => icsOf([['first', first, first + 30 * MIN], ['second', first + 30 * MIN, first + 60 * MIN],
+    ['maybe', first + 70 * MIN, first + 100 * MIN, ['STATUS:TENTATIVE']], ['third', first + 100 * MIN, first + 120 * MIN]]));
+  e.start();
+  await settle();
+  await clock.advance(first + 30 * MIN - clock.t);
+  await e.idle();
+  assert.equal(e.status, 'inMeeting');
+  net.sent = [];
+  await clock.advance(70 * MIN);
+  await e.idle();
+  assert.equal(e.status, 'inMeeting', 'the third meeting, after the tentative one');
+  const fades = packets().filter((p) => p[0] === 'color' && p[3] > 1000);
+  assert.deepEqual(fades, [], 'no fade before the second meeting (back to back) or the third (tentative showed)');
+});
+
+test('a short gap between meetings: the warning begins with Available, from the Available color (SPEC 6.7 items 2 and 3)', async () => {
+  const end = T0 + 10 * MIN;
+  const e = warned(() => icsOf([['first', T0 - 20 * MIN, end], ['second', end + MIN, end + 30 * MIN]]));
+  e.start();
+  await settle();
+  await e.idle();
+  assert.equal(e.status, 'inMeeting');
+  net.sent = [];
+  await clock.advance(10 * MIN);
+  await e.idle();
+  assert.equal(e.status, 'available');
+  assert.deepEqual(e.meetingWarning, { meetingAt: end + MIN });
+  assert.deepEqual(packets().slice(-3), [['color', GREEN, FULL, 0], ['power', FULL, 0], ['color', RED, FULL, 60_000]]);
+  assert.ok(packets().slice(0, -3).every((p) => p[0] === 'power' || (p[1] === RED && p[3] === 0)), 'before it, only refreshes of red');
+});
+
+test('the warning off sends no fade, and an In a meeting color of Off has nothing to fade to (SPEC 6.7 item 1)', async () => {
+  for (const extra of [{ meetingWarningSeconds: 0 }, { colors: { inMeeting: 'off' } }]) {
+    net.sent = [];
+    const start = T0 + 10 * MIN;
+    clock.t = T0;
+    const e = warned(() => icsOf([['meeting', start, start + 30 * MIN]]), extra);
+    e.start();
+    await settle();
+    await clock.advance(10 * MIN);
+    await e.idle();
+    assert.equal(e.meetingWarning, null);
+    assert.deepEqual(packets().filter((p) => p[0] === 'color' && p[3] > 1000), [], JSON.stringify(extra));
+    e.stop();
+  }
+});
+
+test('the warning begins on time while a calendar check waits on a slow server (SPEC 6.7 item 2, 8.1 item 3)', async () => {
+  const start = T0 + 5 * MIN;
+  const e = make({ calendars: [{ type: 'url', name: 'Rota', url: FEED, calendarSeconds: 60 }], lifx: { enabled: true, host: DOOR.host },
+    meetingWarningSeconds: 60 });
+  net.bulbs = [{ ...DOOR }];
+  const feed = icsOf([['meeting', start, start + 30 * MIN]]);
+  fake.on('https://calendar.example.com/', (_call, index) => (index === 0 ? text(feed) : new Promise<Response>(() => undefined)));
+  e.start();
+  await settle();
+  await clock.advance(4 * MIN - 1);
+  assert.equal(e.meetingWarning, null);
+  await clock.advance(1);
+  await e.idle();
+  assert.deepEqual(e.meetingWarning, { meetingAt: start }, 'begun on time while the second check waits');
+  assert.deepEqual(packets().slice(-2), [['power', FULL, 0], ['color', RED, FULL, 60_000]]);
+});
+
+// Build 3.2: several bulbs (SPEC 13.3, C8 of the build prompt): every send goes to every chosen bulb.
+
+const STATUS_LIGHT = { serial: 'd073d5000004', label: 'Status Light', host: '192.168.4.21', answers: true };
+
+/** As `packets`, for any bulb. */
+function packetsTo(host: string): Packet[] {
+  return net.sent.filter((s) => s.to === host).flatMap((s): Packet[] => {
+    const h = parseHeader(s.buf)!;
+    if (h.type === MSG.SetColor) {
+      return [['color', s.buf.readUInt16LE(37), s.buf.readUInt16LE(41), s.buf.readUInt32LE(45)]];
+    }
+    return h.type === MSG.SetPower ? [['power', s.buf.readUInt16LE(36), s.buf.readUInt32LE(38)]] : [];
+  });
+}
+
+test('two bulbs show the status together: the change, the refresh, the warning fade and the Working switch off reach both (SPEC 13.3)', async () => {
+  const start = T0 + 10 * MIN;
+  const e = warned(() => icsOf([['meeting', start, start + 30 * MIN]]),
+    { lifx: { enabled: true, host: `${DOOR.host}, ${STATUS_LIGHT.host}`, refreshSeconds: 60 }, workingSwitch: { enabled: true } });
+  net.bulbs = [{ ...DOOR }, { ...STATUS_LIGHT }];
+  e.start();
+  await settle();
+  await e.idle();
+  assert.equal(log.lines('info')[0], 'Busy Light 0.1.0-beta.1: 1 calendar, light on (2 bulbs), 3 sensors.');
+  const both = (expected: Packet[], what: string) => {
+    assert.deepEqual(packetsTo(DOOR.host), expected, `${what}: Office Door`);
+    assert.deepEqual(packetsTo(STATUS_LIGHT.host), expected, `${what}: Status Light`);
+    net.sent = [];
+  };
+  both([['color', GREEN, FULL, 1000], ['power', FULL, 1000]], 'the first status');
+  assert.deepEqual(readState(dir)!.lights!.map((l) => [l.host, l.found, l.lastSent, l.answered]), [
+    [DOOR.host, 'configured', '#00FF00', true], [STATUS_LIGHT.host, 'configured', '#00FF00', true],
+  ]);
+  await clock.advance(60_000);
+  await e.idle();
+  both([['color', GREEN, FULL, 0], ['power', FULL, 0]], 'the refresh');
+  await clock.advance(7 * MIN - 1);
+  net.sent = [];
+  await clock.advance(1);
+  await e.idle();
+  both([['power', FULL, 0], ['color', RED, FULL, 120_000]], 'the meeting warning');
+  await e.setWorking(false);
+  await e.idle();
+  both([['power', 0, 1000]], 'the Working switch turned off');
+});
+
+test('the 5 minute discovery for a missing bulb finds a chosen one at a new address, which is sent the color at once (SPEC 13.2 item 4)', async () => {
+  make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }], lifx: { enabled: true, bulbs: [DOOR.serial, 'Status Light'], refreshSeconds: 0 } });
+  fake.on('https://calendar.example.com/', () => text(icsOf([])));
+  net.bulbs = [{ ...DOOR }];
+  await engine!.light.start();
+  await engine!.tick();
+  assert.equal(lifxColors().filter((s) => s.to === DOOR.host).length, 1);
+  // Office Door is power cycled and gets a new address; Status Light is still switched off at the wall.
+  net.bulbs = [{ ...DOOR, host: '192.168.4.77' }];
+  net.sent = [];
+  clock.t = T0 + 5 * MIN;
+  await engine!.tick();
+  assert.deepEqual(engine!.light.hosts, ['192.168.4.77']);
+  assert.deepEqual(lifxColors().map((s) => [s.to, s.buf.readUInt32LE(45)]), [['192.168.4.77', 1000]], 'at once, with no refresh due');
+});
+
+test('one silent bulb\'s tries do not hold up the next color on the bulb that answers (SPEC 13.3 item 1)', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const sentTo: [string, string][] = [];
+  class Gated extends LifxClient {
+    override async sendColor(host: string, _serial: string | null, color: string): Promise<boolean> {
+      sentTo.push([host, color]);
+      if (host === STATUS_LIGHT.host) {
+        await gate; // switched off at the wall: three tries of each packet, about 3 seconds
+        return false;
+      }
+      return true;
+    }
+  }
+  const { config } = parseConfig({ platform: 'BusyLight', calendars: [{ type: 'url', name: 'Rota', url: FEED }],
+    lifx: { enabled: true, host: `${STATUS_LIGHT.host}, ${DOOR.host}` }, overrideSwitch: true });
+  engine = new BusyLightEngine({ config, storageDir: dir, log: log.log, version: '0.1.0-beta.5', clock, lifx: new Gated() });
+  fake.on('https://calendar.example.com/', () => text(icsOf([])));
+  const ticking = engine.tick();
+  await settle();
+  const door = () => sentTo.filter(([h]) => h === DOOR.host).map(([, c]) => c);
+  assert.deepEqual(door(), ['#00FF00'], 'Available reached Office Door at once');
+  await engine.setOverride(true);
+  await settle();
+  assert.deepEqual(door(), ['#00FF00', config.colors.doNotDisturb], 'Do not disturb too, while Status Light is still trying');
+  assert.deepEqual(sentTo.filter(([h]) => h === STATUS_LIGHT.host).map(([, c]) => c), ['#00FF00'], 'Status Light has it waiting');
+  release();
+  await ticking;
+  await engine.idle();
+  assert.deepEqual(sentTo.filter(([h]) => h === STATUS_LIGHT.host).map(([, c]) => c), ['#00FF00', config.colors.doNotDisturb],
+    'then Status Light is sent the newest color, once');
 });

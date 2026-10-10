@@ -150,6 +150,31 @@ test('status prints the state file in plain words', async () => {
   ]);
 });
 
+test('status shows an until time with its day when it is not today (SPEC 10.2 item 1)', async () => {
+  writeConfig({ calendars: [{ type: 'url', name: 'Rota', url: FEED }] });
+  fs.mkdirSync(path.join(storage, 'busy-light'));
+  const tomorrow = new Date(new Date(T0).getFullYear(), new Date(T0).getMonth(), new Date(T0).getDate() + 1, 9).getTime();
+  fs.writeFileSync(path.join(storage, 'busy-light', 'state.json'), JSON.stringify({
+    version: 1, updatedAt: new Date(T0).toISOString(), status: 'available', reason: { source: null, until: new Date(tomorrow).toISOString() },
+    override: false, sources: [], signIn: null,
+    light: { enabled: false, label: null, host: null, found: null, lastSent: null, lastSentAt: null, answered: null },
+  }));
+  const { out } = await run('status');
+  assert.equal(out[0], `Status: Available (until tomorrow at ${formatTime(tomorrow)}).`);
+});
+
+test('status says not working while the Working switch is off (SPEC 10.2 item 1)', async () => {
+  writeConfig({});
+  fs.mkdirSync(path.join(storage, 'busy-light'));
+  fs.writeFileSync(path.join(storage, 'busy-light', 'state.json'), JSON.stringify({
+    version: 1, updatedAt: new Date(T0).toISOString(), status: 'notWorking', reason: null, override: false, sources: [], signIn: null,
+    light: { enabled: false, label: null, host: null, found: null, lastSent: null, lastSentAt: null, answered: null },
+  }));
+  const { code, out } = await run('status');
+  assert.equal(code, 0);
+  assert.deepEqual(out.slice(0, 2), ['Status: Not working (the Working switch is off).', `Updated ${formatTime(T0)}.`]);
+});
+
 test('status shows a waiting code and a refusal with the instructions', async () => {
   fs.mkdirSync(path.join(storage, 'busy-light'));
   fs.writeFileSync(path.join(storage, 'busy-light', 'state.json'), JSON.stringify({
@@ -275,7 +300,42 @@ test('light reports a bulb that does not answer, and several bulbs without a nam
   net.bulbs = [{ ...DOOR }, { ...DESK }];
   result = await run('light');
   assert.deepEqual([result.code, result.out],
-    [1, ['More than one LIFX bulb was found: Desk, Office Door. Enter the name of the one to use in the plugin settings.']]);
+    [1, ['More than one LIFX bulb was found: Desk, Office Door. Choose the bulbs to use in the plugin settings.']]);
+});
+
+test('status prints one Light line per bulb from lights (SPEC 10.2 item 1, from build 3.2)', async () => {
+  writeConfig({});
+  fs.mkdirSync(path.join(storage, 'busy-light'));
+  fs.writeFileSync(path.join(storage, 'busy-light', 'state.json'), JSON.stringify({
+    version: 1, updatedAt: new Date(T0).toISOString(), status: 'available', reason: null, override: false, sources: [], signIn: null,
+    lights: [
+      { enabled: true, label: 'Office Door', host: DOOR.host, found: 'discovered', lastSent: '#00FF00', lastSentAt: new Date(T0).toISOString(),
+        answered: true },
+      { enabled: true, label: 'Desk', host: DESK.host, found: 'remembered', lastSent: '#00FF00', lastSentAt: new Date(T0).toISOString(),
+        answered: false },
+    ],
+  }));
+  const { code, out } = await run('status');
+  assert.equal(code, 0);
+  assert.deepEqual(out.slice(-2), [
+    `Light: Office Door at ${DOOR.host}, last sent #00FF00 at ${formatTime(T0)}, answered.`,
+    `Light: Desk at ${DESK.host}, last sent #00FF00 at ${formatTime(T0)}, no answer.`,
+  ]);
+});
+
+test('light with no bulb given sends to every chosen bulb, one answer line each, in the order of lifx.bulbs (SPEC 10.2 item 5)', async () => {
+  writeConfig({ lifx: { bulbs: ['Desk', DOOR.serial] } });
+  net.bulbs = [{ ...DOOR }, { ...DESK }];
+  let result = await run('light', 'off');
+  assert.deepEqual([result.code, result.out], [0, [
+    'LIFX bulbs found: Desk (192.168.4.51), Office Door (192.168.4.50). Using Desk, Office Door.',
+    'The LIFX bulb at 192.168.4.51 answered.',
+    'The LIFX bulb at 192.168.4.50 answered.',
+  ]]);
+  writeConfig({ lifx: { host: `${DOOR.host}, 192.168.4.60` } });
+  result = await run('light');
+  assert.deepEqual([result.code, result.out], [1, ['The LIFX bulb at 192.168.4.50 answered.', 'The LIFX bulb at 192.168.4.60 did not answer.']],
+    'a bulb that did not answer makes it exit 1');
 });
 
 test('review: check never starts a sign-in, even when the stored sign-in has expired', async () => {
@@ -321,7 +381,7 @@ function writeInputs(): void {
       { sender: 'CallWatch on Alex’s iMac', status: 'inCall', app: 'Microsoft Teams', via: 'api', auth: 'signed',
         lastHeard: new Date(T0).toISOString(), expiresAt: new Date(T0 + 180_000).toISOString(), active: true },
       { sender: 'Home app', status: 'inCall', app: null, via: 'switch', auth: null, lastHeard: new Date(T0 - 3_600_000).toISOString(),
-        expiresAt: new Date(T0 - 60_000).toISOString(), active: false },
+        expiresAt: new Date(T0 - 60_000).toISOString(), active: false, ended: 'cleared' },
       { sender: 'Test on my laptop', status: 'busy', app: null, via: 'api', auth: 'plain', lastHeard: new Date(T0 - 60_000).toISOString(),
         expiresAt: new Date(T0 + 120_000).toISOString(), active: true },
     ],
@@ -343,7 +403,7 @@ test('input: on or off, the port, the id, the addresses by host name and IP, and
     'Address: http://192.168.4.10:8582',
     'Apps reporting now:',
     `  CallWatch on Alex’s iMac: In a call from Microsoft Teams, signed, last heard ${formatTime(T0)}, active.`,
-    `  Home app: In a call, last heard ${formatTime(T0 - 3_600_000)}, expired.`,
+    `  Home app: In a call, last heard ${formatTime(T0 - 3_600_000)}, cleared.`,
     `  Test on my laptop: Busy, plain key, last heard ${formatTime(T0 - 60_000)}, active.`,
   ]);
   assert.ok(!out.join('\n').includes(KEY), 'no key without --setup-code');

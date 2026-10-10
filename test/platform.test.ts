@@ -8,7 +8,7 @@ import { LifxClient } from '../src/lifx.js';
 import { SENSOR_KEYS } from '../src/model.js';
 import type { SensorKey, Status } from '../src/model.js';
 import { packageVersion } from '../src/names.js';
-import { BusyLightPlatform, CALL_SWITCH_UUID_SEED, OVERRIDE_UUID_SEED, sensorOn, sensorUuidSeed } from '../src/platform.js';
+import { BusyLightPlatform, CALL_SWITCH_UUID_SEED, OVERRIDE_UUID_SEED, WORKING_SWITCH_UUID_SEED, sensorOn, sensorUuidSeed } from '../src/platform.js';
 import type { PlatformDeps } from '../src/platform.js';
 import { readState } from '../src/state.js';
 import type { AddressDeps } from '../src/addresses.js';
@@ -125,10 +125,11 @@ test('every sensor of section 7, with stable UUIDs from the key', () => {
   const { api } = launch({ name: 'Door', sensors: [...SENSOR_KEYS] });
   assert.deepEqual(api.registered.map((a) => a.displayName), [
     'Door Available', 'Door Busy', 'Door Out of Office', 'Door In a Meeting', 'Door In a Call', 'Door Do Not Disturb',
-    'Door Busy in Teams', 'Door Tentative', 'Door Away', 'Door Offline',
+    'Door Busy in Teams', 'Door Tentative', 'Door Away', 'Door Offline', 'Door Meeting Soon',
   ]);
   assert.deepEqual(api.registered.map((a) => a.UUID), SENSOR_KEYS.map(uuid));
   assert.equal(uuid('available'), hap.uuid.generate('busy-light:sensor:available'));
+  assert.equal(uuid('meetingSoon'), hap.uuid.generate('busy-light:sensor:meeting-soon'), 'as SPEC 7 item 3 gives it');
 });
 
 test('renaming keeps the accessories and their UUIDs', () => {
@@ -167,6 +168,7 @@ test('roll-up mapping', () => {
   assert.deepEqual(on('away'), ['away'], 'no roll-up');
   assert.deepEqual(on('offline'), ['offline'], 'no roll-up');
   assert.deepEqual(on('unknown'), []);
+  assert.deepEqual(on('notWorking'), [], 'not working turns every sensor off (SPEC 6.6)');
 });
 
 test('the sensors follow the status, and Unknown turns them all off', async () => {
@@ -408,4 +410,100 @@ test('address change: with the status input off, the record of the previous stat
   assert.deepEqual(state.addressChange, change);
   assert.equal(platform.addressWatcher, null);
   assert.equal(mdns.sent.length, 0);
+});
+
+// Build 3.2: the Working switch (SPEC 6.6, 7 item 9).
+
+const workingUuid = hap.uuid.generate(WORKING_SWITCH_UUID_SEED);
+
+test('the Working switch: starts on, off turns every sensor off and the status to not working, on resolves at once', async () => {
+  const rota = { type: 'url', name: 'Rota', url: 'https://calendar.example.com/a.ics' };
+  const first = launch({ workingSwitch: { enabled: true }, sensors: [...SENSOR_KEYS], overrideSwitch: true, calendars: [rota] });
+  await settle();
+  await first.platform.engine!.idle();
+  const accessory = first.api.registered.find((a) => a.UUID === workingUuid)!;
+  assert.equal(accessory.displayName, 'Busy Light Working');
+  const info = accessory.getService(S.AccessoryInformation)!;
+  assert.equal(info.getCharacteristic(C.Manufacturer).value, 'Busy Light');
+  assert.equal(info.getCharacteristic(C.Model).value, 'Working switch');
+  assert.equal(info.getCharacteristic(C.SerialNumber).value, 'working-switch');
+  assert.equal(info.getCharacteristic(C.FirmwareRevision).value, packageVersion());
+  const on = accessory.getService(S.Switch)!.getCharacteristic(C.On);
+  assert.equal(on.value, true, 'it starts on');
+  assert.equal(first.platform.engine!.status, 'inMeeting');
+
+  await on.handleSetRequest(false);
+  assert.equal(accessory.context.working, false, 'stored at once');
+  await first.platform.engine!.idle();
+  assert.equal(first.platform.engine!.status, 'notWorking');
+  assert.deepEqual(SENSOR_KEYS.filter((k) => detected(first.platform, k)), [], 'every sensor off, Available too');
+  const override = first.api.registered.find((a) => a.UUID === hap.uuid.generate(OVERRIDE_UUID_SEED))!;
+  await override.getService(S.Switch)!.getCharacteristic(C.On).handleSetRequest(true);
+  await first.platform.engine!.idle();
+  assert.equal(first.platform.engine!.status, 'notWorking', 'above the override');
+  assert.equal(readState(`${dir}/busy-light`)!.status, 'notWorking');
+  assert.ok(first.log.lines('info').includes('Busy Light Working turned off. The light stays off until it is turned on.'));
+  first.platform.engine!.stop();
+
+  // Kept across a restart, with the line once.
+  const second = launch({ workingSwitch: { enabled: true }, sensors: [...SENSOR_KEYS], overrideSwitch: true, calendars: [rota] },
+    first.api.registered);
+  await settle();
+  await second.platform.engine!.idle();
+  assert.equal(second.platform.engine!.status, 'notWorking');
+  assert.equal(on.value, false);
+  assert.deepEqual(second.log.lines('info').filter((l) => l.includes('Working')),
+    ['Busy Light Working turned off. The light stays off until it is turned on.']);
+  await on.handleSetRequest(true);
+  await second.platform.engine!.idle();
+  assert.equal(second.platform.engine!.status, 'doNotDisturb', 'on resolves at once: the override is on');
+  assert.ok(second.log.lines('info').includes('Busy Light Working turned on.'));
+  second.platform.engine!.stop();
+
+  // Removed with the checkbox, and the plugin behaves as working.
+  const third = launch({ sensors: [...SENSOR_KEYS], overrideSwitch: true, calendars: [rota] }, first.api.registered);
+  await settle();
+  await third.platform.engine!.idle();
+  assert.deepEqual(third.api.unregistered.map((a) => a.displayName), ['Busy Light Working']);
+  assert.equal(third.platform.engine!.status, 'doNotDisturb');
+});
+
+test('the Working switch answers HomeKit at once, without waiting for the bulb', async () => {
+  const api = new FakeApi(dir);
+  const platform = new BusyLightPlatform(fakeLog().log as unknown as Logging,
+    { platform: 'BusyLight', workingSwitch: { enabled: true }, lifx: { enabled: true, host: '192.168.4.99' } } as PlatformConfig, api as unknown as API, {
+      clock: new FakeClock(T0),
+      lifx: new LifxClient({ socket: new FakeNetwork().factory, timings: { replyMs: 200 }, interfaces: () => ({}) }),
+    });
+  platforms.push(platform);
+  api.emit('didFinishLaunching');
+  await settle();
+  const accessory = api.registered.find((a) => a.UUID === workingUuid)!;
+  await accessory.getService(S.Switch)!.getCharacteristic(C.On).handleSetRequest(false);
+  let applied = false;
+  void platform.engine!.idle().then(() => {
+    applied = true;
+  });
+  await Promise.resolve();
+  assert.equal(applied, false, 'the switch must not wait for the bulb');
+  await platform.engine!.idle();
+  assert.equal(platform.engine!.status, 'notWorking');
+});
+
+test('the Meeting Soon sensor detects occupancy during the meeting warning (SPEC 6.7 item 5)', async () => {
+  const start = T0 + 10 * 60_000;
+  fake.on('https://calendar.example.com/', () => text(icsOf([['meeting', start, start + 1_800_000]])));
+  const clock = new FakeClock(T0);
+  const { platform, api } = launch({ sensors: ['available', 'meetingSoon'], meetingWarningSeconds: 180,
+    calendars: [{ type: 'url', name: 'Rota', url: 'https://calendar.example.com/a.ics' }] }, [], clock);
+  await settle();
+  await platform.engine!.idle();
+  assert.equal(api.registered.find((a) => a.UUID === uuid('meetingSoon'))!.displayName, 'Busy Light Meeting Soon');
+  assert.deepEqual([detected(platform, 'available'), detected(platform, 'meetingSoon')], [true, false]);
+  await clock.advance(7 * 60_000);
+  await platform.engine!.idle();
+  assert.deepEqual([detected(platform, 'available'), detected(platform, 'meetingSoon')], [true, true], 'still Available, and the meeting is soon');
+  await clock.advance(3 * 60_000);
+  await platform.engine!.idle();
+  assert.deepEqual([detected(platform, 'available'), detected(platform, 'meetingSoon')], [false, false]);
 });

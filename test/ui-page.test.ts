@@ -157,6 +157,33 @@ describe('settings page: Right now (SPEC 11.3 B)', () => {
     assert.equal(await line({ status: 'doNotDisturb', override: true, reason: null }), 'The override switch is on.');
   });
 
+  it('an until time carries its day when it is not today: tomorrow, a weekday, a date (SPEC 11.3 B and G)', async () => {
+    const line = async (extra: Record<string, unknown>) => text((await rightNow(state(extra))).querySelector('.bl-now-line'));
+    // T is Thursday October 8, 2026; the days are counted in the browser's time zone.
+    const day = (n: number, hour: number) => {
+      const t = new Date(T);
+      return new Date(t.getFullYear(), t.getMonth(), t.getDate() + n, hour).toISOString();
+    };
+    assert.equal(await line({ status: 'available', reason: { source: null, until: day(1, 9) } }), 'Nothing on your calendars until tomorrow at 9:00 AM.');
+    assert.equal(await line({ status: 'available', reason: { source: null, until: day(4, 9) } }), 'Nothing on your calendars until Monday at 9:00 AM.');
+    assert.equal(await line({ reason: { source: 'Work', until: day(8, 9) } }), 'Until October 16 at 9:00 AM, from Work.');
+    assert.equal(await line({ status: 'inCall', reason: { source: 'Teams', until: day(1, 10) } }), 'Until tomorrow at 10:00 AM, from Teams.');
+  });
+
+  it('during the meeting warning: Available, and when the meeting starts (SPEC 6.7, 11.3 B)', async () => {
+    const row = await rightNow(state({ status: 'available', reason: { source: null, until: '2026-10-08T15:02:00.000Z' },
+      meetingWarning: { meetingAt: '2026-10-08T15:02:00.000Z' } }));
+    assert.equal(text(row.querySelector('.bl-now-name')), 'Available');
+    assert.equal(text(row.querySelector('.bl-now-line')), 'A meeting starts at 3:02 PM.');
+  });
+
+  it('not working: the Off swatch, Not working and its line (SPEC 6.6, 11.3 B)', async () => {
+    const row = await rightNow(state({ status: 'notWorking', reason: null }));
+    assert.equal(text(row.querySelector('.bl-now-name')), 'Not working');
+    assert.equal(text(row.querySelector('.bl-now-line')), 'The Working switch is off.');
+    assert.ok(row.querySelector('.bl-swatch')!.getAttribute('class')!.includes('bl-swatch-off'));
+  });
+
   it('no calendars saved, no state file yet, and Unknown in the warning tone (no swatch)', async () => {
     let row = await rightNow(state(), { platform: 'BusyLight' });
     assert.equal(text(row), copy.RIGHT_NOW.noCalendars);
@@ -841,9 +868,12 @@ describe('settings page: Colors (SPEC 11.3 D)', () => {
     assert.deepEqual(names(), ['Out of office', 'In a call', 'In a meeting', 'Tentative', 'Available'], 'the switch adds In a call');
     assert.equal(text(root.querySelector('#section-colors .bl-more-statuses span')), copy.COLORS.moreStatuses(4));
     tick(field(root, 'statusInput.enabled'), true);
-    assert.deepEqual(names(), ALL, 'the status input: all nine');
-    assert.equal(root.querySelector('#section-colors .bl-more-statuses'), null, 'nothing hidden, no line');
+    assert.deepEqual(names(), ['Out of office', 'In a call', 'In a meeting', 'Tentative', 'Available'],
+      'the status input alone adds no more from build 3.2 (SPEC 11.3 D)');
+    tick(field(root, 'callSwitch.enabled'), false);
+    assert.deepEqual(names(), ['Out of office', 'In a call', 'In a meeting', 'Tentative', 'Available'], 'the status input gives In a call');
     tick(field(root, 'statusInput.enabled'), false);
+    tick(field(root, 'callSwitch.enabled'), true);
     tick(field(root, 'callSwitch.enabled'), false);
     assert.deepEqual(names(), ['Out of office', 'In a meeting', 'Tentative', 'Available'], 'turned off, the rows hide again');
     buttonNamed(root.querySelector('#section-calendars')!, copy.CALENDARS.add).click();
@@ -858,6 +888,30 @@ describe('settings page: Colors (SPEC 11.3 D)', () => {
     assert.deepEqual(names(), ALL, 'a Microsoft 365 source with Teams status: all nine');
     tick(teams, false);
     assert.deepEqual(names(), ['Out of office', 'In a meeting', 'Tentative', 'Available'], 'Teams status off: hidden again');
+  });
+
+  it('an app\'s report in the last 30 days shows its status, with the singular line for one left (SPEC 11.3 D, from build 3.2)', async () => {
+    const day = 86_400_000;
+    const ago = (days: number) => new Date(T - days * day).toISOString();
+    answers.set('/version', { version: '0.1.0-beta.5' });
+    answers.set('/status', state({ statusInput: { enabled: true, port: 8582, listening: true, error: null, id: null,
+      reported: { busy: ago(2), away: ago(29), doNotDisturb: ago(31) } } }));
+    const { root, page } = mount({ platform: 'BusyLight', calendars: [ICLOUD_SOURCE], statusInput: { enabled: true, key: 'c'.repeat(43) } });
+    const names = (): string[] => root.querySelectorAll('#section-colors .bl-color-row').map((r) => text(r.querySelector('.bl-color-name')));
+    assert.deepEqual(names(), ['Out of office', 'In a call', 'In a meeting', 'Tentative', 'Available'], 'before /status answers');
+    page.startPolling();
+    await flush();
+    assert.deepEqual(names(), ['Out of office', 'In a call', 'In a meeting', 'Busy', 'Tentative', 'Away', 'Available'],
+      'Busy and Away were reported within 30 days; Do not disturb 31 days ago');
+    assert.equal(text(root.querySelector('#section-colors .bl-more-statuses span')), copy.COLORS.moreStatuses(2));
+    const sensors = root.querySelectorAll('#section-lights details.bl-all-sensors .form-check').map((c) => text(c.querySelector('.form-check-label')));
+    assert.deepEqual(sensors.slice(0, 5), ['Busy Light In a Meeting', 'Busy Light In a Call', 'Busy Light Busy in Teams', 'Busy Light Tentative',
+      'Busy Light Away'], 'the sensors follow the same rule');
+    answers.set('/status', state({ statusInput: { enabled: true, port: 8582, listening: true, error: null, id: null,
+      reported: { busy: ago(2), away: ago(1), doNotDisturb: ago(1) } } }));
+    await dom.clock.advance(15_000);
+    assert.equal(text(root.querySelector('#section-colors .bl-more-statuses span')), copy.COLORS.moreStatus, 'one left: the singular');
+    assert.equal(copy.COLORS.moreStatus, '1 more status comes from Teams or from other apps.');
   });
 
   it('hidden rows keep their saved colors on Save, and Reset colors resets all nine', async () => {
@@ -880,7 +934,7 @@ describe('settings page: Lights (SPEC 11.3 E)', () => {
   const lifxCard = (root: FakeElement): FakeElement => root.querySelector('#section-lights .bl-lifx-card')!;
   const lines = (root: FakeElement): string[] => lifxCard(root).querySelectorAll('.bl-lifx-results .bl-lifx-line').map((l) => text(l));
 
-  it('ticking Use a LIFX bulb searches at once; one bulb is used and written as its serial number', async () => {
+  it('ticking Use LIFX bulbs searches at once; one bulb is used and written as its serial number in lifx.bulbs', async () => {
     const { root, page } = mount();
     assert.deepEqual(lifxCard(root).querySelectorAll('input').length, 1, 'only the checkbox while it is off');
     answers.set('/lifx/discover', { bulbs: [FLOOR] });
@@ -889,8 +943,8 @@ describe('settings page: Lights (SPEC 11.3 E)', () => {
     await settle();
     assert.deepEqual(requests.map((r) => r.path), ['/lifx/discover']);
     assert.deepEqual(lines(root), ['Found Floor (192.168.4.50). Busy Light will use it.']);
-    assert.equal(page.config.lifx.bulb, 'd073d5000001');
-    assert.deepEqual(lastBlock().lifx, { enabled: true, bulb: 'd073d5000001', host: '', brightness: 100, refreshSeconds: 300 });
+    assert.deepEqual(page.config.lifx.bulbs, ['d073d5000001']);
+    assert.deepEqual(lastBlock().lifx, { enabled: true, bulbs: ['d073d5000001'], host: '', brightness: 100, refreshSeconds: 300 });
     assert.deepEqual(buttons(lifxCard(root).querySelector('.bl-lifx-actions')), [copy.LIGHTS.searchAgain]);
   });
 
@@ -908,20 +962,34 @@ describe('settings page: Lights (SPEC 11.3 E)', () => {
     assert.deepEqual(lines(root), ['Found Floor (192.168.4.50). Busy Light will use it.']);
   });
 
-  it('several bulbs: one radio each, and the choice is written as its serial number', async () => {
+  it('several bulbs: one checkbox each; the ticked ones are written as serial numbers in the order found, and none ticked is an error', async () => {
     const { root, page } = mount({ platform: 'BusyLight', lifx: { enabled: true } });
     answers.set('/lifx/discover', { bulbs: [DESK, FLOOR] });
     buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
     await settle();
-    assert.deepEqual(lines(root), ['Found 2 bulbs. Choose one:']);
-    const radios = lifxCard(root).querySelectorAll('input[type="radio"]');
-    assert.deepEqual(radios.map((r) => text(r.parentNode!)), ['Desk (192.168.4.51)', 'Floor (192.168.4.50)']);
-    assert.equal(page.config.lifx.bulb, '', 'nothing is chosen for the user');
-    radios[1].checked = true;
-    radios[1].dispatchEvent(new FakeEvent('change', true));
+    assert.deepEqual(lines(root), ['Found 2 bulbs. Choose the ones to use:']);
+    const boxes = () => lifxCard(root).querySelectorAll('.bl-lifx-choice input[type="checkbox"]');
+    assert.deepEqual(boxes().map((r) => text(r.parentNode!)), ['Desk (192.168.4.51)', 'Floor (192.168.4.50)']);
+    assert.deepEqual(page.config.lifx.bulbs, [], 'nothing is chosen for the user');
+    assert.deepEqual(page.issues().map((i) => `${i.label}: ${i.message}`), ['LIFX bulbs: Choose at least one bulb, or turn off Use LIFX bulbs.'],
+      'several found and none ticked (SPEC 11.3 E and H)');
+    tick(boxes()[1], true);
     await settle();
-    assert.equal(page.config.lifx.bulb, 'd073d5000001');
-    assert.equal(lifxCard(root).querySelectorAll('input[type="radio"]')[1].checked, true);
+    assert.deepEqual(page.config.lifx.bulbs, ['d073d5000001']);
+    assert.deepEqual(page.issues(), []);
+    tick(boxes()[0], true);
+    await settle();
+    assert.deepEqual(lastBlock().lifx, { enabled: true, bulbs: ['d073d5000002', 'd073d5000001'], host: '', brightness: 100, refreshSeconds: 300 },
+      'both, in the order found');
+    assert.deepEqual(boxes().map((b) => b.checked), [true, true]);
+    tick(boxes()[0], false);
+    tick(boxes()[1], false);
+    await settle();
+    assert.deepEqual(page.config.lifx.bulbs, []);
+    assert.equal(feedback(root, 'lifx.bulbs'), VALIDATION.chooseBulb, 'shown under the list once a box was unticked');
+    tick(field(root, 'lifx.enabled'), false);
+    await settle();
+    assert.deepEqual(page.issues(), [], 'no error with LIFX off');
   });
 
   it('none found, the saved bulb missing, and a build 1 name written as its serial when found', async () => {
@@ -930,20 +998,20 @@ describe('settings page: Lights (SPEC 11.3 E)', () => {
     buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
     await settle();
     assert.deepEqual(lines(root), [copy.LIGHTS.none]);
-    const named = mount({ platform: 'BusyLight', lifx: { enabled: true, bulb: 'floor' } });
+    const named = mount({ platform: 'BusyLight', lifx: { enabled: true, bulbs: ['floor'] } });
     buttonNamed(lifxCard(named.root), copy.LIGHTS.searchAgain).click();
     await settle();
     assert.deepEqual(lines(named.root), ['floor was not found just now. It may be switched off.']);
     answers.set('/lifx/discover', { bulbs: [DESK, FLOOR] });
     buttonNamed(lifxCard(named.root), copy.LIGHTS.searchAgain).click();
     await settle();
-    assert.equal(named.page.config.lifx.bulb, 'd073d5000001', 'the name matched without regard to case');
-    assert.equal(lifxCard(named.root).querySelectorAll('input[type="radio"]').find((r) => r.checked)!.value, 'd073d5000001');
+    assert.deepEqual(named.page.config.lifx.bulbs, ['d073d5000001'], 'the name matched without regard to case');
+    assert.equal(lifxCard(named.root).querySelectorAll('.bl-lifx-choice input[type="checkbox"]').find((r) => r.checked)!.value, 'd073d5000001');
     void page;
   });
 
   it('an IP address under Advanced hides the search and says which bulb is used; it is validated', async () => {
-    const { root } = mount({ platform: 'BusyLight', lifx: { enabled: true, bulb: 'd073d5000001' } });
+    const { root } = mount({ platform: 'BusyLight', lifx: { enabled: true, bulbs: ['d073d5000001'] } });
     const advanced = lifxCard(root).querySelector('details')!;
     assert.equal(advanced.open, false);
     assert.equal(text(advanced.querySelector('summary')), copy.SHELL.advanced);
@@ -951,6 +1019,10 @@ describe('settings page: Lights (SPEC 11.3 E)', () => {
     fill(root, 'lifx.host', '192.168.4.99');
     assert.deepEqual(lines(root), ['Busy Light will use the bulb at 192.168.4.99.']);
     assert.equal(lifxCard(root).querySelector('.bl-search-again'), null);
+    fill(root, 'lifx.host', '192.168.4.99, 192.168.4.21');
+    assert.deepEqual(lines(root), ['Busy Light will use the bulb at 192.168.4.99.', 'Busy Light will use the bulb at 192.168.4.21.'], 'one line per address');
+    fill(root, 'lifx.host', '192.168.4.99, 999.1.1.1');
+    assert.equal(feedback(root, 'lifx.host'), VALIDATION.host, 'any address that is not one');
     fill(root, 'lifx.host', '999.1.1.1');
     assert.equal(feedback(root, 'lifx.host'), VALIDATION.host);
     fill(root, 'lifx.host', '');
@@ -972,13 +1044,65 @@ describe('settings page: Lights (SPEC 11.3 E)', () => {
     assert.deepEqual(buttons(lifxCard(root).querySelector('.ns-footer-right')), [copy.LIGHTS.testing]);
     await settle();
     assert.equal(text(lifxCard(root).querySelector('.ns-card-results')), copy.LIGHTS.answered);
-    assert.deepEqual(requests.find((r) => r.path === '/lifx/test')!.payload, { brightness: 60, serial: 'd073d5000001', host: '192.168.4.50' });
+    assert.deepEqual(requests.find((r) => r.path === '/lifx/test')!.payload, { brightness: 60, bulbs: [{ serial: 'd073d5000001', host: '192.168.4.50' }] });
     fill(root, 'lifx.host', '192.168.4.99');
     answers.set('/lifx/test', { answered: false });
     buttonNamed(lifxCard(root), copy.LIGHTS.testLight).click();
     await settle();
     assert.equal(text(lifxCard(root).querySelector('.ns-card-results')), copy.LIGHTS.noAnswer);
-    assert.deepEqual(requests.filter((r) => r.path === '/lifx/test')[1].payload, { brightness: 60, host: '192.168.4.99' });
+    assert.deepEqual(requests.filter((r) => r.path === '/lifx/test')[1].payload, { brightness: 60, bulbs: [{ host: '192.168.4.99' }] });
+  });
+
+  // Build 3.2: several bulbs (C8, SPEC 11.3 E).
+
+  it('Test light with two bulbs ticked tests both and shows one result per bulb', async () => {
+    const { root } = mount({ platform: 'BusyLight', lifx: { enabled: true, bulbs: ['d073d5000002', 'd073d5000001'] } });
+    answers.set('/lifx/discover', { bulbs: [DESK, FLOOR] });
+    buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
+    await settle();
+    answers.set('/lifx/test', { answered: false,
+      results: [{ label: 'Desk', host: DESK.ip, answered: true }, { label: null, host: FLOOR.ip, answered: false }] });
+    assert.equal(text(lifxCard(root).querySelector('.bl-test-help')), 'Shows red, then green, on each bulb chosen.');
+    buttonNamed(lifxCard(root), copy.LIGHTS.testLight).click();
+    await settle();
+    assert.deepEqual(requests.find((r) => r.path === '/lifx/test')!.payload, { brightness: 100, bulbs: [
+      { serial: 'd073d5000002', host: DESK.ip }, { serial: 'd073d5000001', host: FLOOR.ip },
+    ] });
+    assert.deepEqual(lifxCard(root).querySelectorAll('.ns-card-results .alert').map((a) => [text(a), a.getAttribute('class')!.includes('alert-success')]), [
+      ['Desk answered.', true],
+      ['No answer from Floor. Check that it is on and on the same network as Homebridge.', false],
+    ], 'the page names a bulb the server did not label');
+  });
+
+  it('an old lifx.bulb opens with its bulb ticked; one found beside a missing saved bulb can be ticked; the bulbs in use from lights', async () => {
+    answers.set('/status', state({ lights: [
+      { enabled: true, label: 'Floor', host: FLOOR.ip, found: 'remembered', answered: true },
+      { enabled: true, label: 'Status Light', host: '192.168.4.21', found: 'discovered', answered: false },
+    ] }));
+    const { root, page } = mount({ platform: 'BusyLight', calendars: [ICLOUD_SOURCE], lifx: { enabled: true, bulb: 'd073d5000001' } });
+    page.startPolling();
+    await flush();
+    assert.deepEqual(lines(root),
+      ['Busy Light is using Floor (192.168.4.50).', 'Busy Light is using Status Light (192.168.4.21), but it did not answer last time.']);
+    assert.deepEqual(page.config.lifx.bulbs, ['d073d5000001'], 'the old lifx.bulb, as a list of one');
+    answers.set('/lifx/discover', { bulbs: [DESK, FLOOR] });
+    buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
+    await settle();
+    assert.deepEqual(lifxCard(root).querySelectorAll('.bl-lifx-choice input').map((b) => b.checked), [false, true], 'Floor ticked');
+    fill(root, 'name', 'Busy Light');
+    await settle();
+    assert.deepEqual(lastBlock().lifx, { enabled: true, bulbs: ['d073d5000001'], host: '', brightness: 100, refreshSeconds: 300 },
+      'lifx.bulbs written and lifx.bulb dropped');
+    // Floor switched off at the wall, and only Desk answers: Floor stays chosen, and Desk can be ticked beside it.
+    answers.set('/lifx/discover', { bulbs: [DESK] });
+    buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
+    await settle();
+    assert.deepEqual(lines(root), ['Floor was not found just now. It may be switched off.'], 'no heading line for one bulb to tick');
+    assert.deepEqual(lifxCard(root).querySelectorAll('.bl-lifx-choice input').map((b) => [text(b.parentNode!), b.checked]), [['Desk (192.168.4.51)', false]]);
+    assert.deepEqual(page.config.lifx.bulbs, ['d073d5000001'], 'not replaced by the bulb found');
+    tick(lifxCard(root).querySelector('.bl-lifx-choice input')!, true);
+    await settle();
+    assert.deepEqual(page.config.lifx.bulbs, ['d073d5000002', 'd073d5000001'], 'the found bulb, then the saved one not found');
   });
 
   it('the sensors to create, named from the platform name, the other seven under Show all statuses, and the three steps', async () => {
@@ -992,9 +1116,9 @@ describe('settings page: Lights (SPEC 11.3 E)', () => {
     assert.equal(all.open, false);
     // From build 3.1, the statuses a calendar-only setup cannot produce come last, with their help (SPEC 11.3 E).
     assert.deepEqual(labels(all), ['Door In a Meeting', 'Door Tentative', 'Door In a Call', 'Door Do Not Disturb', 'Door Busy in Teams', 'Door Away',
-      'Door Offline']);
+      'Door Offline', 'Door Meeting Soon']);
     assert.deepEqual(all.querySelectorAll('.form-check').map((c) => text(c.querySelector('.form-text'))),
-      ['', '', ...Array(5).fill(copy.LIGHTS.nothingReports)]);
+      ['', '', ...Array(5).fill(copy.LIGHTS.nothingReports), `${copy.LIGHTS.meetingSoonHelp} ${copy.LIGHTS.nothingReports}`]);
     assert.deepEqual(section.querySelectorAll('.bl-sensors input').slice(0, 3).map((i) => i.checked), [true, true, true]);
     tick(all.querySelectorAll('input')[0], true);
     tick(section.querySelectorAll('.bl-sensors input')[0], false);
@@ -1180,7 +1304,9 @@ describe('settings page: Status from other apps (SPEC 11.3 I)', () => {
     const node = section(root);
     assert.equal(text(node.querySelector('h2')), copy.STATUS_INPUT.heading);
     assert.equal(text(node.querySelector('.section-copy')), `${copy.STATUS_INPUT.help} ${copy.STATUS_INPUT.howAppsConnect}`);
-    const link = node.querySelector('.section-copy a')!;
+    const [jeronimo, link] = node.querySelectorAll('.section-copy a');
+    assert.deepEqual([text(jeronimo), jeronimo.getAttribute('href'), jeronimo.getAttribute('target'), jeronimo.getAttribute('rel')],
+      [copy.STATUS_INPUT.jeronimo, copy.STATUS_INPUT.jeronimoUrl, '_blank', 'noopener noreferrer'], 'Jeronimo links to its site (from build 3.2)');
     assert.deepEqual([link.getAttribute('href'), link.getAttribute('target'), link.getAttribute('rel')],
       [copy.STATUS_INPUT.docsUrl, '_blank', 'noopener noreferrer']);
     assert.equal(field(root, 'statusInput.enabled').checked, false);
@@ -1239,6 +1365,45 @@ describe('settings page: Status from other apps (SPEC 11.3 I)', () => {
     fill(root, 'statusInput.port', '9000');
     await settle();
     assert.equal((lastBlock().statusInput as Record<string, unknown>).port, 9000);
+  });
+
+  it('each address line has its own Copy button, which copies that address and reads Copied (SPEC 11.3 I, from build 3.2)', async () => {
+    answers.set('/input/info', INFO);
+    const { root } = mount({ platform: 'BusyLight', statusInput: { enabled: true, key: 'k'.repeat(43) } });
+    await settle();
+    const rows = section(root).querySelectorAll('.bl-input-addresses .bl-address-row');
+    assert.deepEqual(rows.map((r) => [text(r.querySelector('.bl-readonly-line')), text(r.querySelector('button'))]), [
+      ['http://homebridge.local:8582', copy.STATUS_INPUT.copy], ['http://192.168.4.10:8582', copy.STATUS_INPUT.copy],
+    ]);
+    for (const row of rows) {
+      const describedBy = row.querySelector('button')!.getAttribute('aria-describedby');
+      assert.equal(row.querySelector('.bl-readonly-line')!.getAttribute('id'), describedBy, 'each button is told apart by its line');
+    }
+    rows[1].querySelector('button')!.click();
+    await flush();
+    assert.equal(dom.document.copied.at(-1), 'http://192.168.4.10:8582');
+    const after = section(root).querySelectorAll('.bl-input-addresses .bl-address-row');
+    assert.deepEqual(after.map((r) => text(r.querySelector('button'))), [copy.STATUS_INPUT.copy, copy.STATUS_INPUT.copied]);
+    after[0].querySelector('button')!.click();
+    await flush();
+    assert.equal(dom.document.copied.at(-1), 'http://homebridge.local:8582');
+  });
+
+  it('a sender that cleared shows Cleared, one whose report ran out Expired, both in the secondary tone (SPEC 11.3 I, from build 3.2)', async () => {
+    const now = dom.clock.now;
+    const ended = (sender: string, how: string | undefined) => ({ sender, status: 'busy', app: null, via: 'api', auth: 'signed',
+      lastHeard: new Date(now - 60_000).toISOString(), expiresAt: new Date(now - 30_000).toISOString(), active: false, ...(how ? { ended: how } : {}) });
+    answers.set('/version', { version: '0.1.0-beta.5' });
+    answers.set('/status', state({ inputs: [ended('Cleared Mac', 'cleared'), ended('Expired Mac', 'expired'), ended('Older beta Mac', undefined),
+      { sender: 'Home app', status: 'inCall', app: null, via: 'switch', auth: null, lastHeard: new Date(now - 60_000).toISOString(), expiresAt: null,
+        active: false, ended: 'cleared' }] }));
+    const { root, page } = mount({ platform: 'BusyLight', calendars: [ICLOUD_SOURCE] });
+    page.startPolling();
+    await flush();
+    const badges = section(root).querySelectorAll('.bl-sender-row').map((r) => [text(r.querySelector('.bl-sender-name')),
+      text(r.querySelector('.badge')), r.querySelector('.badge')!.className.replace(/.*bl-badge-/, '')]);
+    assert.deepEqual(badges, [['Cleared Mac', 'Cleared', 'checking'], ['Expired Mac', 'Expired', 'checking'],
+      ['Older beta Mac', 'Expired', 'checking'], ['Home app', 'Cleared', 'checking']]);
   });
 
   it('Replace key asks first; Replace makes a new key and Cancel keeps the old one', async () => {
@@ -1598,14 +1763,71 @@ describe('settings page: the masked setup code (SPEC 11.3 I)', () => {
 
 // SPEC 11.3 E (build 3.1), 15 item 24: the sensors the setup cannot produce come last, can still be ticked, and follow live.
 
+// Build 3.2 (SPEC 15 item 33): the Working switch checkbox, Warn before meetings and the Colors help line.
+
+describe('settings page: the Working switch, Warn before meetings and light only during meetings (build 3.2)', () => {
+  it('Add a Working switch to the Home app sits below the steps, with its help, and writes workingSwitch', async () => {
+    const { root } = mount();
+    const lights = root.querySelector('#section-lights')!;
+    const box = lights.querySelector('.bl-working-switch')!;
+    assert.equal(text(box.querySelector('.form-check-label')), copy.LIGHTS.workingSwitch);
+    assert.equal(text(box.querySelector('.form-text')), copy.LIGHTS.workingSwitchHelp);
+    const children = lights.querySelector('.bl-other-lights')!.children;
+    assert.ok(children.indexOf(box) > children.indexOf(lights.querySelector('.ns-steps')!), 'below the steps');
+    assert.equal(field(root, 'workingSwitch.enabled').checked, false);
+    tick(field(root, 'workingSwitch.enabled'), true);
+    await settle();
+    assert.deepEqual(lastBlock().workingSwitch, { enabled: true });
+    assert.equal(mount({ platform: 'BusyLight', workingSwitch: { enabled: true } }).root.querySelector('[data-path="workingSwitch.enabled"] input')!.checked,
+      true);
+  });
+
+  it('Warn before meetings: Off and four durations at the bottom of Colors, writing seconds; Meeting Soon follows it', async () => {
+    const { root } = mount();
+    const colors = root.querySelector('#section-colors')!;
+    const select = field(root, 'meetingWarningSeconds');
+    assert.equal(text(colors.querySelector('.bl-meeting-warning label')), copy.COLORS.warn);
+    assert.equal(text(colors.querySelector('.bl-meeting-warning .form-text')), copy.COLORS.warnHelp);
+    assert.deepEqual(select.querySelectorAll('option').map((o) => [o.getAttribute('value'), text(o)]),
+      [['0', 'Off'], ['60', '1 minute'], ['120', '2 minutes'], ['180', '3 minutes'], ['300', '5 minutes']]);
+    assert.equal(select.value, '0');
+    const card = colors.querySelector('.bl-colors-card .card-body')!;
+    assert.ok(card.children.indexOf(colors.querySelector('.bl-meeting-warning')!) > card.children.indexOf(colors.querySelector('.bl-actions')!),
+      'below Reset colors');
+    choose(select, '120');
+    await settle();
+    assert.equal(lastBlock().meetingWarningSeconds, 120);
+    const soon = root.querySelectorAll('#section-lights details.bl-all-sensors .form-check')
+      .find((c) => text(c.querySelector('.form-check-label')) === 'Busy Light Meeting Soon')!;
+    assert.equal(text(soon.querySelector('.form-text')), copy.LIGHTS.meetingSoonHelp, 'Meeting Soon can happen now');
+    const kept = mount({ platform: 'BusyLight', meetingWarningSeconds: 90 });
+    assert.deepEqual(field(kept.root, 'meetingWarningSeconds').querySelectorAll('option').map((o) => text(o)),
+      ['Off', '1 minute', '1 minute 30 seconds', '2 minutes', '3 minutes', '5 minutes'], 'a hand-written value is kept as one more option');
+  });
+
+  it('the Colors help line for lighting up only during meetings (SPEC 11.3 D, C7 of build 3.2)', () => {
+    const { root } = mount();
+    const lines = root.querySelectorAll('#section-colors .section-copy').map((p) => text(p));
+    assert.deepEqual(lines, [copy.COLORS.help, copy.COLORS.meetingsHelp]);
+  });
+});
+
 describe('settings page: the per-status sensors and the statuses the setup can produce (SPEC 11.3 E)', () => {
   const sensors = (root: FakeElement): Array<[string, string]> => root.querySelectorAll('#section-lights details.bl-all-sensors .form-check')
     .map((c) => [text(c.querySelector('.form-check-label')), text(c.querySelector('.form-text'))]);
 
-  it('with the status input on, every status can happen: section 7 order, no help', () => {
-    const { root } = mount({ platform: 'BusyLight', statusInput: { enabled: true, key: 'c'.repeat(43) } });
+  it('with Teams status, every status can happen: section 7 order, no help; Meeting Soon last while the warning is off', () => {
+    const { root } = mount({ platform: 'BusyLight', calendars: [{ type: 'microsoft', id: 'work', name: 'Work', tenantId: '11111111-2222-3333-4444-555555555555',
+      clientId: '66666666-7777-8888-9999-000000000000', useTeamsStatus: true, useCalendar: true }] });
     assert.deepEqual(sensors(root), [['Busy Light In a Meeting', ''], ['Busy Light In a Call', ''], ['Busy Light Do Not Disturb', ''],
-      ['Busy Light Busy in Teams', ''], ['Busy Light Tentative', ''], ['Busy Light Away', ''], ['Busy Light Offline', '']]);
+      ['Busy Light Busy in Teams', ''], ['Busy Light Tentative', ''], ['Busy Light Away', ''], ['Busy Light Offline', ''],
+      ['Busy Light Meeting Soon', `${copy.LIGHTS.meetingSoonHelp} ${copy.LIGHTS.nothingReports}`]]);
+  });
+
+  it('with the meeting warning on, Meeting Soon can happen, with its help (SPEC 11.3 E, from build 3.2)', () => {
+    const { root } = mount({ platform: 'BusyLight', meetingWarningSeconds: 120 });
+    assert.deepEqual(sensors(root).slice(0, 3), [['Busy Light In a Meeting', ''], ['Busy Light Tentative', ''],
+      ['Busy Light Meeting Soon', copy.LIGHTS.meetingSoonHelp]]);
   });
 
   it('the On a Call switch moves In a Call up, live; a status that cannot happen can still be ticked', async () => {
@@ -1619,6 +1841,51 @@ describe('settings page: the per-status sensors and the statuses the setup can p
     tick(offline.querySelector('input')!, true);
     await settle();
     assert.ok((lastBlock().sensors as string[]).includes('offline'));
+  });
+});
+
+// Build 3.2 (SPEC 11.2 item 11, D1): a message from leaving a field waits until the pointer is released, so a click on a
+// button below an empty required field lands.
+
+describe('settings page: the lost click (SPEC 11.2 item 11)', () => {
+  it('Add calendar pressed under an empty Outlook Address: the click lands, then the message shows', async () => {
+    const { root } = mount();
+    const section = root.querySelector('#section-calendars')!;
+    buttonNamed(section, copy.CALENDARS.add).click();
+    section.querySelector('.ns-chooser-tile[data-type="microsoft"]')!.click();
+    section.querySelector('.bl-outlook-published')!.click();
+    await settle();
+    const id = section.querySelectorAll('.ns-card').at(-1)!.getAttribute('data-card-id')!;
+    const address = field(root, `calendars.${id}.url`);
+    assert.equal(dom.document.activeElement, address, 'the Address has focus');
+    const add = buttonNamed(section, copy.CALENDARS.add);
+    // Press: focus leaves the empty Address. Its message waits, so nothing below it moves under the pointer.
+    add.dispatchEvent(new FakeEvent('pointerdown', true));
+    address.blur();
+    assert.equal(feedback(root, `calendars.${id}.url`), '', 'no message while the pointer is down');
+    await dom.clock.advance(10);
+    assert.equal(feedback(root, `calendars.${id}.url`), '', 'nor a moment later');
+    // Release, and the click lands on Add calendar.
+    add.dispatchEvent(new FakeEvent('pointerup', true));
+    add.click();
+    assert.ok(section.querySelector('.ns-chooser'), 'the chooser opened: the click landed');
+    await dom.clock.advance(0);
+    assert.equal(feedback(root, `calendars.${id}.url`), 'Address is required.', 'the message shows once the click has landed');
+  });
+
+  it('leaving a field with the keyboard shows its message at once, and a pointer never released shows it after 5 seconds', async () => {
+    const { root } = mount();
+    fill(root, 'name', ' ');
+    assert.equal(feedback(root, 'name'), 'Name is required.');
+    const other = mount();
+    const name = field(other.root, 'name');
+    name.focus();
+    type(name, '');
+    other.root.querySelector('#section-settings')!.dispatchEvent(new FakeEvent('pointerdown', true));
+    name.blur();
+    assert.equal(feedback(other.root, 'name'), '');
+    await dom.clock.advance(5000);
+    assert.equal(feedback(other.root, 'name'), 'Name is required.');
   });
 });
 
@@ -1754,17 +2021,40 @@ describe('settings page: the owner\'s configuration, opened and saved back (buil
     const { root, page } = mount(OWNER);
     await settle();
     assert.deepEqual(page.issues(), []);
-    assert.equal(root.querySelectorAll('#section-colors .bl-color-row').length, 9, 'the status input and the switch are on');
+    assert.equal(root.querySelectorAll('#section-colors .bl-color-row').length, 5, 'the status input and the switch: In a call joins the four');
     assert.deepEqual([field(root, 'pollSeconds').value, field(root, 'calendarSeconds').value], ['30', '180']);
     assert.ok(openCard(root, 'office').querySelector('details.bl-outlook-howto'));
     assert.equal(field(root, 'calendars.office.calendarSeconds').value, '', 'Same as Settings');
     // Any change pushes the whole block; put the name back as it was, as Save would write it.
     fill(root, 'name', 'Busy Light');
     await settle();
-    assert.deepEqual(lastBlock(), OWNER, 'written back with the same values, intervals in seconds');
+    const { bulb, ...lifx } = OWNER.lifx;
+    assert.deepEqual(lastBlock(), { ...OWNER, lifx: { ...lifx, bulbs: [bulb] }, meetingWarningSeconds: 0, workingSwitch: { enabled: false } },
+      'written back with the same values, intervals in seconds, the build 3.2 settings off, and Floor in lifx.bulbs in place of lifx.bulb');
     const read = parseConfig(lastBlock());
     assert.deepEqual(read.issues, [], 'the plugin reads the block with no issues');
     assert.deepEqual(read.config, parseConfig(OWNER).config);
     assert.deepEqual([read.config.pollSeconds, read.config.calendarSeconds], [30, 180]);
+  });
+
+  it('opens with the build 3.2 controls shown and off: the Working switch, Warn before meetings, Copy on each address line', async () => {
+    answers.set('/input/info', { hostname: 'homebridge.local', addresses: ['192.168.4.10'], port: 8582, id: 'q3Lr8vT0cXw2mN5a', addressChange: null });
+    answers.set('/status', state({ status: 'available', reason: { source: null, until: null },
+      inputs: [{ sender: 'Home app', status: 'inCall', app: null, via: 'switch', auth: null, lastHeard: new Date(T - 600_000).toISOString(),
+        expiresAt: null, active: false, ended: 'cleared' }] }));
+    const { root, page } = mount(OWNER);
+    page.startPolling();
+    await settle();
+    assert.deepEqual(page.issues(), []);
+    assert.equal(field(root, 'workingSwitch.enabled').checked, false);
+    assert.equal(field(root, 'meetingWarningSeconds').value, '0', 'Warn before meetings: Off');
+    const rows = root.querySelectorAll('#section-statusInput .bl-address-row');
+    assert.deepEqual(rows.map((r) => [text(r.querySelector('.bl-readonly-line')), text(r.querySelector('button'))]),
+      [['http://homebridge.local:8582', 'Copy'], ['http://192.168.4.10:8582', 'Copy']]);
+    assert.deepEqual(root.querySelectorAll('#section-statusInput .bl-sender-row .bl-badge').map((b) => text(b)), ['Cleared'],
+      'the On a Call switch turned off reads Cleared');
+    assert.ok(root.querySelectorAll('#section-lights .form-check-label').some((l) => text(l) === 'Busy Light Meeting Soon'));
+    assert.equal(requests.filter((r) => r.path !== '/version' && r.path !== '/status' && r.path !== '/input/info').length, 0,
+      'opening it asks nothing else');
   });
 });

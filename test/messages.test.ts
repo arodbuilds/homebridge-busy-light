@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   addressChanged,
   callSwitchTimeout, calendarsNotInUse, inputClockOff, inputFailed, inputNotLocal, inputPlainKeyOff, inputStarted, inputWrongKey,
-  listedCalendarGone, senderCleared, senderExpired, senderReports,
+  formatTime, formatWhen, listedCalendarGone, repeatLimit, senderCleared, senderExpired, senderReports, statusLine, workingOff, workingOn,
 } from '../src/messages.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -64,4 +64,32 @@ test('the address change line is verbatim from SPEC section 12', () => {
 test('the On a Call timeout line is verbatim from SPEC section 12, singular for 1', () => {
   assert.equal(callSwitchTimeout('Busy Light', 3), specLine('Call switch timeout').replace('{name}', 'Busy Light').replace('{n}', '3'));
   assert.equal(callSwitchTimeout('Busy Light', 1), 'Busy Light On a Call turned itself off after 1 hour.');
+});
+
+test('the Repeat limit line is verbatim from SPEC section 12', () => {
+  assert.equal(repeatLimit('Rota'), specLine('Repeat limit').replace('{name}', 'Rota'));
+});
+
+test('until times carry their day when they are not today (SPEC 12 {when}, 11.3 G)', () => {
+  // Thursday October 8, 2026, 3:00 PM on the host's clock.
+  const now = new Date(2026, 9, 8, 15).getTime();
+  const at = (day: number, hour: number, minute = 0) => new Date(2026, 9, day, hour, minute).getTime();
+  assert.equal(formatWhen(at(8, 16, 30), now), formatTime(at(8, 16, 30)), 'today: the time alone');
+  assert.equal(formatWhen(at(9, 9), now), `tomorrow at ${formatTime(at(9, 9))}`);
+  assert.equal(formatWhen(at(10, 9), now), `Saturday at ${formatTime(at(10, 9))}`);
+  assert.equal(formatWhen(at(12, 9), now), `Monday at ${formatTime(at(12, 9))}`);
+  assert.equal(formatWhen(at(14, 9), now), `Wednesday at ${formatTime(at(14, 9))}`, 'within the next 6 days');
+  assert.equal(formatWhen(at(15, 9), now), `October 15 at ${formatTime(at(15, 9))}`, 'a week on');
+  assert.equal(formatWhen(new Date(2026, 10, 2, 9).getTime(), now), `November 2 at ${formatTime(new Date(2026, 10, 2, 9).getTime())}`);
+  // Across midnight: 11:50 PM until 12:10 AM is tomorrow.
+  assert.equal(formatWhen(at(9, 0, 10), at(8, 23, 50)), `tomorrow at ${formatTime(at(9, 0, 10))}`);
+  const [line] = specLines('Status change');
+  assert.ok(line.endsWith('until {when}).'));
+  assert.equal(statusLine('Available', { source: null, until: at(9, 9) }, now), `Status: Available (until tomorrow at ${formatTime(at(9, 9))}).`);
+  assert.equal(statusLine('In a meeting', { source: 'Work', until: at(8, 15, 30) }, now), `Status: In a meeting (Work, until ${formatTime(at(8, 15, 30))}).`);
+});
+
+test('the Working lines are verbatim from SPEC section 12', () => {
+  assert.equal(workingOff('Busy Light'), specLine('Working off').replace('{name}', 'Busy Light'));
+  assert.equal(workingOn('Busy Light'), specLine('Working on').replace('{name}', 'Busy Light'));
 });

@@ -9,7 +9,7 @@ import { AddressWatcher } from './address-watch.js';
 import type { AddressDeps } from './addresses.js';
 import { parseConfig } from './config.js';
 import type { BusyLightConfig } from './config.js';
-import { BusyLightEngine, systemClock } from './engine.js';
+import { BusyLightEngine, ClockTimer, systemClock } from './engine.js';
 import type { Clock } from './engine.js';
 import { ensureStorageDir } from './files.js';
 import type { LifxClient } from './lifx.js';
@@ -28,18 +28,21 @@ export const MANUFACTURER = 'Busy Light';
 export const SENSOR_MODEL = 'Status sensor';
 export const OVERRIDE_MODEL = 'Override switch';
 export const CALL_SWITCH_MODEL = 'Call switch';
+export const WORKING_SWITCH_MODEL = 'Working switch';
 
 /** UUIDs come from the key, never the display name, so renaming keeps rooms and automations (SPEC 7 item 3). */
 export function sensorUuidSeed(key: SensorKey): string {
-  return `busy-light:sensor:${key}`;
+  // The Meeting Soon sensor's seed is written as the build prompt gave it (SPEC 7 item 3).
+  return key === 'meetingSoon' ? 'busy-light:sensor:meeting-soon' : `busy-light:sensor:${key}`;
 }
 
 export const OVERRIDE_UUID_SEED = 'busy-light:override';
 export const CALL_SWITCH_UUID_SEED = 'busy-light:call-switch';
+export const WORKING_SWITCH_UUID_SEED = 'busy-light:working-switch';
 
 /** Whether a sensor detects occupancy for a status. Unknown turns every sensor off. */
 export function sensorOn(key: SensorKey, status: Status | null): boolean {
-  return status !== null && status !== 'unknown' && SENSOR_STATUSES[key].includes(status);
+  return status !== null && status !== 'unknown' && status !== 'notWorking' && SENSOR_STATUSES[key].includes(status);
 }
 
 /** Test seams: a clock, a LIFX client, and the status input's server factory (so no test opens a socket). */
@@ -64,7 +67,9 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
   private overrideAccessory: PlatformAccessory | null = null;
   /** The On a Call switch (SPEC 18.9), when enabled. Its context holds `callOnAt`, the time it was turned on. */
   private callAccessory: PlatformAccessory | null = null;
-  private callTimer: unknown = null;
+  /** The Working switch (SPEC 6.6, 7 item 9), when enabled. Its context holds `working`, true while it is on. */
+  private workingAccessory: PlatformAccessory | null = null;
+  private readonly callTimer: ClockTimer;
   private readonly clock: Clock;
 
   constructor(
@@ -76,6 +81,7 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
     const { config, issues } = parseConfig(rawConfig);
     this.config = config;
     this.clock = deps.clock ?? systemClock;
+    this.callTimer = new ClockTimer(this.clock);
     this.log = withDebug(log, config.debug);
     for (const issue of issues) {
       this.log[issue.level](validation(issue.path, issue.message));
@@ -114,7 +120,9 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
       clock: this.deps.clock,
       lifx: this.deps.lifx,
       override: this.overrideAccessory?.context.override === true,
+      working: this.workingAccessory ? this.workingAccessory.context.working !== false : true,
       onStatus: (status) => this.showStatus(status),
+      onMeetingSoon: (on) => this.showMeetingSoon(on),
     });
     const id = this.engine.inputServerStatus().id;
     this.engine.inputServerStatus = () => ({ listening: false, error: null, id, ...record });
@@ -222,6 +230,27 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
       this.callAccessory = accessory;
     }
 
+    if (this.config.workingSwitch.enabled) {
+      const uuid = this.api.hap.uuid.generate(WORKING_SWITCH_UUID_SEED);
+      const name = `${this.config.name} Working`;
+      keep.add(uuid);
+      const accessory = this.accessory(uuid, name);
+      // It starts on (SPEC 7 item 9).
+      accessory.context.working = accessory.context.working !== false;
+      accessory.getService(S.AccessoryInformation)!
+        .setCharacteristic(C.Manufacturer, MANUFACTURER)
+        .setCharacteristic(C.Model, WORKING_SWITCH_MODEL)
+        .setCharacteristic(C.SerialNumber, 'working-switch')
+        .setCharacteristic(C.FirmwareRevision, version);
+      const service = accessory.getService(S.Switch) ?? accessory.addService(S.Switch, name);
+      this.name(service, name);
+      service.updateCharacteristic(C.On, accessory.context.working);
+      service.getCharacteristic(C.On)
+        .onGet(() => accessory.context.working !== false)
+        .onSet((value: CharacteristicValue) => this.setWorking(value === true));
+      this.workingAccessory = accessory;
+    }
+
     const stale = [...this.cached.values()].filter((a) => !keep.has(a.UUID));
     if (stale.length) {
       this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, stale);
@@ -265,6 +294,15 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
     void this.engine?.setOverride(on);
   }
 
+  /** The Working switch from HomeKit (SPEC 6.6): stored and answered at once; the status and the bulb follow. */
+  private setWorking(on: boolean): void {
+    if (this.workingAccessory) {
+      this.workingAccessory.context.working = on;
+      this.api.updatePlatformAccessories([this.workingAccessory]);
+    }
+    void this.engine?.setWorking(on);
+  }
+
   /**
    * The On a Call switch turned on or off from HomeKit (SPEC 18.9 item 2). HomeKit is answered at once; the report and
    * the status follow. Turning it on again while it is on starts the safety period again.
@@ -303,18 +341,13 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
     return this.config.callSwitch.hours * 3_600_000;
   }
 
+  /** Clamped to Node's largest delay and set again when it fires early (SPEC 8.1 item 5), for a clock that was wrong. */
   private startCallTimer(onAt: number): void {
-    this.callTimer = this.clock.setTimeout(() => {
-      this.callTimer = null;
-      this.callTimedOut();
-    }, Math.max(0, onAt + this.callHoursMs - this.clock.now()));
+    this.callTimer.set(onAt + this.callHoursMs, () => this.callTimedOut());
   }
 
   private stopCallTimer(): void {
-    if (this.callTimer !== null) {
-      this.clock.clearTimeout(this.callTimer);
-      this.callTimer = null;
-    }
+    this.callTimer.clear();
   }
 
   /** The safety timeout (SPEC 18.9 item 3): the switch turns itself off and its report is withdrawn. */
@@ -335,13 +368,26 @@ export class BusyLightPlatform implements DynamicPlatformPlugin {
     return this.callAccessory;
   }
 
-  /** Every sensor follows the status; unknown turns them all off. */
+  /** Every sensor follows the status; unknown and not working turn them all off. Meeting Soon follows the warning. */
   showStatus(status: Status): void {
     const C = this.api.hap.Characteristic;
     for (const [key, service] of this.sensors) {
+      if (key === 'meetingSoon') {
+        if (status === 'unknown' || status === 'notWorking') {
+          service.updateCharacteristic(C.OccupancyDetected, C.OccupancyDetected.OCCUPANCY_NOT_DETECTED);
+        }
+        continue;
+      }
       service.updateCharacteristic(C.OccupancyDetected,
         sensorOn(key, status) ? C.OccupancyDetected.OCCUPANCY_DETECTED : C.OccupancyDetected.OCCUPANCY_NOT_DETECTED);
     }
+  }
+
+  /** The Meeting Soon sensor detects occupancy during the meeting warning (SPEC 6.7 item 5, 7). */
+  showMeetingSoon(on: boolean): void {
+    const C = this.api.hap.Characteristic;
+    this.sensors.get('meetingSoon')?.updateCharacteristic(C.OccupancyDetected,
+      on ? C.OccupancyDetected.OCCUPANCY_DETECTED : C.OccupancyDetected.OCCUPANCY_NOT_DETECTED);
   }
 
   /** The sensors currently in use, by key (for tests). */

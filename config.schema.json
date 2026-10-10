@@ -228,7 +228,7 @@
         }
       },
       "lifx": {
-        "title": "LIFX bulb",
+        "title": "LIFX bulbs",
         "type": "object",
         "properties": {
           "enabled": {
@@ -236,14 +236,17 @@
             "type": "boolean",
             "default": false
           },
-          "bulb": {
-            "title": "Bulb name",
-            "description": "Leave empty if you have one LIFX bulb: it is found automatically. With several, enter the bulb's name from the LIFX app. The log lists the bulbs found.",
-            "type": "string"
+          "bulbs": {
+            "title": "Bulbs",
+            "description": "Leave empty if you have one LIFX bulb: it is found automatically. With several, add the name of each bulb to use, from the LIFX app. The log lists the bulbs found.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "host": {
             "title": "Bulb IP address",
-            "description": "Optional. Only needed when the bulb cannot be found automatically, for example when Homebridge runs in Docker without host networking.",
+            "description": "Only needed when the search cannot reach the bulbs, for example when Homebridge runs in Docker without host networking. Separate several addresses with commas.",
             "type": "string"
           },
           "brightness": {
@@ -280,7 +283,8 @@
             "busy",
             "tentative",
             "away",
-            "offline"
+            "offline",
+            "meetingSoon"
           ]
         },
         "default": [
@@ -380,6 +384,56 @@
             "maximum": 12
           }
         }
+      },
+      "workingSwitch": {
+        "title": "Working switch",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "title": "Add a Working switch to the Home app",
+            "description": "Turn it off at the end of the day, for example in a Home scene, and the light stays off whatever your calendars say. Turn it on when you start work.",
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "meetingWarningSeconds": {
+        "title": "Warn before meetings",
+        "description": "The light fades from the Available color to the In a meeting color before a meeting starts.",
+        "type": "integer",
+        "default": 0,
+        "oneOf": [
+          {
+            "title": "Off",
+            "enum": [
+              0
+            ]
+          },
+          {
+            "title": "1 minute",
+            "enum": [
+              60
+            ]
+          },
+          {
+            "title": "2 minutes",
+            "enum": [
+              120
+            ]
+          },
+          {
+            "title": "3 minutes",
+            "enum": [
+              180
+            ]
+          },
+          {
+            "title": "5 minutes",
+            "enum": [
+              300
+            ]
+          }
+        ]
       }
     }
   },
@@ -512,6 +566,13 @@
     },
     {
       "type": "fieldset",
+      "title": "Working switch",
+      "items": [
+        "workingSwitch.enabled"
+      ]
+    },
+    {
+      "type": "fieldset",
       "title": "Colors",
       "description": "A color such as #FF0000, or the word off to turn the light off for that status.",
       "items": [
@@ -523,16 +584,17 @@
         "colors.tentative",
         "colors.away",
         "colors.available",
-        "colors.offline"
+        "colors.offline",
+        "meetingWarningSeconds"
       ]
     },
     {
       "type": "fieldset",
-      "title": "LIFX bulb",
+      "title": "LIFX bulbs",
       "items": [
         "lifx.enabled",
         {
-          "key": "lifx.bulb",
+          "key": "lifx.bulbs",
           "condition": {
             "functionBody": "return model.lifx && model.lifx.enabled === true;"
           }
@@ -600,6 +662,10 @@
         {
           "value": "offline",
           "name": "Offline"
+        },
+        {
+          "value": "meetingSoon",
+          "name": "Meeting Soon"
         }
       ]
     },

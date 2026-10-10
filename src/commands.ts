@@ -17,14 +17,15 @@ import { LifxClient } from './lifx.js';
 import { LightController, matchesBulb } from './light.js';
 import type { Log } from './log.js';
 import {
-  bulbName, bulbNotNamed, bulbSilent, count, formatTime, microsoftCode, noBulb, noCalendars, statusLine, statusUnknown, validation,
+  bulbName, bulbNotNamed, bulbSilent, count, formatTime, microsoftCode, noBulb, noCalendars, notWorkingLine, statusLine, statusUnknown,
+  validation,
 } from './messages.js';
 import { MicrosoftAuth, TokenStore, tokenFile } from './microsoft.js';
 import { STATUS_NAMES, isStatusKey } from './model.js';
 import { PLATFORM_NAME, STORAGE_DIR } from './names.js';
 import { SourceRunner } from './sources.js';
 import type { SourceState } from './sources.js';
-import { readState } from './state.js';
+import { lightsOf, readState } from './state.js';
 import { readInstanceId } from './status-api.js';
 import { isActive, resolve } from './status.js';
 
@@ -109,9 +110,11 @@ async function cmdStatus(storage: string, io: CliIo): Promise<number> {
     io.err(`No state file in ${path.join(storage, STORAGE_DIR)}. Is Homebridge running with Busy Light?`);
     return 1;
   }
-  if (state.status && isStatusKey(state.status)) {
+  if (state.status === 'notWorking') {
+    io.out(notWorkingLine());
+  } else if (state.status && isStatusKey(state.status)) {
     const until = state.reason?.until ? Date.parse(state.reason.until) : null;
-    io.out(statusLine(STATUS_NAMES[state.status], state.reason ? { source: state.reason.source, until } : null));
+    io.out(statusLine(STATUS_NAMES[state.status], state.reason ? { source: state.reason.source, until } : null, (io.now ?? Date.now)()));
   } else {
     io.out(statusUnknown());
   }
@@ -131,15 +134,17 @@ async function cmdStatus(storage: string, io: CliIo): Promise<number> {
     const source = state.sources.find((s) => s.id === state.signIn!.id);
     io.out(microsoftCode(source?.name ?? state.signIn.id, state.signIn.verificationUri, state.signIn.userCode));
   }
-  const light = state.light;
-  if (!light.enabled) {
-    io.out('Light: not used.');
-  } else if (!light.host) {
-    io.out('Light: no bulb chosen yet.');
-  } else {
-    const name = light.label ? `${light.label} at ${light.host}` : light.host;
-    const sent = light.lastSent ? `, last sent ${light.lastSent} at ${time(light.lastSentAt)}, ${light.answered ? 'answered' : 'no answer'}` : '';
-    io.out(`Light: ${name}${sent}.`);
+  // One line per bulb (SPEC 10.2 item 1, from build 3.2); a state file from before it has one `light`.
+  for (const light of lightsOf(state)) {
+    if (!light.enabled) {
+      io.out('Light: not used.');
+    } else if (!light.host) {
+      io.out('Light: no bulb chosen yet.');
+    } else {
+      const name = light.label ? `${light.label} at ${light.host}` : light.host;
+      const sent = light.lastSent ? `, last sent ${light.lastSent} at ${time(light.lastSentAt)}, ${light.answered ? 'answered' : 'no answer'}` : '';
+      io.out(`Light: ${name}${sent}.`);
+    }
   }
   return 0;
 }
@@ -188,7 +193,7 @@ async function cmdCheck(storage: string, io: CliIo): Promise<number> {
     }
   }
   const result = resolve(runners.map((r) => r.data()), false, now, { ignoreAllDayBusy: config.ignoreAllDayBusy });
-  io.out(result.status === 'unknown' ? statusUnknown() : statusLine(STATUS_NAMES[result.status], result.reason));
+  io.out(result.status === 'unknown' ? statusUnknown() : statusLine(STATUS_NAMES[result.status], result.reason, now));
   for (const runner of runners) {
     runner.stop();
   }
@@ -268,18 +273,17 @@ async function cmdLight(storage: string, args: string[], io: CliIo): Promise<num
     host = bulb.host;
     answered = await client.sendColor(host, bulb.serial, color, config.lifx.brightness, 1000);
   } else {
+    // Every bulb the plugin would choose, at the same moment, with one answer line each (SPEC 10.2 item 5, 13.3).
     const light = new LightController({
-      config: { ...config.lifx, enabled: true }, client, log, storageDir: path.join(storage, STORAGE_DIR), remember: false, now: io.now,
+      config: { ...config.lifx, enabled: true }, client, log, storageDir: path.join(storage, STORAGE_DIR), remember: false, reportSends: false,
+      now: io.now,
     });
     await light.start();
-    if (!light.host) {
-      return 1;
+    const results = await light.send(color, 1000);
+    for (const result of results) {
+      io.out(result.answered ? `The LIFX bulb at ${result.host} answered.` : bulbSilent(result.host));
     }
-    answered = (await light.send(color, 1000)) === true;
-    if (answered) {
-      io.out(`The LIFX bulb at ${light.host} answered.`);
-    }
-    return answered ? 0 : 1; // a bulb that did not answer has been reported by the controller
+    return results.length > 0 && results.every((r) => r.answered) ? 0 : 1;
   }
   io.out(answered ? `The LIFX bulb at ${host} answered.` : bulbSilent(host));
   return answered ? 0 : 1;
@@ -329,7 +333,8 @@ async function cmdInput(storage: string, rest: string[], io: CliIo): Promise<num
   for (const e of senders) {
     const how = e.via === 'switch' ? '' : `, ${e.auth === 'plain' ? 'plain key' : 'signed'}`;
     const from = e.app ? ` from ${e.app}` : '';
-    io.out(`  ${e.sender}: ${STATUS_NAMES[e.status]}${from}${how}, last heard ${time(e.lastHeard)}, ${e.active ? 'active' : 'expired'}.`);
+    const state = e.active ? 'active' : e.ended === 'cleared' ? 'cleared' : 'expired';
+    io.out(`  ${e.sender}: ${STATUS_NAMES[e.status]}${from}${how}, last heard ${time(e.lastHeard)}, ${state}.`);
   }
   if (rest.includes('--setup-code')) {
     const host = preferredHost(found);

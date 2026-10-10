@@ -18,8 +18,11 @@ export const STATUS_KEYS = [
 
 export type StatusKey = (typeof STATUS_KEYS)[number];
 
-/** A status, or `unknown` when no source has fresh data (SPEC 6.5). Unknown has no color and no sensor. */
-export type Status = StatusKey | 'unknown';
+/**
+ * A status, `unknown` when no source has fresh data (SPEC 6.5), or `notWorking` while the Working switch is off (6.6).
+ * Neither has a color of its own or a sensor.
+ */
+export type Status = StatusKey | 'unknown' | 'notWorking';
 
 export const STATUS_NAMES: Record<StatusKey, string> = {
   outOfOffice: 'Out of office',
@@ -46,7 +49,7 @@ export const DEFAULT_COLORS: Record<StatusKey, string> = {
   offline: 'off',
 };
 
-/** The ten sensors of SPEC section 7, roll-ups first. */
+/** The sensors of SPEC section 7, roll-ups first; Meeting Soon (from build 3.2) last. */
 export const SENSOR_KEYS = [
   'available',
   'busyAny',
@@ -58,6 +61,7 @@ export const SENSOR_KEYS = [
   'tentative',
   'away',
   'offline',
+  'meetingSoon',
 ] as const;
 
 export type SensorKey = (typeof SENSOR_KEYS)[number];
@@ -74,9 +78,10 @@ export const SENSOR_NAMES: Record<SensorKey, string> = {
   tentative: 'Tentative',
   away: 'Away',
   offline: 'Offline',
+  meetingSoon: 'Meeting Soon',
 };
 
-/** The statuses during which each sensor detects occupancy. */
+/** The statuses during which each sensor detects occupancy. Meeting Soon follows the meeting warning instead (SPEC 6.7). */
 export const SENSOR_STATUSES: Record<SensorKey, readonly StatusKey[]> = {
   available: ['available'],
   busyAny: ['inMeeting', 'inCall', 'doNotDisturb', 'busy'],
@@ -88,6 +93,7 @@ export const SENSOR_STATUSES: Record<SensorKey, readonly StatusKey[]> = {
   tentative: ['tentative'],
   away: ['away'],
   offline: ['offline'],
+  meetingSoon: [],
 };
 
 export const DEFAULT_SENSORS: readonly SensorKey[] = ['available', 'busyAny', 'outOfOffice'];

@@ -6,7 +6,7 @@
 import type { App } from '../app.js';
 import { RIGHT_NOW, STATUS_NAMES } from '../copy.js';
 import { el, paragraph } from '../dom.js';
-import { formatTime, parseDate, relativeTime } from '../format.js';
+import { formatTime, formatWhen, parseDate, relativeTime } from '../format.js';
 
 /** A state file older than this means the plugin has stopped writing it (SPEC 10.1: at least once a minute). */
 export const STALE_MS = 5 * 60 * 1000;
@@ -24,15 +24,22 @@ export function reasonLine(status: NonNullable<App['status']>): string {
   if (status.override) {
     return RIGHT_NOW.override;
   }
+  // During the meeting warning the status stays Available, and says when the meeting starts (SPEC 6.7, 11.3 B).
+  const meetingAt = parseDate(status.meetingWarning?.meetingAt);
+  if (status.status === 'available' && meetingAt) {
+    return RIGHT_NOW.meetingAt(formatTime(meetingAt));
+  }
   const until = parseDate(status.reason?.until);
   const source = status.reason?.source;
   if (source && status.reason?.app && !until) {
     return RIGHT_NOW.fromApp(source, status.reason.app);
   }
+  // The time carries its day when it is not today (SPEC 11.3 B and G).
+  const now = new Date(Date.now());
   if (source) {
-    return until ? RIGHT_NOW.until(formatTime(until), source) : RIGHT_NOW.from(source);
+    return until ? RIGHT_NOW.until(formatWhen(until, now), source) : RIGHT_NOW.from(source);
   }
-  return until ? RIGHT_NOW.nothingUntil(formatTime(until)) : RIGHT_NOW.nothingNow;
+  return until ? RIGHT_NOW.nothingUntil(formatWhen(until, now)) : RIGHT_NOW.nothingNow;
 }
 
 export function renderRightNow(app: App, container: HTMLElement): void {
@@ -51,6 +58,15 @@ export function renderRightNow(app: App, container: HTMLElement): void {
   }
   if (status.status === 'unknown') {
     container.appendChild(el('div', { class: 'alert alert-warning py-2 px-3 mb-2 bl-now-unknown', role: 'status' }, RIGHT_NOW.unknown));
+  } else if (status.status === 'notWorking') {
+    // The Working switch is off (SPEC 6.6): the light is off, so the Off swatch.
+    container.appendChild(el('div', { class: 'bl-now bl-now-not-working', role: 'status' },
+      swatch('off'),
+      el('div', { class: 'bl-now-text' },
+        el('div', { class: 'bl-now-name' }, RIGHT_NOW.notWorking),
+        el('div', { class: 'form-text bl-now-line' }, RIGHT_NOW.notWorkingLine),
+      ),
+    ));
   } else {
     container.appendChild(el('div', { class: 'bl-now', role: 'status' },
       swatch(app.saved.colors[status.status]),

@@ -7,9 +7,13 @@
  * result and a sender of each kind listed (SPEC 15 item 19). From build 3.1 it also has the chooser's two Outlook
  * options, a new Outlook card and an existing Outlook address with How to get this link open, the interval selects
  * with a saved value not in their list, the address change notice, and the Colors list measured collapsed and
- * expanded once the status input, the On a Call switch and Teams status are turned off on the page. It checks that
- * secondary text and locked fields keep 4.5:1 contrast, that nothing is wider than the frame, and that the frame
- * itself never scrolls.
+ * expanded once the status input, the On a Call switch and Teams status are turned off on the page. From build 3.2 it
+ * clicks Add calendar with the mouse while a new Outlook card's empty Address has focus, and expects the click to land
+ * (SPEC 11.2 item 11); it also has the Working switch checkbox ticked, Warn before meetings set, a Copy button beside
+ * an address line clicked, a Cleared sender beside an Expired one, and Right now in the meeting warning, with the
+ * Working switch off and with a time on another day, each measured; and the LIFX bulbs card with a checkbox per bulb
+ * found, a saved bulb missing, and Test light's result for each bulb. It checks that secondary text and locked fields
+ * keep 4.5:1 contrast, that nothing is wider than the frame, and that the frame itself never scrolls.
  *
  * It needs Playwright with Chromium and the Homebridge UI's own stylesheet, which are not dependencies of the plugin:
  *   HOMEBRIDGE_UI_CSS=/path/to/homebridge-config-ui-x/public/styles-*.css npm run test:layout
@@ -68,13 +72,15 @@ const CONFIG = {
   statusInput: { enabled: true, key: 'Synthetic-layout-key-0000000000000000000000', allowPlainKey: true },
   callSwitch: { enabled: true, hours: 3 },
   colors: { busy: '#1A2B3C' },
-  lifx: { enabled: true },
+  lifx: { enabled: true, bulbs: ['d073d5000001', 'Status Light'] },
   sensors: ['available', 'busyAny', 'outOfOffice'],
+  workingSwitch: { enabled: true },
+  meetingWarningSeconds: 120,
 };
 
 const NOW = Date.now();
 const ANSWERS = {
-  '/version': { version: '0.1.0-beta.4' },
+  '/version': { version: '0.1.0-beta.5' },
   '/status': {
     version: 1, updatedAt: new Date(NOW - 20_000).toISOString(), status: 'inMeeting',
     reason: { source: 'Work', until: new Date(NOW + 1_800_000).toISOString() }, override: false, signIn: null,
@@ -84,18 +90,25 @@ const ANSWERS = {
         error: 'calendar.example.com answered HTTP 404' },
       { id: 'cal-work', name: 'Work', type: 'microsoft', state: 'signInNeeded', lastChecked: null, events: null, error: 'waiting for sign-in' },
     ],
-    light: { enabled: true, label: 'Floor', host: '192.168.4.50', found: 'discovered', lastSent: '#FF0000', lastSentAt: null, answered: true },
-    statusInput: { enabled: true, port: 8582, listening: true, error: null, id: 'q3Lr8vT0cXw2mN5a' },
+    lights: [
+      { enabled: true, label: 'Floor', host: '192.168.4.50', found: 'discovered', lastSent: '#FF0000', lastSentAt: null, answered: true },
+      { enabled: true, label: 'Status Light', host: '192.168.4.21', found: 'remembered', lastSent: '#FF0000', lastSentAt: null, answered: false },
+    ],
     inputs: [
       { sender: 'CallWatch on Alex’s iMac', status: 'inCall', app: 'Microsoft Teams', via: 'api', auth: 'signed',
-        lastHeard: new Date(NOW - 30_000).toISOString(), expiresAt: new Date(NOW + 150_000).toISOString(), active: true },
+        lastHeard: new Date(NOW - 30_000).toISOString(), expiresAt: new Date(NOW + 150_000).toISOString(), active: true, ended: null },
       { sender: 'Test on my laptop with a rather long name for a sender', status: 'busy', app: null, via: 'api', auth: 'plain',
-        lastHeard: new Date(NOW - 300_000).toISOString(), expiresAt: new Date(NOW - 60_000).toISOString(), active: false },
+        lastHeard: new Date(NOW - 300_000).toISOString(), expiresAt: new Date(NOW - 60_000).toISOString(), active: false, ended: 'expired' },
+      { sender: 'Status script on the office Mac', status: 'doNotDisturb', app: null, via: 'api', auth: 'signed',
+        lastHeard: new Date(NOW - 900_000).toISOString(), expiresAt: new Date(NOW - 900_000).toISOString(), active: false, ended: 'cleared' },
       { sender: 'Home app', status: 'inCall', app: null, via: 'switch', auth: null, lastHeard: new Date(NOW - 600_000).toISOString(),
-        expiresAt: null, active: true },
+        expiresAt: null, active: true, ended: null },
     ],
+    statusInput: { enabled: true, port: 8582, listening: true, error: null, id: 'q3Lr8vT0cXw2mN5a',
+      reported: { doNotDisturb: new Date(NOW - 900_000).toISOString() } },
+    meetingWarning: null,
   },
-  '/input/info': { hostname: null, addresses: ['192.168.4.10', 'fd00:1234:5678:9abc::10'], port: 8582, id: 'q3Lr8vT0cXw2mN5a',
+  '/input/info': { hostname: 'homebridge.local', addresses: ['192.168.4.10', 'fd00:1234:5678:9abc::10'], port: 8582, id: 'q3Lr8vT0cXw2mN5a',
     addressChange: { from: '192.168.4.23', to: '192.168.4.10' } },
   '/input/test': { error: 'notListening', message: 'Nothing is listening on port 8582.' },
   '/icloud/calendars': { calendars: [
@@ -111,15 +124,30 @@ const ANSWERS = {
     { label: 'Floor', serial: 'd073d5000001', ip: '192.168.4.50' },
     { label: 'Desk', serial: 'd073d5000002', ip: '192.168.4.51' },
   ] },
-  '/lifx/test': { answered: false },
+  '/lifx/test': { answered: false, results: [{ label: 'Floor', host: '192.168.4.50', answered: true },
+    { label: null, host: null, answered: false }] },
 };
 
-/** The stand-in for the Homebridge UI's `window.homebridge` inside the iframe. */
+/**
+ * The stand-in for the Homebridge UI's `window.homebridge` inside the iframe. Its answers can be changed from the
+ * runner (`window.__answers`), and the page's 15 second /status poll run at once (`window.__poll`), so Right now can be
+ * shown in each state without waiting.
+ */
 function mockHost({ config, answers }) {
   const pushed = [];
   window.__pushed = pushed;
+  window.__answers = answers;
+  const polls = [];
+  const setInterval = window.setInterval.bind(window);
+  window.setInterval = (fn, ms, ...rest) => {
+    if (ms === 15_000) {
+      polls.push(fn);
+    }
+    return setInterval(fn, ms, ...rest);
+  };
+  window.__poll = () => polls.forEach((fn) => fn());
   window.homebridge = {
-    request: async (p) => JSON.parse(JSON.stringify(answers[p] ?? {})),
+    request: async (p) => JSON.parse(JSON.stringify(window.__answers[p] ?? {})),
     getPluginConfig: async () => [JSON.parse(JSON.stringify(config))],
     updatePluginConfig: async (blocks) => {
       pushed.push(blocks);
@@ -294,6 +322,7 @@ async function run() {
         await context.addInitScript(mockHost, { config: CONFIG, answers: ANSWERS });
         const page = await context.newPage();
         const errors = [];
+        const lost = [];
         page.on('pageerror', (e) => errors.push(e.message));
         await page.goto(`http://127.0.0.1:${port}/?theme=${encodeURIComponent(theme)}`);
         const frame = page.frame({ url: /plugin\/index.html/ });
@@ -322,7 +351,10 @@ async function run() {
         await frame.waitForSelector('[data-card-id="icloud"] .bl-cal-row:nth-child(3)');
         await click('[data-card-id="cal-google"] .ns-footer-right button');
         await click('#section-lights .bl-search-again');
-        await frame.waitForSelector('#section-lights input[type="radio"]');
+        await frame.waitForSelector('#section-lights .bl-lifx-choice input[type="checkbox"]');
+        // Several bulbs (from build 3.2): Test light on each ticked bulb, one result per bulb.
+        await click('#section-lights .bl-lifx-card .ns-footer-right button');
+        await frame.waitForSelector('#section-lights .bl-lifx-results-list');
         await click('#section-lights .bl-lifx-card details summary');
         await click('#section-lights details.bl-all-sensors summary');
         // The status input: the port under Advanced, Replace key's question, a test result; a calendar card's own interval.
@@ -331,6 +363,8 @@ async function run() {
         await click('#section-statusInput .bl-replace-key');
         await click('#section-statusInput .bl-input-test');
         await frame.waitForSelector('#section-statusInput .bl-input-result');
+        // A Copy button beside an address line, clicked (from build 3.2), so it reads Copied.
+        await click('#section-statusInput .bl-address-row:nth-of-type(3) .bl-copy-address');
         await click('[data-card-id="cal-google"] .bl-source-advanced summary');
         // Colors: Off on one row and Custom on another, with Busy already a custom color.
         await click('#section-colors [data-path="colors.inMeeting"] button.bl-preset-off');
@@ -339,14 +373,18 @@ async function run() {
         await click('#section-calendars .ns-section-add');
         await click('#section-calendars .ns-chooser-tile[data-type="microsoft"]');
         await click('#section-calendars .bl-outlook-published');
-        // Paste the link, as a person would; leaving the empty field would show its message and move Add under the pointer.
-        // TODO(alex): the shell's validation on blur (homebridge-ui/src/main.ts, focusout) moves a button below an empty
-        // required field before the mouse is released, so that click is lost; left as it is in build 3.1 (SPEC 17).
-        const address = frame.locator('#section-calendars input:focus');
-        await address.fill('https://outlook.office365.com/owa/calendar/synthetic/second.ics');
-        await address.press('Tab');
-        await fit();
+        // The lost click (SPEC 11.2 item 11, from build 3.2): Add calendar clicked with the mouse while the new Outlook card's
+        // empty Address has focus. The Address's message waits for the release, so the button stays put and the click lands.
+        if (!await frame.evaluate(() => document.activeElement?.closest('[data-path]')?.dataset.path?.endsWith('.url'))) {
+          lost.push('the new Outlook card\'s Address did not take focus');
+        }
         await click('#section-calendars .ns-section-add');
+        if (!await frame.locator('#section-calendars .ns-chooser').count()) {
+          lost.push('the click on Add calendar under the empty Outlook Address was lost');
+          await click('#section-calendars .ns-section-add'); // a second click, so the rest of the run still reports
+        }
+        await frame.waitForFunction(() => document.querySelector('#section-calendars [data-path$=".url"].has-issue'), undefined, { timeout: 2000 })
+          .catch(() => lost.push('the Address showed no message after the click'));
         await click('#section-calendars .ns-chooser-tile[data-type="microsoft"]');
         // Settings: the interval selects, and a cleared Name for the summary box.
         await click('#section-settings details summary');
@@ -360,7 +398,7 @@ async function run() {
         await fit();
         const report = async (label, shot) => {
           const { problems, checked } = await frame.evaluate(measure);
-          problems.push(...errors.splice(0).map((e) => `page error: ${e}`));
+          problems.push(...errors.splice(0).map((e) => `page error: ${e}`), ...lost.splice(0));
           if (problems.length) {
             failed += problems.length;
             console.log(`not ok ${label}: ${checked} elements checked`);
@@ -385,6 +423,28 @@ async function run() {
         await report(`${themeName} ${width}px, Colors collapsed`, '-collapsed');
         await click('#section-colors .bl-show-statuses');
         await report(`${themeName} ${width}px, Colors expanded`, '-expanded');
+        // Right now in the states build 3.2 adds: the meeting warning, the Working switch off, and a time on another day.
+        const day = 24 * 3_600_000;
+        const states = [
+          ['meeting warning', { status: 'available', reason: { source: null, until: new Date(NOW + 120_000).toISOString() },
+            meetingWarning: { meetingAt: new Date(NOW + 120_000).toISOString() } }, '.bl-now-line'],
+          ['not working', { status: 'notWorking', reason: null, meetingWarning: null }, '.bl-now-not-working'],
+          ['another day', { status: 'available', reason: { source: null, until: new Date(NOW + 10 * day).toISOString() }, meetingWarning: null },
+            '.bl-now-line'],
+        ];
+        for (const [label, fields, selector] of states) {
+          const before = await frame.evaluate(() => document.querySelector('#section-rightNow')?.textContent ?? '');
+          await frame.evaluate((f) => {
+            window.__answers['/status'] = { ...window.__answers['/status'], ...f, updatedAt: new Date().toISOString() };
+            window.__poll();
+          }, fields);
+          await frame.waitForFunction(([sel, old]) => {
+            const section = document.querySelector('#section-rightNow');
+            return section?.querySelector(sel) && section.textContent !== old;
+          }, [selector, before]);
+          await fit();
+          await report(`${themeName} ${width}px, Right now ${label}`, `-${label.replace(/ /g, '-')}`);
+        }
         await context.close();
       }
     }

@@ -18,6 +18,8 @@ export interface UiIssue {
 export interface ValidationContext {
   /** Card ids whose "Calendars to use" rows are shown (after Connect, or saved rows). */
   listsShown?: Set<string>;
+  /** How many LIFX bulbs the last search on this visit found (from build 3.2), 0 before one. */
+  lifxFound?: number;
 }
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -151,8 +153,14 @@ export function validate(config: UiConfig, ctx: ValidationContext = {}): UiIssue
   }
   if (config.lifx.enabled) {
     number(issues, 'lifx.brightness', LIGHTS.lifxTitle, LIGHTS.brightness, config.lifx.brightness, LIMITS.brightness);
-    if (config.lifx.host.trim() && !isHost(config.lifx.host.trim())) {
+    // One or more addresses separated by commas, each one an address (SPEC 9.1 item 6, from build 3.2).
+    const hosts = config.lifx.host.split(',').map((h) => h.trim()).filter((h) => h !== '');
+    if (hosts.some((h) => !isHost(h))) {
       issues.push({ path: 'lifx.host', label: LIGHTS.lifxTitle, message: VALIDATION.host });
+    }
+    // Several found and none ticked (SPEC 11.3 E and H, from build 3.2); an address under Advanced takes their place.
+    if (hosts.length === 0 && (ctx.lifxFound ?? 0) > 1 && config.lifx.bulbs.length === 0) {
+      issues.push({ path: 'lifx.bulbs', label: LIGHTS.lifxTitle, message: VALIDATION.chooseBulb });
     }
     number(issues, 'lifx.refreshSeconds', LIGHTS.lifxTitle, LIGHTS.refresh, config.lifx.refreshSeconds, LIMITS.refreshSeconds);
   }

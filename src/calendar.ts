@@ -5,6 +5,10 @@
 import type { CalendarChoice, CalendarUse } from './config.js';
 import type { CalEvent } from './status.js';
 
+// TODO(alex): events are read from 24 hours before now to 24 hours after (SPEC 5), so an `until` time is at most a
+// day away and reads as a time today or `tomorrow at {time}`; the weekday and date forms of SPEC 11.3 G wait for a
+// wider window. Reading further ahead (Friday afternoon saying `until Monday at 9:00 AM`) costs more reading on every
+// check and changes the `events` count of SPEC 10.1, so it is left as it was (SPEC 17, open in build 3.2).
 export const WINDOW_MS = 24 * 3_600_000;
 
 export interface CalendarSource {
@@ -15,6 +19,8 @@ export interface CalendarSource {
 export interface IcsSettings {
   outOfOfficeWords: string[];
   ownerAddresses: string[];
+  /** Called when a recurring series reaches the safety cap of SPEC 5.4 item 3, so the source can say so once. */
+  onRepeatLimit?: () => void;
 }
 
 /** How a source reports the calendars it chose, so the source runner can write the log lines of SPEC 12. */

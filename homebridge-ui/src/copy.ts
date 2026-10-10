@@ -25,19 +25,32 @@ export const INTRO = {
 /** SPEC 11.3 B. */
 export const RIGHT_NOW = {
   heading: 'Right now',
-  until: (time: string, source: string): string => `Until ${time}, from ${source}.`,
+  /** `{when}` is the time with its day when it is not today (SPEC 11.3 G, `WHEN`). */
+  until: (when: string, source: string): string => `Until ${when}, from ${source}.`,
   from: (source: string): string => `From ${source}.`,
   /** A status input report with an app (SPEC 6.3 item 5). */
   fromApp: (sender: string, app: string): string => `From ${sender} (${app}).`,
   /** The source name the plugin writes when Teams presence decided the status (SPEC 6.3). */
   teams: 'Teams',
-  nothingUntil: (time: string): string => `Nothing on your calendars until ${time}.`,
+  nothingUntil: (when: string): string => `Nothing on your calendars until ${when}.`,
   nothingNow: 'Nothing on your calendars right now.',
   override: 'The override switch is on.',
+  /** During the meeting warning (SPEC 6.7), under Available. */
+  meetingAt: (time: string): string => `A meeting starts at ${time}.`,
+  /** While the Working switch is off (SPEC 6.6), with the Off swatch. */
+  notWorking: 'Not working',
+  notWorkingLine: 'The Working switch is off.',
   noCalendars: 'Add a calendar to see your status here.',
   notStarted: 'Busy Light has not started yet. Save, then restart Homebridge.',
   unknown: 'Status unknown. None of your calendars could be read.',
   stale: (relative: string): string => `Last updated ${relative}. Is Homebridge running?`,
+};
+
+/** SPEC 11.3 G: a time with its day when it is not today. Weekdays and months are named in English, as the page is. */
+export const WHEN = {
+  tomorrow: (time: string): string => `tomorrow at ${time}`,
+  weekday: (weekday: string, time: string): string => `${weekday} at ${time}`,
+  date: (monthDay: string, time: string): string => `${monthDay} at ${time}`,
 };
 
 /** The display names of SPEC 6.2, in the precedence order of 6.3. */
@@ -209,6 +222,8 @@ export const MICROSOFT = {
 export const COLORS = {
   heading: 'Colors',
   help: 'The color the light shows for each status. Choose Off to turn the light off instead.',
+  /** The second help line (SPEC 11.3 D, from build 3.2). */
+  meetingsHelp: 'To light up only during meetings, choose Off for Available.',
   off: 'Off',
   custom: 'Custom',
   /** The presets, in the SPEC's order; Off and Custom follow them. */
@@ -223,10 +238,14 @@ export const COLORS = {
   ],
   /** The line below the rows while statuses the setup cannot produce are hidden (SPEC 11.3 D). */
   moreStatuses: (n: number | string): string => `${n} more statuses come from Teams or from other apps.`,
+  moreStatus: '1 more status comes from Teams or from other apps.',
   showAll: 'Show all statuses',
   showFewer: 'Show fewer',
   precedence: 'When more than one applies, the one highest in this list wins.',
   reset: 'Reset colors',
+  /** The meeting warning (SPEC 6.7): `Off`, then durations (11.3 G). */
+  warn: 'Warn before meetings',
+  warnHelp: 'The light fades from the Available color to the In a meeting color before a meeting starts.',
 };
 
 /** The accessory name endings of SPEC section 7, in its order. */
@@ -241,6 +260,7 @@ export const SENSOR_NAMES = {
   tentative: 'Tentative',
   away: 'Away',
   offline: 'Offline',
+  meetingSoon: 'Meeting Soon',
 } as const;
 
 export type SensorKey = keyof typeof SENSOR_NAMES;
@@ -248,11 +268,12 @@ export type SensorKey = keyof typeof SENSOR_NAMES;
 /** SPEC 11.3 E. */
 export const LIGHTS = {
   heading: 'Lights',
-  lifxTitle: 'LIFX bulb',
-  useLifx: 'Use a LIFX bulb',
+  /** From build 3.2 one card for every bulb (C8). */
+  lifxTitle: 'LIFX bulbs',
+  useLifx: 'Use LIFX bulbs',
   searching: 'Looking for LIFX bulbs on your network…',
   foundOne: (label: string, ip: string): string => `Found ${label} (${ip}). Busy Light will use it.`,
-  foundSeveral: (n: number | string): string => `Found ${n} bulbs. Choose one:`,
+  foundSeveral: (n: number | string): string => `Found ${n} bulbs. Choose the ones to use:`,
   bulbChoice: (label: string, ip: string): string => `${label} (${ip})`,
   none: 'No LIFX bulb found. Check that it is on and on the same network as Homebridge.',
   savedMissing: (label: string): string => `${label} was not found just now. It may be switched off.`,
@@ -264,13 +285,17 @@ export const LIGHTS = {
   brightness: 'Brightness (percent)',
   testLight: 'Test light',
   testing: 'Testing…',
-  testHelp: 'Shows red, then green, on the bulb.',
+  testHelp: 'Shows red, then green, on each bulb chosen.',
   answered: 'The bulb answered.',
   noAnswer: 'No answer from the bulb. Check that it is on and on the same network as Homebridge.',
+  /** Test light with several bulbs: one result per bulb (from build 3.2). */
+  bulbAnswered: (label: string): string => `${label} answered.`,
+  bulbNoAnswer: (label: string): string => `No answer from ${label}. Check that it is on and on the same network as Homebridge.`,
   ipLead: 'Bulb not found? Enter its IP address.',
   ip: 'Bulb IP address',
   ipPlaceholder: 'e.g. 192.168.1.50',
-  ipHelp: 'Only needed when the search cannot reach the bulb, for example when Homebridge runs in Docker without host networking.',
+  ipHelp: 'Only needed when the search cannot reach the bulbs, for example when Homebridge runs in Docker without host networking. '
+    + 'Separate several addresses with commas.',
   usingIp: (ip: string): string => `Busy Light will use the bulb at ${ip}.`,
   refresh: 'Send the color again every (seconds)',
   refreshHelp: 'Recovers a bulb that was switched off at the wall. 0 sends only when the status changes.',
@@ -282,6 +307,12 @@ export const LIGHTS = {
   showAll: 'Show all statuses',
   /** The help of a sensor whose status the setup cannot produce (SPEC 11.3 E). */
   nothingReports: 'Nothing in your setup reports this yet.',
+  /** The optional Meeting Soon sensor's help (SPEC 11.3 E, from build 3.2). */
+  meetingSoonHelp: 'Detects occupancy during the warning before a meeting.',
+  /** The Working switch (SPEC 6.6), below the steps. */
+  workingSwitch: 'Add a Working switch to the Home app',
+  workingSwitchHelp: 'Turn it off at the end of the day, for example in a Home scene, and the light stays off whatever your calendars say. '
+    + 'Turn it on when you start work.',
   steps: [
     (): string => 'In the Home app, add an automation: A sensor detects something.',
     (name: string): string => `Choose ${name} Busy, then Detects occupancy.`,
@@ -292,11 +323,16 @@ export const LIGHTS = {
 /** SPEC 11.3 I. */
 export const STATUS_INPUT = {
   heading: 'Status from other apps',
-  help: 'Let other apps on your network tell Busy Light you are on a call or busy, for example a call helper on your Mac or a Stream Deck button.',
+  help: 'Let other apps on your network tell Busy Light you are on a call or busy, for example Jeronimo on your Mac or a Stream Deck button.',
+  /** The name in the help that links to its site (SPEC 11.3 I, from build 3.2). */
+  jeronimo: 'Jeronimo',
+  jeronimoUrl: 'https://jeronimo.app',
   howAppsConnect: 'How apps connect',
   docsUrl: 'https://github.com/arodbuilds/homebridge-busy-light/blob/latest/docs/status-input.md',
   enable: 'Let other apps set your status',
   address: 'Address',
+  /** Beside each address line (from build 3.2); `copied` once it is copied. */
+  copy: 'Copy',
   reserveHelp: 'Your router may give Homebridge a new address later, and apps would stop reaching it. Reserve this address for Homebridge in your router.',
   /** Above the Address line while the address changed and the page has not been saved since (SPEC 18.11 item 6). */
   addressChanged: (from: string, to: string): string =>
@@ -329,6 +365,8 @@ export const STATUS_INPUT = {
   fromApp: (app: string): string => ` from ${app}`,
   lastHeard: (relative: string): string => `Last heard ${relative}`,
   active: 'Active',
+  /** A sender whose last word was `clear` (from build 3.2); `expired` is for a report that ran out. */
+  cleared: 'Cleared',
   expired: 'Expired',
   signed: 'Signed',
   plainKey: 'Plain key',
@@ -425,4 +463,6 @@ export const VALIDATION = {
   microsoftNeither: 'Turn on Use Teams status, Use Outlook calendars, or both.',
   microsoftTeamsTwice: 'Only one Microsoft 365 calendar can use Teams status.',
   chooseCalendar: 'Choose at least one calendar.',
+  /** LIFX bulbs on, several found and none ticked (from build 3.2). */
+  chooseBulb: 'Choose at least one bulb, or turn off Use LIFX bulbs.',
 };

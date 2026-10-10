@@ -29,8 +29,9 @@ export function bulbName(bulb: { label: string; serial: string }): string {
   return bulb.label || bulb.serial;
 }
 
-export function bulbsFound(bulbs: { label: string; serial: string; host: string }[], using: { label: string; serial: string }): string {
-  return `LIFX bulbs found: ${bulbs.map((b) => `${bulbName(b)} (${b.host})`).join(', ')}. Using ${bulbName(using)}.`;
+/** From build 3.2 every bulb in use, in the order of `lifx.bulbs` (SPEC 12, 13.3). */
+export function bulbsFound(bulbs: { label: string; serial: string; host: string }[], using: { label: string; serial: string }[]): string {
+  return `LIFX bulbs found: ${bulbs.map((b) => `${bulbName(b)} (${b.host})`).join(', ')}. Using ${using.map(bulbName).join(', ')}.`;
 }
 
 export function noBulb(): string {
@@ -38,10 +39,10 @@ export function noBulb(): string {
 }
 
 export function severalBulbs(bulbs: { label: string; serial: string }[]): string {
-  return `More than one LIFX bulb was found: ${bulbs.map(bulbName).join(', ')}. Enter the name of the one to use in the plugin settings.`;
+  return `More than one LIFX bulb was found: ${bulbs.map(bulbName).join(', ')}. Choose the bulbs to use in the plugin settings.`;
 }
 
-/** Not in the SPEC 12 table as first written; added in build 1 (SPEC 17) for a `lifx.bulb` that matches no bulb found. */
+/** Not in the SPEC 12 table as first written; added in build 1 (SPEC 17) for a bulb named in `lifx.bulbs` that matches no bulb found. */
 export function bulbNotNamed(wanted: string, bulbs: { label: string; serial: string; host: string }[]): string {
   return `No LIFX bulb named ${wanted} was found. Bulbs found: ${bulbs.map((b) => `${bulbName(b)} (${b.host})`).join(', ')}.`;
 }
@@ -66,9 +67,41 @@ export function formatTime(ms: number): string {
     .replace(/[\u202f\u00a0]/g, ' ');
 }
 
+/** Calendar days from one time to another in the host's time zone: 0 the same day, 1 the next, and so on. */
+function calendarDays(from: number, to: number): number {
+  const day = (ms: number) => {
+    const d = new Date(ms);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  };
+  return Math.round((day(to) - day(from)) / 86_400_000);
+}
+
+/**
+ * A time with its day when it is not today (SPEC 12 `{when}`, 11.3 G): `{h:mm AM/PM}` today, `tomorrow at {time}`,
+ * `{weekday} at {time}` within the next 6 days, else `{Month day} at {time}`. Days are counted by the calendar in the
+ * host's time zone; weekdays and months are named in English, as every word around them is.
+ */
+export function formatWhen(ms: number, now: number): string {
+  const time = formatTime(ms);
+  const days = calendarDays(now, ms);
+  if (days === 0) {
+    return time;
+  }
+  if (days === 1) {
+    return `tomorrow at ${time}`;
+  }
+  const date = new Date(ms);
+  if (days > 1 && days <= 6) {
+    return `${date.toLocaleDateString('en-US', { weekday: 'long' })} at ${time}`;
+  }
+  return `${date.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} at ${time}`;
+}
+
 /** `light on at {host}`, `light on` while the bulb is still being found, or `light off`. */
-export function startup(version: string, calendars: number, light: { enabled: boolean; host: string | null }, sensors: number): string {
-  const lightPart = !light.enabled ? 'off' : light.host ? `on at ${light.host}` : 'on';
+/** `light on ({n} bulbs)` from build 3.2, when more than one bulb is chosen (SPEC 12). */
+export function startup(version: string, calendars: number, light: { enabled: boolean; hosts: string[] }, sensors: number): string {
+  const n = light.hosts.length;
+  const lightPart = !light.enabled ? 'off' : n > 1 ? `on (${n} bulbs)` : n === 1 ? `on at ${light.hosts[0]}` : 'on';
   return `Busy Light ${version}: ${count(calendars, 'calendar')}, light ${lightPart}, ${count(sensors, 'sensor')}.`;
 }
 
@@ -76,14 +109,17 @@ export function noCalendars(): string {
   return 'No calendars are set up yet. Open the plugin settings to add one.';
 }
 
-/** `Status: In a meeting (Work, until 2:30 PM).` The parenthesis is left out with no reason, `until` with no time. */
-export function statusLine(displayName: string, reason: { source: string | null; until: number | null } | null): string {
+/**
+ * `Status: In a meeting (Work, until 2:30 PM).` The parenthesis is left out with no reason, `until` with no time. The
+ * time carries its day when it is not today, by the clock at `now` (`until tomorrow at 9:00 AM`).
+ */
+export function statusLine(displayName: string, reason: { source: string | null; until: number | null } | null, now = Date.now()): string {
   const parts: string[] = [];
   if (reason?.source) {
     parts.push(reason.source);
   }
   if (reason?.until != null) {
-    parts.push(`until ${formatTime(reason.until)}`);
+    parts.push(`until ${formatWhen(reason.until, now)}`);
   }
   return parts.length ? `Status: ${displayName} (${parts.join(', ')}).` : `Status: ${displayName}.`;
 }
@@ -109,6 +145,11 @@ export function listedCalendarGone(name: string, calendar: string): string {
 
 export function sourceFailed(name: string, reason: string, minutes: number): string {
   return `${name}: could not be read (${reason}). Trying again in ${count(minutes, 'minute')}.`;
+}
+
+/** SPEC 12 "Repeat limit": once per source, when a recurring series reaches the safety cap of 5.4 item 3. */
+export function repeatLimit(name: string): string {
+  return `${name}: a recurring event repeats too often to read in full, so some of its occurrences are left out.`;
 }
 
 export function sourceRecovered(name: string): string {
@@ -165,6 +206,21 @@ export function inputNotLocal(ip: string): string {
 /** Address changed (SPEC 18.11 item 6): from one IPv4 address to another, once per change. */
 export function addressChanged(from: string, to: string): string {
   return `Homebridge's address changed from ${from} to ${to}. Apps that use the old address need the new setup code.`;
+}
+
+/** SPEC 12 "Working off" (6.6): the switch turned off, or was restored off at startup. */
+export function workingOff(name: string): string {
+  return `${name} Working turned off. The light stays off until it is turned on.`;
+}
+
+/** SPEC 12 "Working on" (6.6). */
+export function workingOn(name: string): string {
+  return `${name} Working turned on.`;
+}
+
+/** The CLI `status` line while the Working switch is off (SPEC 10.2 item 1), in place of the status line. */
+export function notWorkingLine(): string {
+  return 'Status: Not working (the Working switch is off).';
 }
 
 /** SPEC 12 "Call switch timeout", with the singular noun for 1 (12 item 1). */

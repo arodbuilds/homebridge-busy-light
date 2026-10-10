@@ -209,6 +209,7 @@ export class ICloudSource implements CalendarSource {
           source: this.config.name,
           outOfOfficeWords: this.ics.outOfOfficeWords,
           ownerAddresses: this.ics.ownerAddresses,
+          onRepeatLimit: this.ics.onRepeatLimit,
         }));
       } catch {
         // One unreadable calendar object is skipped.

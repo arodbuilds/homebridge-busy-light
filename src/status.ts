@@ -58,7 +58,8 @@ export interface Reason {
 }
 
 export interface Resolution {
-  status: Status;
+  /** Never `notWorking`: the Working switch is the engine's, above every rule (SPEC 6.6). */
+  status: Exclude<Status, 'notWorking'>;
   /** Null when the status is unknown. */
   reason: Reason | null;
 }
@@ -236,6 +237,24 @@ export function resolveStatus(
     }
   }
   return { status: decision.status, reason: { source: decision.source, until } };
+}
+
+/**
+ * SPEC 6.7 item 1: when the status at `now` is Available and the next change, by the events with presence, reports and
+ * the override held as they are, is to In a meeting, the start of that meeting (a busy event starting then); else null.
+ */
+export function meetingAhead(override: boolean, presence: Presence | null, events: CalEvent[], now: number, opts: ResolveOptions,
+  reports: InputReport[] = []): number | null {
+  if (decide(override, presence, events, now, opts, reports).status !== 'available') {
+    return null;
+  }
+  for (const t of boundariesAfter(events, now, opts)) {
+    const status = decide(override, presence, events, t, opts, reports).status;
+    if (status !== 'available') {
+      return status === 'inMeeting' ? t : null;
+    }
+  }
+  return null;
 }
 
 /** What one source last delivered. A source that has never succeeded has null times. */

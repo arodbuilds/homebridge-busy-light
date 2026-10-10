@@ -9,15 +9,15 @@ import type { Auth, NewReport, Via } from './inputs.js';
 import { LifxClient } from './lifx.js';
 import { LightController } from './light.js';
 import type { Log } from './log.js';
-import { noCalendars, senderCleared, senderExpired, senderReports, startup, statusLine, statusUnknown } from './messages.js';
+import { noCalendars, senderCleared, senderExpired, senderReports, startup, statusLine, statusUnknown, workingOff, workingOn } from './messages.js';
 import { STATUS_NAMES } from './model.js';
 import type { Status } from './model.js';
 import { SourceRunner } from './sources.js';
 import { readInstanceId } from './status-api.js';
 import { writeState } from './state.js';
 import type { AddressChange, StateFile } from './state.js';
-import { freshData, nextBoundary, resolve } from './status.js';
-import type { InputReport, Reason } from './status.js';
+import { freshData, meetingAhead, nextBoundary, resolve } from './status.js';
+import type { InputReport, Reason, Resolution } from './status.js';
 
 /** Time and timers, replaced in tests. */
 export interface Clock {
@@ -36,6 +36,44 @@ export const systemClock: Clock = {
   clearInterval: (h) => clearInterval(h as NodeJS.Timeout),
 };
 
+/** Node's largest timer delay, 2^31 - 1 ms (about 24.8 days); a longer one fires at once (SPEC 8.1 item 5). */
+export const MAX_TIMER_MS = 2_147_483_647;
+/** A timer that fires this close to its time counts as due (SPEC 8.1 item 5). */
+export const EARLY_MS = 1000;
+
+/**
+ * One timer for a time by the clock (SPEC 8.1 item 5): every delay is clamped to Node's maximum, and a timer that
+ * fires more than a second early is set again for the time left, so a far time never fires at once.
+ */
+export class ClockTimer {
+  private handle: unknown = null;
+
+  constructor(private readonly clock: Clock) {}
+
+  /** Calls `fn` at `at`, replacing any time set before. */
+  set(at: number, fn: () => void): void {
+    this.clear();
+    const arm = (): void => {
+      this.handle = this.clock.setTimeout(() => {
+        this.handle = null;
+        if (at - this.clock.now() > EARLY_MS) {
+          arm();
+        } else {
+          fn();
+        }
+      }, Math.min(MAX_TIMER_MS, Math.max(0, at - this.clock.now())));
+    };
+    arm();
+  }
+
+  clear(): void {
+    if (this.handle !== null) {
+      this.clock.clearTimeout(this.handle);
+      this.handle = null;
+    }
+  }
+}
+
 /** The state file is written at least this often (SPEC 10.1). */
 export const STATE_EVERY_MS = 60_000;
 /** Bulb transition on a status change; a refresh is instant (SPEC 13.1 item 4). */
@@ -52,8 +90,12 @@ export interface EngineOptions {
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   /** The override switch's state at startup. */
   override?: boolean;
+  /** The Working switch's state at startup (SPEC 6.6); without the switch, working. */
+  working?: boolean;
   /** Called on every status change, to update the sensors. */
   onStatus?: (status: Status) => void;
+  /** Called when the meeting warning begins or ends, for the Meeting Soon sensor (SPEC 6.7). */
+  onMeetingSoon?: (on: boolean) => void;
 }
 
 /** The status input server's part of the state file (SPEC 10.1); the platform supplies it while the server runs. */
@@ -78,17 +120,20 @@ export class BusyLightEngine {
   status: Status | null = null;
   reason: Reason | null = null;
   override: boolean;
+  /** False while the Working switch is off (SPEC 6.6). */
+  working: boolean;
+  /** The meeting warning while it is on (SPEC 6.7): the meeting's start. */
+  meetingWarning: { meetingAt: number } | null = null;
 
   private readonly config: BusyLightConfig;
   private readonly clock: Clock;
   private readonly log: Log;
   private ticking = false;
   private queue: Promise<void> = Promise.resolve();
-  private boundaryTimer: unknown = null;
-  private expiryTimer: unknown = null;
+  private readonly boundaryTimer: ClockTimer;
+  private readonly expiryTimer: ClockTimer;
   private pollTimer: unknown = null;
   private stateTimer: unknown = null;
-  private lastTickAt = 0;
   private lastSendAt: number | null = null;
   private stopped = false;
   /** The status input server's state, set by the platform; without a server the input is not listening. */
@@ -99,10 +144,15 @@ export class BusyLightEngine {
     this.clock = options.clock ?? systemClock;
     this.log = options.log;
     this.override = options.override ?? false;
+    this.working = options.working ?? true;
+    this.boundaryTimer = new ClockTimer(this.clock);
+    this.expiryTimer = new ClockTimer(this.clock);
     const ics = { outOfOfficeWords: this.config.outOfOfficeWords, ownerAddresses: ownerAddresses(this.config) };
     const now = () => this.clock.now();
     this.sources = this.config.calendars.map((config) => new SourceRunner({
       config, storageDir: options.storageDir, ics, log: this.log, now, sleep: options.sleep, onChange: () => this.writeState(),
+      // SPEC 8.1 item 3: the boundary timer follows the cached events as soon as they change, not when the tick ends.
+      onData: () => this.scheduleBoundary(this.clock.now()),
     }));
     this.inputs = new SenderStore(inputsFile(options.storageDir), (err) => this.log.debug(`Could not write inputs.json: ${err.message}`));
     const id = readInstanceId(options.storageDir);
@@ -139,10 +189,14 @@ export class BusyLightEngine {
   start(): void {
     this.inputs.load(this.clock.now());
     void this.light.start();
-    this.log.info(startup(this.options.version, this.sources.length, { enabled: this.light.enabled, host: this.light.host },
+    this.log.info(startup(this.options.version, this.sources.length, { enabled: this.light.enabled, hosts: this.light.hosts },
       this.config.sensors.length));
     if (this.sources.length === 0) {
       this.log.warn(noCalendars());
+    }
+    if (!this.working) {
+      // Restored off: the log says why the light is off (SPEC 6.6 item 3).
+      this.log.info(workingOff(this.config.name));
     }
     for (const source of this.sources) {
       source.startSignInIfNeeded();
@@ -160,13 +214,8 @@ export class BusyLightEngine {
         this.clock.clearInterval(timer);
       }
     }
-    for (const timer of [this.boundaryTimer, this.expiryTimer]) {
-      if (timer !== null) {
-        this.clock.clearTimeout(timer);
-      }
-    }
-    this.boundaryTimer = null;
-    this.expiryTimer = null;
+    this.boundaryTimer.clear();
+    this.expiryTimer.clear();
     for (const source of this.sources) {
       source.stop();
     }
@@ -180,11 +229,12 @@ export class BusyLightEngine {
     this.ticking = true;
     try {
       const now = this.clock.now();
-      this.lastTickAt = now;
       // SPEC 8.1 item 2: each source on its own interval, or the platform's when it has none.
       await Promise.all(this.sources.map((s) => s.runDue(now, (s.config.calendarSeconds ?? this.config.calendarSeconds) * 1000)));
-      const bulbChosen = await this.light.maintain();
-      await this.applyStatus(undefined, bulbChosen);
+      // A bulb chosen or found at a new address is sent the last color by the light controller (SPEC 13.3 items 2 and 4).
+      await this.light.maintain();
+      await this.applyStatus();
+      await this.light.settled();
     } catch (err) {
       this.log.error(`Unexpected error: ${(err as Error).message}`);
     } finally {
@@ -219,6 +269,19 @@ export class BusyLightEngine {
     return this.status ?? 'unknown';
   }
 
+  /**
+   * The Working switch turned on or off (SPEC 6.6): its line when the state changes, then the status at once. Off is
+   * `notWorking`, above every rule; on resolves as usual.
+   */
+  setWorking(on: boolean): Promise<void> {
+    if (on !== this.working) {
+      this.working = on;
+      this.log.info(on ? workingOn(this.config.name) : workingOff(this.config.name));
+    }
+    this.writeState();
+    return this.applyStatus();
+  }
+
   /** Turns the override on or off and resolves again at once (SPEC 7 item 5). */
   setOverride(on: boolean): Promise<void> {
     this.override = on;
@@ -226,67 +289,94 @@ export class BusyLightEngine {
     return this.applyStatus();
   }
 
-  /** Resolves and applies, one at a time. `at` is a boundary time, for the boundary timer. */
-  applyStatus(at?: number, resend = false): Promise<void> {
-    this.queue = this.queue.then(() => this.applyNow(at, resend)).catch((err: unknown) => {
+  /**
+   * Resolves and applies, one at a time. `at` is a boundary time, for the boundary timer. An apply puts its color on
+   * every bulb's lane and goes on, so one bulb still trying never holds up the next color on the others (SPEC 13.3 item 1).
+   */
+  applyStatus(at?: number): Promise<void> {
+    this.queue = this.queue.then(() => this.applyNow(at)).catch((err: unknown) => {
       this.log.error(`Unexpected error: ${(err as Error).message}`);
     });
     return this.queue;
   }
 
-  /** Resolves once the queued applies are done. */
+  /** Resolves once the queued applies are done and every bulb has its color (or has stopped trying). */
   idle(): Promise<void> {
-    return this.queue;
+    return this.queue.then(() => this.light.settled());
   }
 
-  private async applyNow(at: number | undefined, resend: boolean): Promise<void> {
+  private async applyNow(at: number | undefined): Promise<void> {
     if (this.stopped) {
       return;
     }
-    const now = Math.max(this.clock.now(), at ?? 0);
+    // A timer's time is the resolve's only when it fired within a second of it (SPEC 8.1 item 5).
+    const now = at !== undefined && at - this.clock.now() <= EARLY_MS ? Math.max(this.clock.now(), at) : this.clock.now();
     for (const sender of this.inputs.sweep(now)) {
       this.log.info(senderExpired(sender));
     }
     const inputsOn = this.config.statusInput.enabled || this.config.callSwitch.enabled;
-    const result = resolve(this.sources.map((s) => s.data()), this.override, now, this.resolveOptions,
-      { on: inputsOn, reports: this.reports(now) });
+    // The Working switch off comes before every rule (SPEC 6.6); reports and boundaries are still tracked.
+    const result: Resolution | { status: 'notWorking'; reason: null } = this.working
+      ? resolve(this.sources.map((s) => s.data()), this.override, now, this.resolveOptions, { on: inputsOn, reports: this.reports(now) })
+      : { status: 'notWorking', reason: null };
     const changed = result.status !== this.status;
     this.reason = result.reason;
+    // SPEC 6.7: the meeting warning, while the status is Available and a calendar meeting is that close.
+    const ahead = result.status === 'available' ? this.meetingAhead(now) : null;
+    const warning = ahead !== null && ahead - now <= this.config.meetingWarningSeconds * 1000 ? { meetingAt: ahead } : null;
+    const hadWarning = this.meetingWarning !== null;
+    const warningChanged = (warning?.meetingAt ?? null) !== (this.meetingWarning?.meetingAt ?? null);
+    this.meetingWarning = warning;
     if (changed) {
       this.status = result.status;
       if (result.status === 'unknown') {
         if (this.sources.length > 0) {
           this.log.warn(statusUnknown());
         }
-      } else {
-        this.log.info(statusLine(STATUS_NAMES[result.status], result.reason));
+      } else if (result.status !== 'notWorking') {
+        // Not working has the Working lines instead (SPEC 6.6 item 3).
+        this.log.info(statusLine(STATUS_NAMES[result.status], result.reason, now));
       }
       this.options.onStatus?.(result.status);
-      this.writeState();
-      if (result.status !== 'unknown') {
-        await this.send(result.status, CHANGE_DURATION_MS, now);
+      if (warningChanged) {
+        this.options.onMeetingSoon?.(warning !== null);
       }
-    } else if (result.status !== 'unknown' && (resend || this.refreshDue(now))) {
-      await this.send(result.status, resend ? CHANGE_DURATION_MS : 0, now);
+      this.writeState();
+      if (warning) {
+        // Available began inside the warning time: the fade starts from the Available color (SPEC 6.7 item 3).
+        this.sendWarning(warning, now, true);
+      } else if (result.status !== 'unknown') {
+        this.send(result.status, CHANGE_DURATION_MS, now);
+      }
+    } else if (result.status !== 'unknown') {
+      if (warningChanged) {
+        this.options.onMeetingSoon?.(warning !== null);
+        this.writeState();
+      }
+      if (warning && warningChanged) {
+        this.sendWarning(warning, now, false);
+      } else if (!warning && hadWarning) {
+        // The warning ended before the meeting: the normal apply replaces the fade at once (SPEC 6.7 item 4).
+        this.send(result.status, CHANGE_DURATION_MS, now);
+      } else if (!warning && this.refreshDue(now)) {
+        // No refresh during the warning, which would end the fade (SPEC 6.7 item 6).
+        this.send(result.status, 0, now);
+      }
     }
-    this.scheduleBoundary(now);
-    this.scheduleExpiry(now);
+    // From the clock after the send is put on the bulbs' lanes (SPEC 8.1 item 3).
+    const after = Math.max(this.clock.now(), now);
+    this.scheduleBoundary(after);
+    this.scheduleExpiry(after);
   }
 
   /** SPEC 18.7 item 3: one timer for the next report to expire, so the status changes the moment it does. */
   private scheduleExpiry(now: number): void {
-    if (this.expiryTimer !== null) {
-      this.clock.clearTimeout(this.expiryTimer);
-      this.expiryTimer = null;
-    }
     const next = this.inputs.nextExpiry();
     if (next === null) {
+      this.expiryTimer.clear();
       return;
     }
-    this.expiryTimer = this.clock.setTimeout(() => {
-      this.expiryTimer = null;
-      void this.applyStatus(next);
-    }, Math.max(0, next - now));
+    this.expiryTimer.set(Math.max(next, now), () => void this.applyStatus(next));
   }
 
   private refreshDue(now: number): boolean {
@@ -294,29 +384,67 @@ export class BusyLightEngine {
     return this.light.enabled && every > 0 && this.lastSendAt !== null && now - this.lastSendAt >= every;
   }
 
-  private async send(status: Exclude<Status, 'unknown'>, durationMs: number, now: number): Promise<void> {
+  /**
+   * SPEC 6.7 item 1: the start of the next meeting when the status is Available and the next change is to In a
+   * meeting, while the settings allow a warning (on, the In a meeting color not off, working); null otherwise.
+   */
+  private meetingAhead(now: number): number | null {
+    if (this.config.meetingWarningSeconds <= 0 || !this.working || this.config.colors.inMeeting === 'off') {
+      return null;
+    }
+    const fresh = freshData(this.sources.map((s) => s.data()), now);
+    return meetingAhead(this.override, fresh.presence, fresh.events, now, this.resolveOptions, this.reports(now));
+  }
+
+  /**
+   * The meeting warning's fade (SPEC 6.7 item 3): to the In a meeting color, until the meeting starts. With the Available
+   * color off the bulb comes on dim first; `fromAvailable` sets the Available color first, when the bulb may not show it.
+   */
+  private sendWarning(warning: { meetingAt: number }, now: number, fromAvailable: boolean): void {
     if (!this.light.enabled) {
       return;
     }
     this.lastSendAt = now;
-    await this.light.send(this.config.colors[status], durationMs);
+    const available = this.config.colors.available;
+    this.log.debug(`Meeting warning: fading over ${Math.round((warning.meetingAt - now) / 1000)} seconds.`);
+    this.light.sendFade({ from: available === 'off' ? 'off' : fromAvailable ? available : null, to: this.config.colors.inMeeting,
+      until: warning.meetingAt }).catch((err: unknown) => this.log.error(`Unexpected error: ${(err as Error).message}`));
   }
 
-  /** SPEC 8.1 item 3: one timer for the next event boundary, when that comes before the next tick. */
-  private scheduleBoundary(now: number): void {
-    if (this.boundaryTimer !== null) {
-      this.clock.clearTimeout(this.boundaryTimer);
-      this.boundaryTimer = null;
-    }
-    const events = freshData(this.sources.map((s) => s.data()), now).events;
-    const next = nextBoundary(events, now, this.resolveOptions);
-    if (next === null || next >= this.lastTickAt + this.pollMs) {
+  /**
+   * Puts a status's color on every bulb's lane, without waiting for the answers (SPEC 13.3 item 1); not working turns
+   * the light off, whatever the Offline color (SPEC 6.6 item 1).
+   */
+  private send(status: Exclude<Status, 'unknown'>, durationMs: number, now: number): void {
+    if (!this.light.enabled) {
       return;
     }
-    this.boundaryTimer = this.clock.setTimeout(() => {
-      this.boundaryTimer = null;
-      void this.applyStatus(next);
-    }, next - now);
+    this.lastSendAt = now;
+    this.light.send(status === 'notWorking' ? 'off' : this.config.colors[status], durationMs)
+      .catch((err: unknown) => this.log.error(`Unexpected error: ${(err as Error).message}`));
+  }
+
+  /**
+   * SPEC 8.1 item 3: one timer for the next event boundary, set after every apply and whenever a source's events
+   * change, whether or not the next tick comes first: a tick resolves only once its calendar checks finish.
+   */
+  private scheduleBoundary(now: number): void {
+    if (this.stopped) {
+      return;
+    }
+    const events = freshData(this.sources.map((s) => s.data()), now).events;
+    let next = nextBoundary(events, now, this.resolveOptions);
+    // The beginning of a meeting warning is timed the same way (SPEC 6.7 item 2).
+    const ahead = this.meetingAhead(now);
+    const begins = ahead === null ? null : ahead - this.config.meetingWarningSeconds * 1000;
+    if (begins !== null && begins > now && (next === null || begins < next)) {
+      next = begins;
+    }
+    if (next === null) {
+      this.boundaryTimer.clear();
+      return;
+    }
+    this.boundaryTimer.set(next, () => void this.applyStatus(next));
   }
 
   /** The state file of SPEC 10.1. */
@@ -340,8 +468,12 @@ export class BusyLightEngine {
       signIn: waiting && code
         ? { id: waiting.config.id, verificationUri: code.verificationUri, userCode: code.userCode, expiresAt: new Date(code.expiresAt).toISOString() }
         : null,
-      light: this.light.state(),
-      statusInput: { enabled: this.config.statusInput.enabled, port: this.config.statusInput.port, ...this.inputServerStatus() },
+      lights: this.light.lights(),
+      statusInput: {
+        enabled: this.config.statusInput.enabled, port: this.config.statusInput.port, ...this.inputServerStatus(),
+        reported: Object.fromEntries(Object.entries(this.inputs.reported()).map(([status, at]) => [status, new Date(at).toISOString()])),
+      },
+      meetingWarning: this.meetingWarning ? { meetingAt: new Date(this.meetingWarning.meetingAt).toISOString() } : null,
       inputs: this.inputs.list(this.clock.now()).map((e) => ({
         sender: e.sender,
         status: e.status,
@@ -351,6 +483,7 @@ export class BusyLightEngine {
         lastHeard: new Date(e.lastHeard).toISOString(),
         expiresAt: e.expiresAt === null ? null : new Date(e.expiresAt).toISOString(),
         active: e.active,
+        ended: e.ended,
       })),
     };
   }

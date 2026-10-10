@@ -5,7 +5,7 @@
  */
 import path from 'node:path';
 import { readJson, writeFileAtomic } from './files.js';
-import type { Auth, Via } from './inputs.js';
+import type { Auth, Ended, Via } from './inputs.js';
 import type { LightState } from './light.js';
 import type { Status } from './model.js';
 import type { SourceStateEntry } from './sources.js';
@@ -31,6 +31,8 @@ export interface StatusInputState {
   advertised?: string | null;
   /** The last change from one IPv4 address to another (18.11 item 6; from build 3.1). */
   addressChange?: AddressChange | null;
+  /** When each status was last reported through the status API, as ISO times (18.7 item 8; from build 3.2). */
+  reported?: Partial<Record<InputStatus, string>>;
 }
 
 /** A change of the address senders were given (SPEC 18.11 item 6), `at` an ISO time. */
@@ -51,6 +53,8 @@ export interface InputStateEntry {
   lastHeard: string;
   expiresAt: string | null;
   active: boolean;
+  /** How it ended once inactive (from build 3.2): `cleared` or `expired`; null while active (10.1 item 8). */
+  ended?: Ended | null;
 }
 
 export interface StateFile {
@@ -62,10 +66,26 @@ export interface StateFile {
   override: boolean;
   sources: SourceStateEntry[];
   signIn: SignInState | null;
-  light: LightState;
+  /**
+   * One entry per chosen bulb, or one entry as `light` was while none is chosen (SPEC 10.1 item 5, from build 3.2).
+   * Absent in a state file written before build 3.2, which has `light`.
+   */
+  lights?: LightState[];
+  /** Before build 3.2: the one bulb. Read through `lightsOf`. */
+  light?: LightState;
   /** From build 3; absent in a state file written by build 2. */
   statusInput?: StatusInputState;
   inputs?: InputStateEntry[];
+  /** The meeting warning while it is on, the meeting's start as an ISO time (SPEC 6.7, from build 3.2). */
+  meetingWarning?: { meetingAt: string } | null;
+}
+
+/** The bulbs of a state file: `lights`, or a `light` written before build 3.2 as one entry (SPEC 10.1 item 5). */
+export function lightsOf(state: Pick<StateFile, 'lights' | 'light'>): LightState[] {
+  if (Array.isArray(state.lights)) {
+    return state.lights;
+  }
+  return state.light ? [state.light] : [];
 }
 
 export function stateFile(storageDir: string): string {

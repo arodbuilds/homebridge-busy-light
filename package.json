@@ -2,14 +2,14 @@
   "name": "homebridge-busy-light",
   "displayName": "Busy Light",
   "type": "module",
-  "version": "0.1.0-beta.4",
+  "version": "0.1.0-beta.5",
   "description": "Shows your calendar and Teams status on a light: green when you are free, red when you are not. iCloud, Google Calendar, Microsoft 365 and calendar URLs, with LIFX control and HomeKit sensors.",
   "author": "Alex Rodriguez (https://alex-rodriguez.com)",
   "license": "Apache-2.0",
   "homepage": "https://github.com/arodbuilds/homebridge-busy-light#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/arodbuilds/homebridge-busy-light.git"
+    "url": "git+https://github.com/arodbuilds/homebridge-busy-light.git"
   },
   "bugs": {
     "url": "https://github.com/arodbuilds/homebridge-busy-light/issues"

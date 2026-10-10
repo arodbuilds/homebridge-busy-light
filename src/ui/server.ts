@@ -496,40 +496,54 @@ export class BusyLightUiHandlers {
 
   /**
    * Red, then green, then the saved Available color, each held a second, with acknowledgements. A serial with a host
-   * sends untagged to that address, a host alone sends tagged, and a serial alone is found by discovery first. It
-   * never writes light.json; the plugin's next send restores the status color.
+   * sends untagged to that address, a host alone sends tagged, and a serial alone is found by discovery first. From
+   * build 3.2 the request lists the bulbs, each tested at the same moment and on its own, with one result each
+   * (SPEC 10.3 item 5, 13.3); the single bulb of earlier builds is still read. With none given, the bulbs the plugin
+   * would choose. It never writes light.json; the plugin's next send restores the status color.
    */
-  async lifxTest(payload: unknown): Promise<{ answered: boolean }> {
-    let serial = normalizeSerial(text(payload, 'serial'));
-    const given = text(payload, 'host');
-    let host = given && isHost(given) ? given : null;
+  async lifxTest(payload: unknown): Promise<{ answered: boolean; results: { label: string | null; host: string | null; answered: boolean }[] }> {
     const raw = field(payload, 'brightness');
     const brightness = typeof raw === 'number' && Number.isInteger(raw) && raw >= 1 && raw <= 100 ? raw : 100;
+    const listed = field(payload, 'bulbs');
+    const read = (b: unknown) => ({ serial: normalizeSerial(text(b, 'serial')), host: isHost(text(b, 'host')) ? text(b, 'host') : null, label: null });
+    // A list keeps every entry in its place, one result each, even one with neither a serial nor an address (a name the
+    // page could not find): its result is not answered. The single bulb of earlier builds is read as before.
+    let targets: { serial: string | null; host: string | null; label: string | null }[] = Array.isArray(listed) && listed.length > 0
+      ? listed.map(read) : [read(payload)].filter((b) => b.serial !== null || b.host !== null);
     try {
-      if (!host && serial) {
-        host = (await this.lifx.discover()).find((b) => b.serial === serial)?.host ?? null;
-      } else if (!host) {
-        // Nothing chosen on the page yet: the bulb the plugin would choose, by the saved lifx.bulb or the only one found.
-        const bulbs = await this.lifx.discover();
-        const wanted = this.savedBulb();
-        const pick = wanted ? bulbs.find((b) => matchesBulb(wanted, b)) : bulbs.length === 1 ? bulbs[0] : undefined;
-        serial = pick?.serial ?? null;
-        host = pick?.host ?? null;
+      if (targets.some((b) => !b.host && b.serial)) {
+        const found = await this.lifx.discover();
+        targets = targets.map((b) => {
+          const bulb = b.host ? undefined : found.find((f) => f.serial === b.serial);
+          return bulb ? { serial: bulb.serial, host: bulb.host, label: bulb.label || null } : b;
+        });
+      } else if (targets.length === 0) {
+        // Nothing chosen on the page yet: the bulbs the plugin would choose, by the saved lifx.bulbs or the only one found.
+        const found = await this.lifx.discover();
+        const wanted = this.savedBulbs();
+        const picks = wanted.length > 0 ? wanted.map((w) => found.find((b) => matchesBulb(w, b))).filter((b) => b !== undefined)
+          : found.length === 1 ? found : [];
+        targets = [...new Set(picks)].map((b) => ({ serial: b.serial, host: b.host, label: b.label || null }));
       }
-      if (!host) {
-        return { answered: false };
-      }
-      let answered = true;
-      for (const [i, color] of [TEST_RED, TEST_GREEN, this.availableColor()].entries()) {
-        if (i > 0) {
-          await this.sleep(TEST_HOLD_MS);
-        }
-        answered = (await this.lifx.sendColor(host, serial, color, brightness, 0)) && answered;
-      }
-      return { answered };
+      const results = await Promise.all(targets.map(async (b) => ({
+        label: b.label, host: b.host, answered: b.host ? await this.testOne(b.host, b.serial, brightness) : false,
+      })));
+      return { answered: results.length > 0 && results.every((r) => r.answered), results };
     } catch {
-      return { answered: false };
+      return { answered: false, results: targets.map((b) => ({ label: b.label, host: b.host, answered: false })) };
     }
+  }
+
+  /** Test light on one bulb: red, then green, then the Available color, each held a second. */
+  private async testOne(host: string, serial: string | null, brightness: number): Promise<boolean> {
+    let answered = true;
+    for (const [i, color] of [TEST_RED, TEST_GREEN, this.availableColor()].entries()) {
+      if (i > 0) {
+        await this.sleep(TEST_HOLD_MS);
+      }
+      answered = (await this.lifx.sendColor(host, serial, color, brightness, 0)) && answered;
+    }
+    return answered;
   }
 
   /** The platform block of the saved configuration (config.json, read only), or undefined. */
@@ -547,10 +561,13 @@ export class BusyLightUiHandlers {
     return normalizeColor(colors?.available) ?? DEFAULT_COLORS.available;
   }
 
-  /** The saved lifx.bulb (a serial number or a name from the LIFX app), or an empty string. */
-  private savedBulb(): string {
+  /** The saved lifx.bulbs, or a saved lifx.bulb as a list of one (SPEC 9.1 item 6): serial numbers or names. */
+  private savedBulbs(): string[] {
     const lifx = this.savedBlock()?.lifx as Record<string, unknown> | undefined;
-    return typeof lifx?.bulb === 'string' ? lifx.bulb.trim() : '';
+    if (Array.isArray(lifx?.bulbs)) {
+      return lifx.bulbs.filter((b): b is string => typeof b === 'string' && b.trim() !== '').map((b) => b.trim());
+    }
+    return typeof lifx?.bulb === 'string' && lifx.bulb.trim() ? [lifx.bulb.trim()] : [];
   }
 
   // ---------------------------------------------------------------------------

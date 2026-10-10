@@ -36,10 +36,14 @@ describe('settings page model (SPEC section 9)', () => {
     const page = exportConfig(emptyConfig());
     const plugin = defaultConfig();
     assert.deepEqual(page, {
-      platform: 'BusyLight', name: plugin.name, calendars: [], colors: plugin.colors, lifx: plugin.lifx, sensors: plugin.sensors,
+      platform: 'BusyLight', name: plugin.name, calendars: [], colors: plugin.colors, sensors: plugin.sensors,
+      // The file's lifx block: the plugin reads its host as a list of addresses (from build 3.2).
+      lifx: { enabled: plugin.lifx.enabled, bulbs: plugin.lifx.bulbs, host: plugin.lifx.hosts.join(', '), brightness: plugin.lifx.brightness,
+        refreshSeconds: plugin.lifx.refreshSeconds },
       overrideSwitch: plugin.overrideSwitch, pollSeconds: plugin.pollSeconds, calendarSeconds: plugin.calendarSeconds,
       ignoreAllDayBusy: plugin.ignoreAllDayBusy, outOfOfficeWords: plugin.outOfOfficeWords, debug: plugin.debug,
-      statusInput: plugin.statusInput, callSwitch: plugin.callSwitch,
+      statusInput: plugin.statusInput, callSwitch: plugin.callSwitch, meetingWarningSeconds: plugin.meetingWarningSeconds,
+      workingSwitch: plugin.workingSwitch,
     });
     assert.deepEqual(readConfig(undefined), emptyConfig());
     assert.deepEqual(LIMITS, {
@@ -163,8 +167,8 @@ describe('settings page validation (SPEC 11.3 H)', () => {
     assert.deepEqual(validate(c), []);
     c.lifx.enabled = true;
     assert.deepEqual(validate(c).map((i) => `${i.label}|${i.message}`), [
-      'LIFX bulb|Enter a whole number from 1 to 100.',
-      'LIFX bulb|Enter an IP address such as 192.168.1.50, or a host name.',
+      'LIFX bulbs|Enter a whole number from 1 to 100.',
+      'LIFX bulbs|Enter an IP address such as 192.168.1.50, or a host name.',
     ]);
   });
 });

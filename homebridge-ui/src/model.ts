@@ -46,8 +46,12 @@ export interface UiSource {
 
 export interface UiLifx {
   enabled: boolean;
-  /** A bulb's serial number as the page writes it, or a name as build 1 wrote it. */
-  bulb: string;
+  /**
+   * The bulbs to use (SPEC 9.1 item 6, from build 3.2): serial numbers as the page writes them, or names as written by
+   * hand or by build 1. A saved `lifx.bulb` is read as a list of one, and is not written back.
+   */
+  bulbs: string[];
+  /** One or more addresses, separated by commas. */
   host: string;
   brightness: number;
   refreshSeconds: number;
@@ -84,6 +88,10 @@ export interface UiConfig {
   debug: boolean;
   statusInput: UiStatusInput;
   callSwitch: UiCallSwitch;
+  /** The meeting warning in seconds (SPEC 9.1 item 21): 0 (none), 60, 120, 180 or 300, or a hand-written value kept as is. */
+  meetingWarningSeconds: number;
+  /** The Working switch (SPEC 9.1 item 20). */
+  workingSwitch: { enabled: boolean };
   /** Keys the page does not edit, written back untouched. */
   extra: Record<string, unknown>;
   /** Calendar entries the page cannot edit (an unknown type), written back untouched. */
@@ -97,7 +105,7 @@ export const DEFAULTS = {
     outOfOffice: '#B400FF', doNotDisturb: '#FF0000', inCall: '#FF0000', inMeeting: '#FF0000', busy: '#FF6A00', tentative: '#FFD000',
     away: '#FFD000', available: '#00FF00', offline: 'off',
   } as Record<StatusKey, string>,
-  lifx: { enabled: false, bulb: '', host: '', brightness: 100, refreshSeconds: 300 } as UiLifx,
+  lifx: { enabled: false, bulbs: [] as string[], host: '', brightness: 100, refreshSeconds: 300 } as UiLifx,
   sensors: ['available', 'busyAny', 'outOfOffice'] as SensorKey[],
   overrideSwitch: false,
   pollSeconds: 30,
@@ -107,7 +115,12 @@ export const DEFAULTS = {
   debug: false,
   statusInput: { enabled: false, port: 8582, key: '', allowPlainKey: true } as UiStatusInput,
   callSwitch: { enabled: false, hours: 3 } as UiCallSwitch,
+  meetingWarningSeconds: 0,
+  workingSwitch: { enabled: false },
 };
+
+/** The choices of Warn before meetings, in seconds (SPEC 11.3 D); 0 is Off. */
+export const MEETING_WARNINGS = [0, 60, 120, 180, 300] as const;
 
 /** The limits of SPEC 9.1, for the number fields and their messages. */
 export const LIMITS = {
@@ -126,7 +139,7 @@ export const INTERVALS = {
 
 const KNOWN = new Set([
   'platform', 'name', 'calendars', 'colors', 'lifx', 'sensors', 'overrideSwitch', 'pollSeconds', 'calendarSeconds', 'ignoreAllDayBusy',
-  'outOfOfficeWords', 'debug', 'statusInput', 'callSwitch',
+  'outOfOfficeWords', 'debug', 'statusInput', 'callSwitch', 'meetingWarningSeconds', 'workingSwitch',
 ]);
 
 /** The key's rule (SPEC 18.8 item 1). */
@@ -245,7 +258,7 @@ export function emptyConfig(): UiConfig {
     name: DEFAULTS.name,
     calendars: [],
     colors: { ...DEFAULTS.colors },
-    lifx: { ...DEFAULTS.lifx },
+    lifx: { ...DEFAULTS.lifx, bulbs: [] },
     sensors: [...DEFAULTS.sensors],
     overrideSwitch: DEFAULTS.overrideSwitch,
     pollSeconds: DEFAULTS.pollSeconds,
@@ -255,6 +268,8 @@ export function emptyConfig(): UiConfig {
     debug: DEFAULTS.debug,
     statusInput: { ...DEFAULTS.statusInput },
     callSwitch: { ...DEFAULTS.callSwitch },
+    meetingWarningSeconds: DEFAULTS.meetingWarningSeconds,
+    workingSwitch: { ...DEFAULTS.workingSwitch },
     extra: {},
     otherCalendars: [],
   };
@@ -293,7 +308,8 @@ export function readConfig(raw: unknown): UiConfig {
   const lifx = isObject(raw.lifx) ? raw.lifx : {};
   c.lifx = {
     enabled: bool(lifx.enabled, DEFAULTS.lifx.enabled),
-    bulb: str(lifx.bulb),
+    bulbs: Array.isArray(lifx.bulbs) ? lifx.bulbs.filter((b): b is string => typeof b === 'string' && b.trim() !== '').map((b) => b.trim())
+      : str(lifx.bulb).trim() ? [str(lifx.bulb).trim()] : [],
     host: str(lifx.host),
     brightness: num(lifx.brightness, DEFAULTS.lifx.brightness),
     refreshSeconds: num(lifx.refreshSeconds, DEFAULTS.lifx.refreshSeconds),
@@ -318,6 +334,9 @@ export function readConfig(raw: unknown): UiConfig {
   };
   const call = isObject(raw.callSwitch) ? raw.callSwitch : {};
   c.callSwitch = { enabled: bool(call.enabled, DEFAULTS.callSwitch.enabled), hours: num(call.hours, DEFAULTS.callSwitch.hours) };
+  c.meetingWarningSeconds = num(raw.meetingWarningSeconds, DEFAULTS.meetingWarningSeconds);
+  const working = isObject(raw.workingSwitch) ? raw.workingSwitch : {};
+  c.workingSwitch = { enabled: bool(working.enabled, DEFAULTS.workingSwitch.enabled) };
   for (const [key, value] of Object.entries(raw)) {
     if (!KNOWN.has(key)) {
       c.extra[key] = value;
@@ -382,7 +401,9 @@ export function exportConfig(c: UiConfig): Record<string, unknown> {
     name: c.name.trim(),
     calendars: [...c.calendars.map(exportSource), ...c.otherCalendars],
     colors,
-    lifx: { enabled: c.lifx.enabled, bulb: c.lifx.bulb.trim(), host: c.lifx.host.trim(), brightness: c.lifx.brightness, refreshSeconds: c.lifx.refreshSeconds },
+    // From build 3.2 lifx.bulbs, in place of lifx.bulb, which is dropped (SPEC 9.1 item 6).
+    lifx: { enabled: c.lifx.enabled, bulbs: c.lifx.bulbs.map((b) => b.trim()).filter((b) => b !== ''), host: c.lifx.host.trim(),
+      brightness: c.lifx.brightness, refreshSeconds: c.lifx.refreshSeconds },
     sensors: SENSOR_KEYS.filter((k) => c.sensors.includes(k)),
     overrideSwitch: c.overrideSwitch,
     pollSeconds: c.pollSeconds,
@@ -392,6 +413,8 @@ export function exportConfig(c: UiConfig): Record<string, unknown> {
     debug: c.debug,
     statusInput: { enabled: c.statusInput.enabled, port: c.statusInput.port, key: c.statusInput.key, allowPlainKey: c.statusInput.allowPlainKey },
     callSwitch: { enabled: c.callSwitch.enabled, hours: c.callSwitch.hours },
+    meetingWarningSeconds: c.meetingWarningSeconds,
+    workingSwitch: { enabled: c.workingSwitch.enabled },
   };
 }
 

@@ -15,7 +15,7 @@ import { ensureStorageDir } from '../src/files.js';
 import { inputsFile } from '../src/inputs.js';
 import { LifxClient } from '../src/lifx.js';
 import {
-  ERROR_MESSAGES, StatusApi, StatusInputServer, checkText, ensureInstanceId, isLocalAddress, parseAuthorization, readInstanceId,
+  ERROR_MESSAGES, StatusApi, StatusInputServer, checkText, ensureInstanceId, isLocalAddress, isReservedSender, parseAuthorization, readInstanceId,
   sha256Hex, signature, signedAuthorization, stringToSign,
 } from '../src/status-api.js';
 import type { ApiRequest, ErrorKey, ServerLike } from '../src/status-api.js';
@@ -168,6 +168,20 @@ test('GET /v1/status says nothing about calendars or events (18.10 item 3): a re
   engine!.status = 'unknown';
   engine!.reason = null;
   assert.equal((await signedGet(api, clock.now() + 4)).body.reason, null);
+});
+
+test('while the Working switch is off a sender sees notWorking, which it cannot send (18.10 item 3, SPEC 6.6)', async () => {
+  const api = setup();
+  await engine!.setWorking(false);
+  const report = await send(api, 'POST', '/v1/status', body({ sender: MAC, status: 'inCall' }), plain());
+  assert.deepEqual([report.status, report.body.status], [200, 'notWorking']);
+  const answer = await signedGet(api);
+  assert.equal(answer.body.status, 'notWorking');
+  assert.equal(answer.body.reason, null);
+  assert.equal((answer.body.senders as unknown[]).length, 1, 'the report is kept');
+  assert.equal((await send(api, 'POST', '/v1/status', body({ sender: MAC, status: 'notWorking' }), plain())).body.error, 'invalid_status');
+  await engine!.setWorking(true);
+  assert.equal((await signedGet(api)).body.status, 'inCall');
 });
 
 test('a signature over a body that differs by one byte is refused; parameters in either order are accepted', async () => {
@@ -348,6 +362,24 @@ test('the text rule of 18.4 item 3', async () => {
     assert.equal((await send(api, 'POST', '/v1/status', body({ sender: 'S', status: 'busy', app: value }), plain())).body.error,
       value === null ? undefined : 'invalid_app', JSON.stringify(value));
   }
+});
+
+test('the sender name Home app is reserved for the On a Call switch, in any form that normalizes to it (18.4 item 3)', async () => {
+  const api = setup();
+  const post = (fields: Record<string, unknown>) => send(api, 'POST', '/v1/status', body(fields), plain());
+  const fullwidth = '\uff28\uff4f\uff4d\uff45 \uff41\uff50\uff50';
+  for (const sender of ['Home app', 'Home\u00a0app', fullwidth, 'Home\u2002app']) {
+    assert.ok(isReservedSender(sender), JSON.stringify(sender));
+    assert.deepEqual((await post({ sender, status: 'inCall' })).body, { error: 'invalid_sender', message: ERROR_MESSAGES.invalid_sender },
+      JSON.stringify(sender));
+    assert.equal((await post({ sender, status: 'clear' })).body.error, 'invalid_sender', 'clear too');
+    assert.equal((await signedPost(api, { sender, status: 'inCall' })).body.error, 'invalid_sender', 'signed too');
+  }
+  for (const sender of ['home app', 'Home app 2', 'Home App', 'Home apps']) {
+    assert.equal(isReservedSender(sender), false, sender);
+    assert.equal((await post({ sender, status: 'busy' })).status, 200, sender);
+  }
+  assert.ok(!engine!.inputs.list(clock.now()).some((e) => e.sender.normalize('NFKC') === 'Home app'));
 });
 
 test('fields: unknown_field, invalid_status (tentative and unknown too), invalid_ttl, invalid_json', async () => {

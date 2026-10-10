@@ -1,16 +1,47 @@
-<p align="center">
-  <img src="https://raw.githubusercontent.com/arodbuilds/homebridge-busy-light/latest/assets/busy-light-banner.png" alt="Busy Light for Homebridge" width="100%">
-</p>
+<img src="assets/busy-light-banner.png" alt="Busy Light for Homebridge: your calendar and Teams status on a light." width="100%">
 
-# Busy Light for Homebridge
+<!--
+verified-by-homebridge: this plugin has not been through Homebridge verification yet.
+Do not claim it. Once the plugin is verified, replace this comment with the badge:
+[![verified-by-homebridge](https://badgen.net/badge/homebridge/verified/purple)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
+-->
 
-Your calendar and Teams status on a light. Green when you are free, red when you are not.
+[![npm version](https://img.shields.io/npm/v/homebridge-busy-light)](https://www.npmjs.com/package/homebridge-busy-light)
+[![npm downloads](https://img.shields.io/npm/dt/homebridge-busy-light)](https://www.npmjs.com/package/homebridge-busy-light)
+[![License](https://img.shields.io/github/license/arodbuilds/homebridge-busy-light)](LICENSE)
+[![Build and Lint](https://github.com/arodbuilds/homebridge-busy-light/actions/workflows/build.yml/badge.svg)](https://github.com/arodbuilds/homebridge-busy-light/actions/workflows/build.yml)
 
-Status: beta. Version 0.1.0-beta.4 leads with the Outlook published calendar link for work calendars, finds Busy Light by name on your network, shows intervals in minutes, and shows only the statuses your setup can produce. It has been tested against recorded responses and in the Homebridge UI, not yet against every calendar service and bulb, nor on every network. Please report what you find.
+A [Homebridge](https://homebridge.io) plugin that shows on a light whether you are free: green when you are free, red when you are not. It reads your calendars and, if you use Microsoft 365, your Teams status, and sets your LIFX bulbs and HomeKit sensors to match.
+
+Not affiliated with or endorsed by Apple, Google, Microsoft or LIFX.
+
+> **Status:** beta. Version 0.1.0-beta.5 fixes what a code review and a test pass found after the first public beta (recurring events that could stall Homebridge, a meeting moved to an earlier day, a light that could change late or move to another bulb), shows the day in "until" times, and adds several LIFX bulbs, the Working switch and the meeting warning. It has been tested against recorded responses and in the Homebridge UI. The meeting warning's fade on a real bulb, two bulbs on a real network, the Working switch in the Home app, and a run on a Raspberry Pi have not been tried yet, nor every calendar service, bulb and network. Please report what you find in the [issue tracker](https://github.com/arodbuilds/homebridge-busy-light/issues).
+
+## Contents
+
+- [What it does](#what-it-does)
+- [Statuses](#statuses)
+- [Install](#install)
+- [The settings page](#the-settings-page)
+  - [Right now](#right-now)
+  - [Calendars](#calendars)
+  - [Status from other apps](#status-from-other-apps)
+  - [Colors](#colors)
+  - [Lights](#lights)
+  - [Settings](#settings)
+- [Light only during meetings](#light-only-during-meetings)
+- [How often Busy Light checks](#how-often-busy-light-checks)
+- [Configuration](#configuration)
+- [Command line](#command-line)
+- [Privacy](#privacy)
+- [Troubleshooting](#troubleshooting)
+- [License](#license)
+
+## What it does
 
 Busy Light reads your calendars and, if you use Microsoft 365, your Teams presence, and reduces them to one status. Other apps on your network can report a status too, for example a call helper that knows you are on a call. Busy Light shows the status two ways:
 
-1. On a LIFX bulb, directly over your home network, in a color you choose for each status. No LIFX account or cloud is used.
+1. On one or more LIFX bulbs, directly over your home network, in a color you choose for each status. Every bulb you choose shows the status together. No LIFX account or cloud is used.
 2. As HomeKit occupancy sensors, so a Home automation can set any other HomeKit light or scene.
 
 A typical use is a lamp outside a home office door: green when you are free, red in a meeting or on a call, purple when you are out of office, and off when Teams shows you offline.
@@ -50,6 +81,8 @@ Calendars have no out of office setting of their own, so for iCloud, Google and 
 
 If none of your calendars can be read for 15 minutes, and no app is reporting a status, the status becomes unknown: every sensor turns off and the bulb is left as it is, so a meeting never sticks because a calendar became unreachable.
 
+**Not working.** With the Working switch on (see [Lights](#lights)), turning it off puts Busy Light in a state of its own above everything in the table, the override switch included: the bulb turns off and every sensor turns off, whatever your calendars, Teams or other apps say. Busy Light keeps reading your calendars and listening to apps meanwhile, so turning the switch on shows the right status at once.
+
 ## Install
 
 Install Busy Light from the Plugins tab of the Homebridge UI, or run:
@@ -60,7 +93,7 @@ npm install -g homebridge-busy-light@beta
 
 Then open the plugin settings, add at least one calendar, choose how the light is controlled, click Save and restart Homebridge. For a work calendar in Outlook, choose Outlook or Microsoft 365, then Published calendar link: it needs nothing from your IT department.
 
-Until the first release is on npm, build it from source inside your Homebridge storage directory, as the user Homebridge runs as (on the Homebridge Raspberry Pi image, run `sudo hb-shell` first):
+To try a version that is not released yet, build it from source inside your Homebridge storage directory, as the user Homebridge runs as (on the Homebridge Raspberry Pi image, run `sudo hb-shell` first):
 
 ```shell
 cd /var/lib/homebridge
@@ -82,7 +115,7 @@ The page has six parts.
 
 ### Right now
 
-What the running plugin shows at this moment: the color and the status, and why, for example "Until 2:30 PM, from Work." It refreshes every 15 seconds while the page is open. If it says Homebridge may not be running, the plugin has not written its state for more than 5 minutes.
+What the running plugin shows at this moment: the color and the status, and why, for example "Until 2:30 PM, from Work." A time that is not today carries its day, for example "Nothing on your calendars until tomorrow at 9:00 AM." During the meeting warning (see [Colors](#colors)) the status stays Available, with "A meeting starts at 2:30 PM."; with the Working switch off it says "Not working" and "The Working switch is off." It refreshes every 15 seconds while the page is open. If it says Homebridge may not be running, the plugin has not written its state for more than 5 minutes.
 
 ### Calendars
 
@@ -149,17 +182,19 @@ Any calendar subscription link that starts with `https://` or `webcal://` works,
 
 Lets other apps on your network tell Busy Light you are on a call or busy: a call helper on your Mac, a dictation app, a Stream Deck button, a script. Busy Light combines what they report with your calendars and Teams status, and the light and the sensors follow. It is off until you turn it on.
 
+> **Jeronimo turns the light red when a call starts.** [Jeronimo](https://jeronimo.app), a private, on-device dictation app for Mac, is the ready-made way to do it: it tells Busy Light about your calls through Status from other apps, with nothing to script. Call reporting comes in an upcoming Jeronimo release. Any other app can do the same with the API described below.
+
 **Turning it on.** Tick "Let other apps set your status". The page makes a key and shows:
 
-- **Address**: where apps send their status, for example `http://homebridge.local:8582`, with the computer's IP addresses below it. Busy Light uses the name when the network confirms it: it asks once with multicast DNS, the way a Mac or iPhone finds the Pi. When the name cannot be confirmed, the address is the IP address and the page asks you to reserve it for Homebridge in your router. Reserving it is a good idea either way, for apps that only take an IP address. If the IP address changes, the log and the page say so, and apps need the new setup code.
+- **Address**: where apps send their status, for example `http://homebridge.local:8582`, with the computer's IP addresses below it, each line with its own Copy button. Busy Light uses the name when the network confirms it: it asks once with multicast DNS, the way a Mac or iPhone finds the Pi. When the name cannot be confirmed, the address is the IP address and the page asks you to reserve it for Homebridge in your router. Reserving it is a good idea either way, for apps that only take an IP address. If the IP address changes, the log and the page say so, and apps need the new setup code.
 - **Key**: 43 random characters. Treat it like a password. Replace key makes a new one; every app using the old key stops working until you give it the new one.
 - **Setup code**: the address, the key and this Busy Light's id in one line, for example `busylight://homebridge.local:8582/?key=...&id=...`. It is masked like the key: Show on the Key field reveals both, Hide masks both. Copy setup code copies the whole code either way. Paste it into the app that will report your status.
 
 Click Save and restart Homebridge. The log then says `Status input is listening on port 8582.` Test on the page sends a call for 30 seconds, so the light should turn red. **Allow the plain key** (on by default) lets tools that cannot sign their requests, such as Apple Shortcuts and curl, send the key itself; anyone watching your network could copy it then, so turn it off once every app under Apps reporting now shows Signed. Under Advanced you can change the port (8582) if another program already uses it.
 
-**Apps reporting now** lists every app heard from in the last 12 hours: what it reported, when, whether it is still Active or has Expired, and whether it signs its requests (Signed) or sends the key itself (Plain key). An app's report lasts 3 minutes unless it repeats it, so an app that quits or loses its network never leaves the light red.
+**Apps reporting now** lists every app heard from in the last 12 hours: what it reported, when, whether it is still Active, was Cleared (the app withdrew it) or has Expired (it ran out), and whether it signs its requests (Signed) or sends the key itself (Plain key). An app's report lasts 3 minutes unless it repeats it, so an app that quits or loses its network never leaves the light red.
 
-**The On a Call switch.** Tick "Add an On a Call switch to the Home app" and Busy Light adds a switch named "Busy Light On a Call". While it is on, your status is In a call. Turn it on from a shortcut ("Set Busy Light On a Call to On"), Siri, a Home tile or a Home automation, and off when the call ends. It turns itself off after 3 hours (1 to 12, under "Turn it off by itself after") in case nothing turns it off. It needs no key and works wherever the Home app does. It shows under Apps reporting now as "Home app".
+**The On a Call switch.** Tick "Add an On a Call switch to the Home app" and Busy Light adds a switch named "Busy Light On a Call". While it is on, your status is In a call. Turn it on from a shortcut ("Set Busy Light On a Call to On"), Siri, a Home tile or a Home automation, and off when the call ends. It turns itself off after 3 hours (1 to 12, under "Turn it off by itself after") in case nothing turns it off. It needs no key and works wherever the Home app does. It shows under Apps reporting now as "Home app", a name kept for the switch: an app that reports as "Home app" is refused.
 
 **A test from a computer at home.** With the key in `BUSY_LIGHT_KEY` and Allow the plain key on:
 
@@ -178,17 +213,19 @@ The light turns red for 3 minutes, and "Test on my laptop" appears under Apps re
 
 The color the light shows for each status, in the order of the status table: when more than one applies, the one highest in the list wins. Each status has a row of presets: Red, Orange, Yellow, Green, Blue, Purple, White, Off (the light turns off for that status) and Custom. Custom shows a color picker and a field for any value such as `#1A2B3C`; a color saved by hand that is not a preset shows as Custom. Arrow keys move along a row. Reset colors puts the defaults back.
 
-The list shows the statuses your setup can produce. With calendars alone (an Outlook link, iCloud, Google or any calendar link) that is four: Out of office, In a meeting, Tentative and Available. In a call needs the On a Call switch, Status from other apps or Teams status; Do not disturb, Busy, Away and Offline need Status from other apps or Teams status. The others wait behind "5 more statuses come from Teams or from other apps." and Show all statuses, and the list changes as you turn those on or off. Hidden statuses keep their colors, and Reset colors resets all nine.
+The list shows the statuses your setup can produce. With calendars alone (an Outlook link, iCloud, Google or any calendar link) that is four: Out of office, In a meeting, Tentative and Available. In a call joins them with the On a Call switch, Status from other apps or Teams status. Do not disturb, Busy, Away and Offline join them with Teams status, or once an app has reported that status in the last 30 days: turning on Status from other apps alone does not show them. The others wait behind "5 more statuses come from Teams or from other apps." and Show all statuses, and the list changes as you turn those on or off. Hidden statuses keep their colors, and Reset colors resets all nine. Under the list, "To light up only during meetings, choose Off for Available." (see [Light only during meetings](#light-only-during-meetings)).
+
+**Warn before meetings** (Off by default; 1, 2, 3 or 5 minutes) fades the light from the Available color to the In a meeting color before a meeting starts. The fade is one command to the bulb, timed to end as the meeting starts, so the bulb fades by itself. It starts only when the status is Available and the next change is a meeting in one of your calendars: Teams and other apps cannot start it, it never starts while another status shows, and it does not start between back-to-back meetings. If the meeting is cancelled or a call starts during the fade, the light changes at once. With Available set to Off, the warning fades up from a dim In a meeting color; with In a meeting set to Off, there is no warning. Right now says "A meeting starts at 2:30 PM." meanwhile, and an optional Busy Light Meeting Soon sensor (under Lights) detects occupancy.
 
 ### Lights
 
-**LIFX bulb.** Tick "Use a LIFX bulb" and the page looks for LIFX bulbs on your network straight away. With one bulb, Busy Light uses it; with several, choose one. The choice is saved by the bulb's serial number, so renaming the bulb in the LIFX app changes nothing, and the plugin finds it again if its IP address changes, so you do not need a reserved address in your router. Search again looks once more.
+**LIFX bulbs.** Tick "Use LIFX bulbs" and the page looks for LIFX bulbs on your network straight away. With one bulb, Busy Light uses it; with several, tick the ones to use, for example a lamp outside the office door and a status light on the desk: every bulb ticked shows the status together. The choice is saved by each bulb's serial number, so renaming a bulb in the LIFX app changes nothing, and the plugin finds a bulb again if its IP address changes, so you do not need a reserved address in your router. Each bulb is sent its color at the same moment and on its own: one bulb switched off at the wall never delays the others, and picks up the color when it is back. If a bulb stops answering, Busy Light keeps looking for that bulb and never moves to another one by itself; to use another bulb, tick it here. Search again looks once more.
 
-When the page opens, the card says which bulb the running plugin uses, for example "Busy Light is using Floor (192.168.4.50).", or that it did not answer last time, without searching the network again.
+When the page opens, the card says which bulbs the running plugin uses, one line each, for example "Busy Light is using Floor (192.168.4.50).", or that one did not answer last time, without searching the network again.
 
-- **Brightness** scales every color.
-- **Test light** shows red, then green, then your Available color on the bulb, and says whether it answered.
-- Under **Advanced**: the bulb's IP address, only needed when the search cannot reach the bulb (for example when Homebridge runs in Docker without host networking), and how often the color is sent again, which recovers a bulb that was switched off at the wall (0 sends only when the status changes).
+- **Brightness** scales every color, on every bulb.
+- **Test light** shows red, then green, then your Available color on each bulb ticked, all at once, and says whether each answered.
+- Under **Advanced**: the bulbs' IP addresses, separated by commas, only needed when the search cannot reach them (for example when Homebridge runs in Docker without host networking), and how often the color is sent again, which recovers a bulb that was switched off at the wall (0 sends only when the status changes).
 
 **Other lights in the Home app.** Busy Light cannot control other HomeKit lights itself. It adds occupancy sensors to the Home app, and an automation there sets the light. Each sensor is its own accessory, so you can put it in any room. By default there are three:
 
@@ -198,7 +235,7 @@ When the page opens, the card says which bulb the running plugin uses, for examp
 | Busy Light Busy | In a meeting, in a call, do not disturb, or busy |
 | Busy Light Out of Office | Out of office |
 
-Under Show all statuses you can add one for each individual status: In a Meeting, In a Call, Do Not Disturb, Busy in Teams, Tentative, Away and Offline. Statuses your setup cannot produce yet come last there, marked "Nothing in your setup reports this yet."; you can still add them. The names start with the Name under Settings, and renaming keeps your rooms and automations.
+Under Show all statuses you can add one for each individual status: In a Meeting, In a Call, Do Not Disturb, Busy in Teams, Tentative, Away and Offline, and Meeting Soon, which detects occupancy during the warning before a meeting (see [Colors](#colors)). Statuses your setup cannot produce yet come last there, marked "Nothing in your setup reports this yet."; you can still add them. The names start with the Name under Settings, and renaming keeps your rooms and automations.
 
 For example, to make a Hue lamp red when you are busy:
 
@@ -207,6 +244,8 @@ For example, to make a Hue lamp red when you are busy:
 3. Set your light to red.
 
 Add a second automation on Busy Light Available to set it back to green.
+
+**The Working switch.** Tick "Add a Working switch to the Home app" and Busy Light adds a switch named "Busy Light Working". It starts on. Turn it off at the end of the day, for example in a "stop work" scene, and the light stays off whatever your calendars say; turn it on when you start work, for example in a "start work" scene. While it is off the bulb is off, every sensor is off (Available too) and Right now says Not working. It keeps its state across restarts, and the log says when it turns off or on, for example `Busy Light Working turned off. The light stays off until it is turned on.` Untick the checkbox to remove the switch; Busy Light then behaves as working.
 
 ### Settings
 
@@ -222,9 +261,29 @@ Under Advanced:
 
 The page checks each field when you leave it, and lists anything to fix under Settings ("Fix these before saving:"); Save stays disabled until it is fixed.
 
+## Light only during meetings
+
+Some people want the light off unless they are in a meeting. Choose Off for Available under Colors (and for Tentative, if a tentative meeting should not light it either): the light is then off whenever you are free, and comes on for meetings, calls and the other statuses you give a color. Two settings go well with it:
+
+- **Warn before meetings** fades the light up before each meeting, from dim to the In a meeting color, so you see a meeting coming instead of the light switching on as it starts.
+- **The Working switch** keeps the light off outside work: add it to your "start work" and "stop work" scenes (or a button that runs them), and the light stays off in the evening and at the weekend whatever your calendars say.
+
+## How often Busy Light checks
+
+Busy Light works on a few intervals, set on the settings page:
+
+| Interval | Default | Where |
+| --- | --- | --- |
+| Check status every | 30 seconds | Settings, Advanced. How often the status is worked out again and Teams status is read |
+| Reload calendars every | 3 minutes | Settings, Advanced. How often calendars are read for new or changed events |
+| Check for changes every | Same as Settings | Each calendar card, Advanced. A calendar's own reload interval |
+| Send the color again every | 300 seconds | LIFX bulbs, Advanced. Recovers a bulb switched off at the wall (0 sends only on a change) |
+
+None of them delays the light at a meeting's start or end. Busy Light times each change from the events it has already read, so the light changes at the minute a meeting starts or ends, and the meeting warning begins on time, even while a calendar is slow to answer. A meeting you add or move shows once its calendar is read again. An app's report lasts 3 minutes unless the app repeats it, and the On a Call switch turns itself off after 3 hours.
+
 ## Configuration
 
-The settings page writes this block to `config.json`. Every field except `platform` is optional, and a block written by an earlier beta keeps working as it is, with Status from other apps and the On a Call switch off.
+The settings page writes this block to `config.json`. Every field except `platform` is optional, and a block written by an earlier beta keeps working as it is, with Status from other apps, the On a Call switch, the Working switch and the meeting warning off.
 
 ```json
 {
@@ -241,8 +300,10 @@ The settings page writes this block to `config.json`. Every field except `platfo
   ],
   "statusInput": { "enabled": true, "port": 8582, "key": "Rk7fJ3...43 random characters...", "allowPlainKey": true },
   "callSwitch": { "enabled": true, "hours": 3 },
+  "workingSwitch": { "enabled": false },
   "colors": { "available": "#00FF00", "offline": "off" },
-  "lifx": { "enabled": true, "bulb": "d073d5000001", "host": "", "brightness": 100, "refreshSeconds": 300 },
+  "meetingWarningSeconds": 0,
+  "lifx": { "enabled": true, "bulbs": ["d073d5000001", "d073d5000002"], "host": "", "brightness": 100, "refreshSeconds": 300 },
   "sensors": ["available", "busyAny", "outOfOffice"],
   "overrideSwitch": false,
   "pollSeconds": 30,
@@ -262,9 +323,11 @@ The settings page writes this block to `config.json`. Every field except `platfo
 | `calendars[].calendarSeconds` | `calendarSeconds` | How often this calendar is read again (60 to 600). Leave it out to use the platform value |
 | `statusInput` | off | Status from other apps: `enabled`, `port` (8582; 1024 to 65535), `key` (32 to 128 letters, digits, hyphens or underscores; the page makes one) and `allowPlainKey` (`true`) |
 | `callSwitch` | off | The On a Call switch: `enabled`, and `hours` (3; 1 to 12) after which it turns itself off |
+| `workingSwitch` | off | The Working switch: `enabled` adds it to the Home app |
 | `colors` | as in the status table | `#RRGGBB` or `off` for each status: `outOfOffice`, `doNotDisturb`, `inCall`, `inMeeting`, `busy`, `tentative`, `away`, `available`, `offline` |
-| `lifx` | off | The bulb: `bulb` is its serial number (or its name from the LIFX app), `host` an IP address only when it cannot be found |
-| `sensors` | the three roll-ups | Any of `available`, `busyAny`, `outOfOffice`, `inMeeting`, `inCall`, `doNotDisturb`, `busy`, `tentative`, `away`, `offline` |
+| `meetingWarningSeconds` | `0` (off) | Warn before meetings: `60`, `120`, `180` or `300` seconds. Any other value falls back to off with a warning |
+| `lifx` | off | The bulbs: `bulbs` lists their serial numbers (or their names from the LIFX app), `host` IP addresses separated by commas, only when they cannot be found. A `bulb` written by an earlier beta is read as a list of one, and the page writes `bulbs` in its place |
+| `sensors` | the three roll-ups | Any of `available`, `busyAny`, `outOfOffice`, `inMeeting`, `inCall`, `doNotDisturb`, `busy`, `tentative`, `away`, `offline`, `meetingSoon` |
 | `overrideSwitch` | `false` | Adds the override switch |
 | `pollSeconds` | `30` | How often the status is checked (15 to 240) |
 | `calendarSeconds` | `180` | How often calendars are reloaded (60 to 600) |
@@ -274,19 +337,17 @@ The settings page writes this block to `config.json`. Every field except `platfo
 
 A mistake in the configuration never stops Homebridge: an invalid calendar is skipped with one error line naming the field, and an invalid setting falls back to its default with a warning.
 
-The light changes at the minute a meeting starts or ends, without waiting for the next check.
-
 ## Command line
 
 The settings page covers everything; the `homebridge-busy-light` command is the fallback, for checking from a terminal or when the page is not available. Run it as the same user Homebridge runs as (on a Raspberry Pi image, `sudo -u homebridge`), so a Microsoft sign-in is saved where the plugin looks for it.
 
 | Command | Does |
 | --- | --- |
-| `homebridge-busy-light status` | Shows what the plugin is doing: the status, why, and one line per calendar |
+| `homebridge-busy-light status` | Shows what the plugin is doing: the status, why, one line per calendar and one per bulb. With the Working switch off it says `Status: Not working (the Working switch is off).` |
 | `homebridge-busy-light check` | Reads every calendar once and shows its state, how many events it has around now, the events on now (as times and busy, free, tentative or out of office only), and the status they give. It does not touch HomeKit or the bulb |
 | `homebridge-busy-light login [name]` | Signs in to the named Microsoft 365 calendar (or the only one); the running plugin picks up the sign-in without a restart |
 | `homebridge-busy-light lights` | Searches the network for LIFX bulbs and lists each one's name, serial number and IP address |
-| `homebridge-busy-light light [name or IP] [#RRGGBB or off]` | Sends a color (the Available color by default) to a bulb and says whether it answered |
+| `homebridge-busy-light light [name or IP] [#RRGGBB or off]` | Sends a color (the Available color by default) to a bulb, or with none given to every bulb in use, and says whether each answered |
 | `homebridge-busy-light input` | Shows whether Status from other apps and the On a Call switch are on, the addresses apps use, and the apps reporting now. It never shows the key |
 | `homebridge-busy-light input --setup-code` | Prints the setup code, which contains the key, after a warning line |
 | `homebridge-busy-light input test` | Sends a signed test call for 30 seconds to the running plugin, as Test on the page does |
@@ -302,7 +363,7 @@ Add `-U <path>` to use a Homebridge storage directory other than `/var/lib/homeb
 - The settings page sends each request only what that request needs (for example, Connect sends the Apple ID and app-specific password and nothing else), and the unsaved changes it keeps in your browser never include a password or a calendar address.
 - Data goes only to your calendar services, Microsoft's sign-in and Graph services, and your bulb, and, with Status from other apps on, the answers Busy Light gives to apps on your local network. There is no telemetry.
 - From other apps Busy Light takes only a sender's name, a status, an app name and how long the status lasts; any other field is refused. The key is never written to the log or the state file, and requests from outside the local network are refused.
-- Everything Busy Light stores is in the `busy-light` folder of your Homebridge storage directory: the Microsoft sign-in (`microsoft-<id>.json`), the bulb it found (`light.json`), its current state (`state.json`), and with Status from other apps on, the apps' reports (`inputs.json`) and this Busy Light's id (`instance.json`).
+- Everything Busy Light stores is in the `busy-light` folder of your Homebridge storage directory: the Microsoft sign-in (`microsoft-<id>.json`), the bulbs it found (`light.json`), its current state (`state.json`), and with Status from other apps on, the apps' reports and when each status was last reported (`inputs.json`) and this Busy Light's id (`instance.json`). The Working switch's state is kept by Homebridge with the switch.
 
 ## Troubleshooting
 
@@ -328,9 +389,15 @@ Add `-U <path>` to use a Homebridge storage directory other than `/var/lib/homeb
 
 **Microsoft 365: "The code expired."** Click Connect again for a new code. If the plugin's own sign-in wrote "the sign-in code was not used" to the log, Connect on the card (or `homebridge-busy-light login`) signs in without a restart.
 
+**The light stays off and Right now says Not working.** The Working switch is off. Turn it on in the Home app, or untick "Add a Working switch to the Home app" under Lights to remove it.
+
+**"a recurring event repeats too often to read in full".** The log line `Work: a recurring event repeats too often to read in full, so some of its occurrences are left out.` means a calendar has a series that repeats very often (every minute, say) over a long time. Busy Light reads what it can and leaves the rest out rather than hold up Homebridge. Shorten or end the series in your calendar app.
+
 **"No LIFX bulb found."** Check that the bulb is switched on and on the same network as Homebridge, then click Search again. If Homebridge runs in Docker without host networking, the search cannot reach the bulb: enter its IP address under Advanced.
 
-**"No answer from the bulb."** The bulb may be switched off at the wall. The plugin keeps trying, and looks for the bulb again if it has a new IP address.
+**"No answer from the bulb."** The bulb may be switched off at the wall. The plugin keeps trying, and looks for the bulb again if it has a new IP address; your other bulbs carry on meanwhile. It never sends your status to a different bulb that happens to answer instead.
+
+**"More than one LIFX bulb was found."** No bulb is ticked yet: open the plugin settings, tick the bulbs to use under Lights, then Save and restart Homebridge.
 
 **"Status input could not start: port 8582 is already in use."** Another program uses that port. Choose another port under Advanced in Status from other apps, then Save and restart Homebridge, and give your apps the new setup code.
 

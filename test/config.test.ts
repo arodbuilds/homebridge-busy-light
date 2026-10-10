@@ -26,7 +26,7 @@ test('rule 1: every field except platform is optional', () => {
   assert.equal(config.calendarSeconds, 180);
   assert.equal(config.ignoreAllDayBusy, true);
   assert.deepEqual(config.outOfOfficeWords, ['Out of office', 'OOO', 'Vacation', 'PTO']);
-  assert.deepEqual(config.lifx, { enabled: false, bulb: '', host: '', brightness: 100, refreshSeconds: 300 });
+  assert.deepEqual(config.lifx, { enabled: false, bulbs: [], hosts: [], brightness: 100, refreshSeconds: 300 });
   assert.equal(config.overrideSwitch, false);
   assert.equal(config.debug, false);
 });
@@ -210,8 +210,9 @@ test('rule 5: colors are #RRGGBB or off in any case; unknown keys are ignored wi
 test('rule 6: lifx bulb and host are optional; host is IPv4 or a host name; brightness is 1 to 100', () => {
   const ok = parseConfig({ lifx: { enabled: true, bulb: ' Office Door ', host: '192.168.4.50', brightness: 40, refreshSeconds: 0 } });
   assert.deepEqual(ok.issues, []);
-  assert.deepEqual(ok.config.lifx, { enabled: true, bulb: 'Office Door', host: '192.168.4.50', brightness: 40, refreshSeconds: 0 });
-  assert.equal(parseConfig({ lifx: { host: 'lifx-door.local' } }).config.lifx.host, 'lifx-door.local');
+  assert.deepEqual(ok.config.lifx, { enabled: true, bulbs: ['Office Door'], hosts: ['192.168.4.50'], brightness: 40, refreshSeconds: 0 },
+    'a saved lifx.bulb reads as a list of one (from build 3.2)');
+  assert.deepEqual(parseConfig({ lifx: { host: 'lifx-door.local' } }).config.lifx.hosts, ['lifx-door.local']);
   const bad = parseConfig({ lifx: { enabled: 'yes', host: '999.1.1.1', brightness: 0, refreshSeconds: -1 } });
   assert.deepEqual(lines(bad.issues), [
     'warn lifx.enabled: must be true or false',
@@ -221,6 +222,18 @@ test('rule 6: lifx bulb and host are optional; host is IPv4 or a host name; brig
   ]);
   assert.deepEqual(bad.config.lifx, defaultConfig().lifx);
   assert.equal(parseConfig({ lifx: { brightness: 101 } }).config.lifx.brightness, 100);
+});
+
+test('rule 6 (build 3.2): lifx.bulbs is a list, lifx.bulb is read only without it, and lifx.host takes addresses separated by commas', () => {
+  const both = parseConfig({ lifx: { bulbs: [' d073d5000001 ', 'Status Light', ''], bulb: 'Desk', host: '192.168.4.99, 192.168.4.21 ,,lifx-desk.local' } });
+  assert.deepEqual(both.issues, []);
+  assert.deepEqual([both.config.lifx.bulbs, both.config.lifx.hosts], [['d073d5000001', 'Status Light'], ['192.168.4.99', '192.168.4.21', 'lifx-desk.local']],
+    'blank entries are dropped, and lifx.bulb is ignored once lifx.bulbs is there');
+  assert.deepEqual(parseConfig({ lifx: { bulbs: [], bulb: 'Desk' } }).config.lifx.bulbs, [], 'an empty list is a list');
+  const bad = parseConfig({ lifx: { bulbs: 'Floor', host: '192.168.4.99, 999.1.1.1' } });
+  assert.deepEqual(lines(bad.issues), ['warn lifx.bulbs: must be a list', 'warn lifx.host: must be an IPv4 address or host name']);
+  assert.deepEqual([bad.config.lifx.bulbs, bad.config.lifx.hosts], [[], []], 'one bad address leaves them all out');
+  assert.deepEqual(lines(parseConfig({ lifx: { bulbs: ['Floor', 7] } }).issues), ['warn lifx.bulbs[1]: must be text, ignored']);
 });
 
 test('rule 7: sensors hold keys from section 7; unknown keys are ignored; an empty list creates none', () => {
@@ -469,6 +482,27 @@ test('rule 18: the On a Call switch, off by default, with hours from 1 to 12 fal
     assert.deepEqual(config.callSwitch, { enabled: true, hours: 3 });
   }
   assert.deepEqual(lines(parseConfig({ callSwitch: [] }).issues), ['warn callSwitch: must be a set of call switch settings']);
+});
+
+test('rule 20: the Working switch, off by default; a workingSwitch that is not an object is ignored with one warning', () => {
+  assert.deepEqual(parseConfig({}).config.workingSwitch, { enabled: false });
+  assert.deepEqual(parseConfig({ workingSwitch: { enabled: true } }), { config: { ...parseConfig({}).config, workingSwitch: { enabled: true } }, issues: [] });
+  assert.deepEqual(lines(parseConfig({ workingSwitch: { enabled: 'yes' } }).issues), ['warn workingSwitch.enabled: must be true or false']);
+  assert.deepEqual(lines(parseConfig({ workingSwitch: true }).issues), ['warn workingSwitch: must be a set of working switch settings']);
+  assert.deepEqual(parseConfig({ workingSwitch: true }).config.workingSwitch, { enabled: false });
+});
+
+test('rule 21: the meeting warning, off by default; 60, 120, 180 or 300 seconds, anything else off with a warning', () => {
+  assert.equal(parseConfig({}).config.meetingWarningSeconds, 0);
+  for (const seconds of [0, 60, 120, 180, 300]) {
+    const { config, issues } = parseConfig({ meetingWarningSeconds: seconds });
+    assert.deepEqual([config.meetingWarningSeconds, issues], [seconds, []]);
+  }
+  for (const seconds of [30, 90, 600, -60, '120', true]) {
+    const { config, issues } = parseConfig({ meetingWarningSeconds: seconds });
+    assert.equal(config.meetingWarningSeconds, 0, String(seconds));
+    assert.deepEqual(lines(issues), ['warn meetingWarningSeconds: must be 0, 60, 120, 180 or 300'], String(seconds));
+  }
 });
 
 test('rule 19: any source may have its own calendarSeconds from 60 to 600; invalid falls back to the platform with a warning', () => {

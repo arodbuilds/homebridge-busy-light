@@ -78,10 +78,13 @@ export type SourceConfig = ICloudSourceConfig | GoogleSourceConfig | MicrosoftSo
 
 export interface LifxConfig {
   enabled: boolean;
-  /** A bulb's name as shown in the LIFX app, or its serial number. Empty when not set. */
-  bulb: string;
-  /** An IPv4 address or host name. Empty when not set. */
-  host: string;
+  /**
+   * The bulbs wanted, each a name as shown in the LIFX app or a serial number (SPEC 9.1 item 6): `lifx.bulbs`, or a
+   * saved `lifx.bulb` as a list of one. Empty when none is named.
+   */
+  bulbs: string[];
+  /** The addresses of `lifx.host`, separated by commas there, each a bulb. Empty when not set. */
+  hosts: string[];
   /** 1 to 100. */
   brightness: number;
   /** 0 sends only on a status change. */
@@ -107,6 +110,11 @@ export interface CallSwitchConfig {
   hours: number;
 }
 
+/** The Working switch of SPEC 6.6 (9.1 item 20). */
+export interface WorkingSwitchConfig {
+  enabled: boolean;
+}
+
 export interface BusyLightConfig {
   name: string;
   calendars: SourceConfig[];
@@ -122,6 +130,9 @@ export interface BusyLightConfig {
   debug: boolean;
   statusInput: StatusInputConfig;
   callSwitch: CallSwitchConfig;
+  workingSwitch: WorkingSwitchConfig;
+  /** Seconds of warning before a calendar meeting (SPEC 6.7, 9.1 item 21): 0 (none), 60, 120, 180 or 300. */
+  meetingWarningSeconds: number;
 }
 
 export interface ConfigIssue {
@@ -144,6 +155,8 @@ export const DEFAULT_INPUT_PORT = 8582;
 export const MIN_INPUT_PORT = 1024;
 export const MAX_INPUT_PORT = 65535;
 export const DEFAULT_CALL_HOURS = 3;
+/** The meeting warning's choices, in seconds (SPEC 9.1 item 21); 0 is none. */
+export const MEETING_WARNING_SECONDS: readonly number[] = [0, 60, 120, 180, 300];
 export const MIN_CALL_HOURS = 1;
 export const MAX_CALL_HOURS = 12;
 /** The status input key's rule (SPEC 18.8 item 1). */
@@ -154,7 +167,7 @@ export function defaultConfig(): BusyLightConfig {
     name: DEFAULT_NAME,
     calendars: [],
     colors: { ...DEFAULT_COLORS },
-    lifx: { enabled: false, bulb: '', host: '', brightness: 100, refreshSeconds: 300 },
+    lifx: { enabled: false, bulbs: [], hosts: [], brightness: 100, refreshSeconds: 300 },
     sensors: [...DEFAULT_SENSORS],
     overrideSwitch: false,
     pollSeconds: 30,
@@ -164,6 +177,8 @@ export function defaultConfig(): BusyLightConfig {
     debug: false,
     statusInput: { enabled: false, port: DEFAULT_INPUT_PORT, key: '', allowPlainKey: true },
     callSwitch: { enabled: false, hours: DEFAULT_CALL_HOURS },
+    workingSwitch: { enabled: false },
+    meetingWarningSeconds: 0,
   };
 }
 
@@ -571,12 +586,19 @@ function readLifx(raw: unknown, issues: Issues): LifxConfig {
     return lifx;
   }
   lifx.enabled = readBoolean(raw.enabled, 'lifx.enabled', lifx.enabled, issues);
-  lifx.bulb = readText(raw.bulb, 'lifx.bulb', '', issues);
-  const host = readText(raw.host, 'lifx.host', '', issues);
-  if (host && !isHost(host)) {
+  // From build 3.2 a list; a saved lifx.bulb is read as a list of one while lifx.bulbs is absent.
+  if (isMissing(raw.bulbs)) {
+    const one = readText(raw.bulb, 'lifx.bulb', '', issues);
+    lifx.bulbs = one ? [one] : [];
+  } else {
+    lifx.bulbs = readTextList(raw.bulbs, 'lifx.bulbs', [], issues);
+  }
+  // One or more addresses separated by commas; one that is not an address leaves them all out (SPEC 17).
+  const hosts = readText(raw.host, 'lifx.host', '', issues).split(',').map((h) => h.trim()).filter((h) => h !== '');
+  if (hosts.some((h) => !isHost(h))) {
     issues.warn('lifx.host', 'must be an IPv4 address or host name');
   } else {
-    lifx.host = host;
+    lifx.hosts = hosts;
   }
   lifx.brightness = readInteger(raw.brightness, 'lifx.brightness', lifx.brightness, 1, 100, 'must be a whole number from 1 to 100', issues);
   lifx.refreshSeconds = readInteger(raw.refreshSeconds, 'lifx.refreshSeconds', lifx.refreshSeconds, 0, MAX_REFRESH_SECONDS,
@@ -624,6 +646,32 @@ function readCallSwitch(raw: unknown, issues: Issues): CallSwitchConfig {
   return call;
 }
 
+/** SPEC 9.1 item 20. */
+function readWorkingSwitch(raw: unknown, issues: Issues): WorkingSwitchConfig {
+  const working = defaultConfig().workingSwitch;
+  if (isMissing(raw)) {
+    return working;
+  }
+  if (!isObject(raw)) {
+    issues.warn('workingSwitch', 'must be a set of working switch settings');
+    return working;
+  }
+  working.enabled = readBoolean(raw.enabled, 'workingSwitch.enabled', working.enabled, issues);
+  return working;
+}
+
+/** SPEC 9.1 item 21: one of the choices; anything else is no warning, with a warning line. */
+function readMeetingWarning(raw: unknown, issues: Issues): number {
+  if (isMissing(raw)) {
+    return 0;
+  }
+  if (typeof raw !== 'number' || !MEETING_WARNING_SECONDS.includes(raw)) {
+    issues.warn('meetingWarningSeconds', 'must be 0, 60, 120, 180 or 300');
+    return 0;
+  }
+  return raw;
+}
+
 function readSensors(raw: unknown, issues: Issues): SensorKey[] {
   if (isMissing(raw)) {
     return [...DEFAULT_SENSORS];
@@ -663,6 +711,8 @@ export function parseConfig(raw: unknown): { config: BusyLightConfig; issues: Co
   config.debug = readBoolean(block.debug, 'debug', config.debug, issues);
   config.statusInput = readStatusInput(block.statusInput, issues);
   config.callSwitch = readCallSwitch(block.callSwitch, issues);
+  config.workingSwitch = readWorkingSwitch(block.workingSwitch, issues);
+  config.meetingWarningSeconds = readMeetingWarning(block.meetingWarningSeconds, issues);
   return { config, issues: issues.list };
 }
 

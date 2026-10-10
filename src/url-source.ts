@@ -89,6 +89,7 @@ export class UrlSource implements CalendarSource {
         source: this.config.name,
         outOfOfficeWords: this.ics.outOfOfficeWords,
         ownerAddresses: this.ics.ownerAddresses,
+        onRepeatLimit: this.ics.onRepeatLimit,
       });
     } catch {
       throw new SourceError('notReachable', `the data from ${host} is not a calendar`, { kind: 'notCalendar' });
