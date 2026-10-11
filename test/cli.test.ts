@@ -64,10 +64,17 @@ async function run(...argv: string[]): Promise<{ code: number; out: string[]; er
   return { code, out, err };
 }
 
+test('help names the reading window for check, as SPEC 10.2 item 6 gives it (build 3.3)', () => {
+  const spec = fs.readFileSync(path.resolve(import.meta.dirname, '..', '..', 'SPEC.md'), 'utf8');
+  const quoted = /the usage line for `check` names the window: `([^`]+)`/.exec(spec)![1];
+  assert.ok(USAGE.some((line) => /^ {2}check +/.test(line) && line.endsWith(quoted)), quoted);
+});
+
 test('help lists the commands', async () => {
   const { code, out } = await run('help');
   assert.equal(code, 0);
   assert.deepEqual(out, USAGE);
+  assert.ok(!USAGE.some((line) => /beta/i.test(line)), 'no beta wording from version 1.0.0');
   const unknown = await run('frobnicate');
   assert.equal(unknown.code, 1);
   assert.deepEqual(unknown.err, USAGE);
@@ -112,7 +119,7 @@ test('check: a failing source and a Microsoft source with no sign-in', async () 
     'Rota (Calendar URL): not reachable (calendar.example.com answered HTTP 404).',
     'Work (Microsoft 365): sign-in needed (not signed in).',
     '  Run "homebridge-busy-light login Work" to sign in.',
-    'Family (iCloud): sign-in needed (iCloud did not accept the Apple ID and app-specific password).',
+    'Family (iCloud): sign-in needed (iCloud did not accept the Apple Account email and app-specific password).',
     'Status unknown: none of your calendars could be read.',
   ]);
 });
@@ -317,9 +324,60 @@ test('status prints one Light line per bulb from lights (SPEC 10.2 item 1, from 
   }));
   const { code, out } = await run('status');
   assert.equal(code, 0);
-  assert.deepEqual(out.slice(-2), [
+  assert.deepEqual(out.slice(-3), [
     `Light: Office Door at ${DOOR.host}, last sent #00FF00 at ${formatTime(T0)}, answered.`,
     `Light: Desk at ${DESK.host}, last sent #00FF00 at ${formatTime(T0)}, no answer.`,
+    '  Desk is not answering, so it may still show an old color.',
+  ]);
+});
+
+test('status names a bulb from light.json when an older state file has no name, and says it may show an old color (SPEC 10.2 item 1, build 3.3)',
+  async () => {
+    writeConfig({});
+    fs.mkdirSync(path.join(storage, 'busy-light'));
+    // A state file written before 1.0.0: no serial numbers, and one bulb without a name.
+    fs.writeFileSync(path.join(storage, 'busy-light', 'state.json'), JSON.stringify({
+      version: 1, updatedAt: new Date(T0).toISOString(), status: 'available', reason: null, override: false, sources: [], signIn: null,
+      lights: [
+        { enabled: true, label: null, host: '192.168.4.99', found: 'remembered', lastSent: '#FF0000', lastSentAt: new Date(T0).toISOString(),
+          answered: false },
+        { enabled: true, label: 'Status Light', host: '192.168.4.21', found: 'discovered', lastSent: '#00FF00', lastSentAt: new Date(T0).toISOString(),
+          answered: true },
+      ],
+    }));
+    fs.writeFileSync(path.join(storage, 'busy-light', 'light.json'), JSON.stringify({ bulbs: [
+      { serial: 'd073d5000001', label: 'Floor', host: '192.168.4.99' }, { serial: 'd073d5000004', label: 'Status Light', host: '192.168.4.21' },
+    ] }));
+    const { code, out } = await run('status');
+    assert.equal(code, 0);
+    assert.deepEqual(out.slice(-3), [
+      `Light: Floor at 192.168.4.99, last sent #FF0000 at ${formatTime(T0)}, no answer.`,
+      '  Floor is not answering, so it may still show an old color.',
+      `Light: Status Light at 192.168.4.21, last sent #00FF00 at ${formatTime(T0)}, answered.`,
+    ]);
+  });
+
+test('status says a bulb of lifx.bulbs never found is not answering, by its serial number or its name (SPEC 10.2 item 1, the release review)', async () => {
+  writeConfig({});
+  fs.mkdirSync(path.join(storage, 'busy-light'));
+  const missing = { enabled: true, host: null, found: null, lastSent: null, lastSentAt: null, answered: false };
+  fs.writeFileSync(path.join(storage, 'busy-light', 'state.json'), JSON.stringify({
+    version: 1, updatedAt: new Date(T0).toISOString(), status: 'available', reason: null, override: false, sources: [], signIn: null,
+    lights: [
+      { ...missing, label: null, serial: 'd073d5000003' },
+      { enabled: true, label: 'Office Door', serial: DOOR.serial, host: DOOR.host, found: 'discovered', lastSent: '#00FF00',
+        lastSentAt: new Date(T0).toISOString(), answered: true },
+      { ...missing, label: 'Kitchen', serial: null },
+    ],
+  }));
+  const { code, out } = await run('status');
+  assert.equal(code, 0);
+  assert.deepEqual(out.slice(-5), [
+    'Light: d073d5000003, not found.',
+    '  d073d5000003 is not answering, so it may still show an old color.',
+    `Light: Office Door at ${DOOR.host}, last sent #00FF00 at ${formatTime(T0)}, answered.`,
+    'Light: Kitchen, not found.',
+    '  Kitchen is not answering, so it may still show an old color.',
   ]);
 });
 

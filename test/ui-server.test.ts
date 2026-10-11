@@ -85,6 +85,28 @@ test('/version and /status', async () => {
   assert.deepEqual(await call(h, '/status'), state as unknown as Record<string, unknown>, 'the state file as is');
 });
 
+test('/status fills a bulb\'s missing serial number and name from light.json, matched by address (SPEC 10.3, build 3.3)', async () => {
+  const h = handlers();
+  fs.mkdirSync(dir(), { recursive: true });
+  // A state file written before 1.0.0: no serial numbers, and one bulb without a name.
+  writeState(dir(), {
+    version: 1, updatedAt: new Date(T0).toISOString(), status: 'available', reason: null, override: false, signIn: null, sources: [],
+    lights: [
+      { enabled: true, label: null, host: '192.168.4.99', found: 'remembered', lastSent: '#FF0000', lastSentAt: null, answered: false },
+      { enabled: true, label: 'Status Light', host: '192.168.4.21', found: 'discovered', lastSent: '#FF0000', lastSentAt: null, answered: true },
+      { enabled: true, label: null, serial: null, host: '192.168.4.77', found: 'configured', lastSent: null, lastSentAt: null, answered: null },
+    ],
+  });
+  fs.writeFileSync(path.join(dir(), 'light.json'), JSON.stringify({ bulbs: [
+    { serial: 'd073d5000001', label: 'Floor', host: '192.168.4.99' }, { serial: 'D0:73:D5:00:00:04', label: 'Status Light', host: '192.168.4.21' },
+  ] }));
+  const lights = (await call(h, '/status')).lights as Array<Record<string, unknown>>;
+  assert.deepEqual(lights.map((l) => [l.label, l.serial, l.host]), [
+    ['Floor', 'd073d5000001', '192.168.4.99'], ['Status Light', 'd073d5000004', '192.168.4.21'], [null, null, '192.168.4.77'],
+  ], 'an address in lifx.host keeps its null serial');
+  assert.ok(!fs.readFileSync(path.join(dir(), 'state.json'), 'utf8').includes('d073d5000001'), 'the state file itself is left alone');
+});
+
 test('today and its count: timed and all-day events overlapping the local day, neither free nor cancelled', () => {
   const { from, to } = todayBounds(T0);
   assert.equal(from, Date.UTC(2026, 9, 8));

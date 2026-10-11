@@ -3,7 +3,7 @@
  * 15 seconds. The swatch carries the saved color of the status, since that is what the running plugin sends.
  */
 
-import type { App } from '../app.js';
+import { lightsOf, type App } from '../app.js';
 import { RIGHT_NOW, STATUS_NAMES } from '../copy.js';
 import { el, paragraph } from '../dom.js';
 import { formatTime, formatWhen, parseDate, relativeTime } from '../format.js';
@@ -75,6 +75,15 @@ export function renderRightNow(app: App, container: HTMLElement): void {
         el('div', { class: 'form-text bl-now-line' }, reasonLine(status)),
       ),
     ));
+  }
+  // A chosen bulb that did not answer its last send keeps its last color, so it may still show an old one (SPEC 11.3 B,
+  // from build 3.3), and so may a bulb of lifx.bulbs not found since startup, named by a search in this visit if one
+  // found it, else by its serial number.
+  for (const light of lightsOf(status)) {
+    const name = light.label || light.host || (light.serial ? app.ui.lifx.names[light.serial] || light.serial : null);
+    if (light.enabled && name && light.answered === false) {
+      container.appendChild(paragraph(RIGHT_NOW.notAnswering(name), 'form-text bl-now-silent'));
+    }
   }
   const updated = parseDate(status.updatedAt);
   if (updated && Date.now() - updated.getTime() > STALE_MS) {

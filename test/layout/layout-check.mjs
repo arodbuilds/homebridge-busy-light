@@ -12,8 +12,11 @@
  * (SPEC 11.2 item 11); it also has the Working switch checkbox ticked, Warn before meetings set, a Copy button beside
  * an address line clicked, a Cleared sender beside an Expired one, and Right now in the meeting warning, with the
  * Working switch off and with a time on another day, each measured; and the LIFX bulbs card with a checkbox per bulb
- * found, a saved bulb missing, and Test light's result for each bulb. It checks that secondary text and locked fields
- * keep 4.5:1 contrast, that nothing is wider than the frame, and that the frame itself never scrolls.
+ * found, a saved bulb missing, and Test light's result for each bulb. From build 3.3 it checks the intro's three setup
+ * steps, that the masked setup code is one line of dots inside its box (Chromium only; Safari is checked on the Pi),
+ * and that the Microsoft 365 card is marked experimental, on its badge and, once its code view is cancelled, in its
+ * note. It checks that secondary text and locked fields keep 4.5:1 contrast, that nothing is wider than the frame, and
+ * that the frame itself never scrolls.
  *
  * It needs Playwright with Chromium and the Homebridge UI's own stylesheet, which are not dependencies of the plugin:
  *   HOMEBRIDGE_UI_CSS=/path/to/homebridge-config-ui-x/public/styles-*.css npm run test:layout
@@ -80,7 +83,7 @@ const CONFIG = {
 
 const NOW = Date.now();
 const ANSWERS = {
-  '/version': { version: '0.1.0-beta.5' },
+  '/version': { version: '1.0.0' },
   '/status': {
     version: 1, updatedAt: new Date(NOW - 20_000).toISOString(), status: 'inMeeting',
     reason: { source: 'Work', until: new Date(NOW + 1_800_000).toISOString() }, override: false, signIn: null,
@@ -91,8 +94,8 @@ const ANSWERS = {
       { id: 'cal-work', name: 'Work', type: 'microsoft', state: 'signInNeeded', lastChecked: null, events: null, error: 'waiting for sign-in' },
     ],
     lights: [
-      { enabled: true, label: 'Floor', host: '192.168.4.50', found: 'discovered', lastSent: '#FF0000', lastSentAt: null, answered: true },
-      { enabled: true, label: 'Status Light', host: '192.168.4.21', found: 'remembered', lastSent: '#FF0000', lastSentAt: null, answered: false },
+      { enabled: true, label: 'Floor', host: '192.0.2.51', found: 'discovered', lastSent: '#FF0000', lastSentAt: null, answered: true },
+      { enabled: true, label: 'Status Light', host: '192.0.2.52', found: 'remembered', lastSent: '#FF0000', lastSentAt: null, answered: false },
     ],
     inputs: [
       { sender: 'CallWatch on Alex’s iMac', status: 'inCall', app: 'Microsoft Teams', via: 'api', auth: 'signed',
@@ -108,8 +111,8 @@ const ANSWERS = {
       reported: { doNotDisturb: new Date(NOW - 900_000).toISOString() } },
     meetingWarning: null,
   },
-  '/input/info': { hostname: 'homebridge.local', addresses: ['192.168.4.10', 'fd00:1234:5678:9abc::10'], port: 8582, id: 'q3Lr8vT0cXw2mN5a',
-    addressChange: { from: '192.168.4.23', to: '192.168.4.10' } },
+  '/input/info': { hostname: 'homebridge.local', addresses: ['192.0.2.10', 'fd00:1234:5678:9abc::10'], port: 8582, id: 'q3Lr8vT0cXw2mN5a',
+    addressChange: { from: '192.0.2.23', to: '192.0.2.10' } },
   '/input/test': { error: 'notListening', message: 'Nothing is listening on port 8582.' },
   '/icloud/calendars': { calendars: [
     { id: '/123456789/calendars/home/', name: 'Alex', shared: false, subscribed: false, eventsToday: 3 },
@@ -121,10 +124,10 @@ const ANSWERS = {
   '/microsoft/cancel': { ok: true },
   '/url/test': { error: 'http', host: 'calendar.example.com', code: 404 },
   '/lifx/discover': { bulbs: [
-    { label: 'Floor', serial: 'd073d5000001', ip: '192.168.4.50' },
-    { label: 'Desk', serial: 'd073d5000002', ip: '192.168.4.51' },
+    { label: 'Floor', serial: 'd073d5000001', ip: '192.0.2.51' },
+    { label: 'Desk', serial: 'd073d5000002', ip: '192.0.2.53' },
   ] },
-  '/lifx/test': { answered: false, results: [{ label: 'Floor', host: '192.168.4.50', answered: true },
+  '/lifx/test': { answered: false, results: [{ label: 'Floor', host: '192.0.2.51', answered: true },
     { label: null, host: null, answered: false }] },
 };
 
@@ -308,6 +311,48 @@ function measure() {
   return { problems, checked: seen.length };
 }
 
+/**
+ * Runs inside the frame: the build 3.3 additions (SPEC 15 item 15): the intro's three steps, the masked setup code on one
+ * line inside its box while the status input is on, and the Microsoft 365 card marked experimental.
+ */
+function checkSetup() {
+  const problems = [];
+  const steps = document.querySelectorAll('.bl-intro-steps .ns-step');
+  if (steps.length !== 3) {
+    problems.push(`the intro has ${steps.length} setup steps, not 3`);
+  }
+  const line = document.querySelector('.bl-setup-code .bl-readonly-line');
+  if (line) {
+    if (!line.classList.contains('bl-masked')) {
+      problems.push('the setup code is not masked');
+    } else {
+      const box = line.closest('.bl-readonly');
+      const style = getComputedStyle(box);
+      const inner = box.getBoundingClientRect().right - parseFloat(style.paddingRight) - parseFloat(style.borderRightWidth);
+      const range = document.createRange();
+      range.selectNodeContents(line);
+      const dots = range.getBoundingClientRect();
+      if (dots.right > inner + 0.5) {
+        problems.push(`the masked setup code runs past its box (${Math.round(dots.right)} > ${Math.round(inner)})`);
+      }
+      if (range.getClientRects().length > 1 || dots.height > parseFloat(getComputedStyle(line).lineHeight) * 1.5) {
+        problems.push('the masked setup code takes more than one line');
+      }
+    }
+  }
+  const card = document.querySelector('[data-card-id="cal-work"]');
+  if (card) {
+    if (!(card.querySelector('.ns-type-badge')?.textContent ?? '').includes('(experimental)')) {
+      problems.push('the Microsoft 365 card\'s badge does not say experimental');
+    }
+    const note = card.querySelector('.bl-ms-note');
+    if (note && !note.textContent.startsWith('Experimental.')) {
+      problems.push('the Microsoft 365 card\'s note does not say experimental');
+    }
+  }
+  return { problems, masked: Boolean(line), note: Boolean(card?.querySelector('.bl-ms-note')) };
+}
+
 async function run() {
   const { chromium } = await loadPlaywright();
   const css = hostCss();
@@ -323,6 +368,9 @@ async function run() {
         const page = await context.newPage();
         const errors = [];
         const lost = [];
+        // The masked setup code and the experimental note must each be measured at least once in this view.
+        let seenMask = false;
+        let seenNote = false;
         page.on('pageerror', (e) => errors.push(e.message));
         await page.goto(`http://127.0.0.1:${port}/?theme=${encodeURIComponent(theme)}`);
         const frame = page.frame({ url: /plugin\/index.html/ });
@@ -398,7 +446,11 @@ async function run() {
         await fit();
         const report = async (label, shot) => {
           const { problems, checked } = await frame.evaluate(measure);
+          const setup = await frame.evaluate(checkSetup);
+          problems.push(...setup.problems);
           problems.push(...errors.splice(0).map((e) => `page error: ${e}`), ...lost.splice(0));
+          seenMask ||= setup.masked;
+          seenNote ||= setup.note;
           if (problems.length) {
             failed += problems.length;
             console.log(`not ok ${label}: ${checked} elements checked`);
@@ -444,6 +496,11 @@ async function run() {
           }, [selector, before]);
           await fit();
           await report(`${themeName} ${width}px, Right now ${label}`, `-${label.replace(/ /g, '-')}`);
+        }
+        if (!seenMask || !seenNote) {
+          failed += 1;
+          console.log(`not ok ${themeName} ${width}px: the masked setup code ${seenMask ? 'was' : 'was not'} shown, the experimental note `
+            + `${seenNote ? 'was' : 'was not'} shown`);
         }
         await context.close();
       }

@@ -497,7 +497,16 @@
   min-height: 38px;
   overflow-wrap: anywhere;
   word-break: break-all;
+  /* Safari breaks a long run only with this as well (SPEC 11.3 I, from build 3.3). */
+  line-break: anywhere;
   user-select: all;
+}
+
+/* The masked setup code: a fixed row of dots on one line, clipped at the box's edge, so it never runs past it in any
+   browser (SPEC 11.3 I, from build 3.3). */
+.busy-light-ui .bl-readonly-line.bl-masked {
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .bl-readonly-line + .bl-readonly-line {
@@ -579,4 +588,14 @@
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+/* The intro's setup steps (SPEC 11.3 A, from build 3.3) sit close to the lines around them. */
+.busy-light-ui .bl-intro-steps {
+  margin-bottom: 0.5rem;
+}
+
+/* The line on the three switches, under the Working switch (SPEC 11.3 E, from build 3.3). */
+.busy-light-ui .bl-switches {
+  margin: 0.25rem 0 0;
 }

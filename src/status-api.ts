@@ -132,10 +132,27 @@ export function isLocalAddress(address: string): boolean {
   return net.isIPv6(a) && LOCAL.check(a, 'ipv6');
 }
 
+/** A Unicode format character (category Cf), such as a zero-width space or a word joiner: invisible (SPEC 18.4 item 3). */
+const FORMAT = /\p{Cf}/u;
+/**
+ * Every character a renderer may show as nothing (Unicode Default_Ignorable_Code_Point): the format characters, and
+ * others such as the combining grapheme joiner, variation selectors and Hangul fillers. Removed before the reserved
+ * name is compared (SPEC 18.4 item 3, build 3.3).
+ */
+const IGNORABLE_ALL = /\p{Default_Ignorable_Code_Point}/gu;
+/** Characters drawn as a blank gap (Hangul fillers, the Braille blank): read as a space for the comparison, not removed. */
+const BLANKS = /[\u115f\u1160\u3164\uffa0\u2800]/gu;
+/**
+ * The zero-width non-joiner and joiner, allowed from the release review of build 3.3 (SPEC 18.4 item 3): words in
+ * Persian, Sinhala and Malayalam need them, and joined emoji are built with the joiner.
+ */
+const JOINERS = new Set([0x200c, 0x200d]);
+
 /**
  * `sender` and `app` (SPEC 18.4 item 3): a string, normalized to NFC, of 1 to 64 code points, with no leading or
- * trailing white space, no control characters, no U+2028 or U+2029, and no bidirectional formatting characters.
- * Returns the NFC form, or null when the rule is broken. Nothing is trimmed or rewritten silently.
+ * trailing white space, no control characters, no U+2028 or U+2029, no bidirectional formatting characters, and from
+ * build 3.3 no other format character (category Cf) but the zero-width non-joiner and joiner. Returns the NFC
+ * form, or null when the rule is broken. Nothing is trimmed or rewritten silently.
  */
 export function checkText(value: unknown): string | null {
   if (typeof value !== 'string') {
@@ -151,17 +168,23 @@ export function checkText(value: unknown): string | null {
     if (c < 0x20 || (c >= 0x7f && c <= 0x9f) || c === 0x2028 || c === 0x2029 || (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069)) {
       return null;
     }
+    if (FORMAT.test(ch) && !JOINERS.has(c)) {
+      return null;
+    }
   }
   return nfc;
 }
 
 /**
  * The sender name of the On a Call switch is reserved for it (SPEC 18.4 item 3, from build 3.2), in any form that
- * normalizes to it under NFKC (a no-break space or fullwidth letters, say), so no app can appear as the switch. Case
- * is kept, as senders are matched with case kept.
+ * normalizes to it under NFKC (a no-break space or fullwidth letters, say), and from build 3.3 as it would read on the
+ * page: blank characters read as spaces, every character a renderer may show as nothing removed (format characters,
+ * variation selectors, the combining grapheme joiner), and runs of white space read as one, as a page shows them. Case
+ * is kept, as senders are matched with case kept. Look-alike letters from other scripts are not caught, and are accepted
+ * (SPEC 17).
  */
 export function isReservedSender(sender: string): boolean {
-  return sender.normalize('NFKC') === HOME_APP_SENDER;
+  return sender.normalize('NFKC').replace(BLANKS, ' ').replace(IGNORABLE_ALL, '').replace(/\s+/gu, ' ').trim() === HOME_APP_SENDER;
 }
 
 // ---------------------------------------------------------------------------

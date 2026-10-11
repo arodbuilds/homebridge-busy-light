@@ -716,7 +716,7 @@ export function parseConfig(raw: unknown): { config: BusyLightConfig; issues: Co
   return { config, issues: issues.list };
 }
 
-/** Every owner address the declined-invitation rule (SPEC 6.4 rule 2) looks for: iCloud Apple IDs and Google emails. */
+/** Every owner address the declined-invitation rule (SPEC 6.4 rule 2) looks for: iCloud Apple Account emails and Google emails. */
 export function ownerAddresses(config: BusyLightConfig): string[] {
   const out = new Set<string>();
   for (const s of config.calendars) {

@@ -24,6 +24,11 @@ export type Found = 'configured' | 'remembered' | 'discovered';
 export interface LightState {
   enabled: boolean;
   label: string | null;
+  /**
+   * The bulb's serial number (from build 3.3, SPEC 10.1 item 5), null for a bulb given only by its address or while none
+   * is chosen. Absent in a state file written before 1.0.0.
+   */
+  serial?: string | null;
   host: string | null;
   found: Found | null;
   lastSent: string | null;
@@ -82,7 +87,7 @@ interface Line {
 }
 
 /** One bulb of `busy-light/light.json`. */
-interface Remembered {
+export interface Remembered {
   serial: string;
   label: string;
   host: string;
@@ -90,6 +95,41 @@ interface Remembered {
 
 export function lightFile(storageDir: string): string {
   return path.join(storageDir, 'light.json');
+}
+
+/** The bulbs of `light.json`: `{ "bulbs": [...] }` from build 3.2, or the one object written before it. */
+export function readRememberedBulbs(storageDir: string): Remembered[] {
+  const raw = readJson(lightFile(storageDir)) as { bulbs?: unknown } | null;
+  const list: unknown[] = raw && Array.isArray(raw.bulbs) ? raw.bulbs : raw ? [raw] : [];
+  const out: Remembered[] = [];
+  for (const item of list) {
+    const r = item as Partial<Remembered> | null;
+    const serial = r && typeof r.serial === 'string' ? normalizeSerial(r.serial) : null;
+    if (r && serial && typeof r.host === 'string') {
+      out.push({ serial, label: typeof r.label === 'string' ? r.label : '', host: r.host });
+    }
+  }
+  return out;
+}
+
+/**
+ * The state file's bulbs with a missing serial number or name filled from light.json (SPEC 10.1 item 5, 10.3, from
+ * build 3.3): a bulb with a serial number is matched by it, and only a state file written before 1.0.0, which has no
+ * serial numbers, is matched by address. A bulb given by its address in lifx.host is left as it is: the plugin never
+ * runs discovery for it, so light.json may name whatever bulb had that address before.
+ */
+export function withRemembered(lights: LightState[], remembered: Remembered[]): LightState[] {
+  return lights.map((light) => {
+    if (light.found === 'configured' || (light.serial !== undefined && light.label)) {
+      return light;
+    }
+    const match = light.serial ? remembered.find((r) => r.serial === light.serial)
+      : light.serial === undefined && light.host ? remembered.find((r) => r.host === light.host) : undefined;
+    if (!match) {
+      return light;
+    }
+    return { ...light, serial: light.serial === undefined ? match.serial : light.serial, label: light.label || match.label || null };
+  });
 }
 
 /** Whether a bulb is the one an entry of `lifx.bulbs` names, by name without regard to case or by serial number. */
@@ -100,6 +140,19 @@ export function matchesBulb(wanted: string, bulb: { label: string; serial: strin
   }
   const serial = normalizeSerial(w);
   return (serial !== null && serial === bulb.serial) || bulb.label.toLowerCase() === w.toLowerCase();
+}
+
+function stateOf(c: Chosen): LightState {
+  return {
+    enabled: true,
+    label: c.label,
+    serial: c.serial,
+    host: c.host,
+    found: c.found,
+    lastSent: c.lastSent,
+    lastSentAt: c.lastSentAt === null ? null : new Date(c.lastSentAt).toISOString(),
+    answered: c.answered,
+  };
 }
 
 function chosen(bulb: { serial: string | null; label: string | null; host: string }, found: Found, wanted: string | null): Chosen {
@@ -133,6 +186,8 @@ export class LightController {
   /** Every lane's send in progress, for `settled`. */
   private readonly inFlight = new Set<Promise<void>>();
   private lastDiscovery: number | null = null;
+  /** Whether a discovery has finished, so a bulb of `lifx.bulbs` still not chosen counts as not found (SPEC 10.1 item 5). */
+  private searched = false;
   private lastOutcome: string | null = null;
   private readonly now: () => number;
 
@@ -149,20 +204,32 @@ export class LightController {
     return this.chosen.map((c) => c.host);
   }
 
-  /** The state file's `lights` (SPEC 10.1 item 5): one entry per chosen bulb, or one as `light` was while none is. */
+  /**
+   * The state file's `lights` (SPEC 10.1 item 5): one entry per chosen bulb, or one as `light` was while none is. From
+   * build 3.3 a bulb of `lifx.bulbs` that a finished search has not found, and that light.json does not remember, has an
+   * entry too, in its place in the order of `lifx.bulbs`, marked not answering, so Right now and the CLI say so.
+   */
   lights(): LightState[] {
-    if (this.chosen.length === 0) {
-      return [{ enabled: this.enabled, label: null, host: null, found: null, lastSent: null, lastSentAt: null, answered: null }];
+    const entries: LightState[] = [];
+    const listed = new Set<Chosen>();
+    if (this.enabled && this.searched && this.options.config.hosts.length === 0) {
+      for (const wanted of this.options.config.bulbs) {
+        const c = this.chosen.find((x) => x.wanted === wanted && !listed.has(x));
+        if (c) {
+          listed.add(c);
+          entries.push(stateOf(c));
+        } else if (!this.satisfied(wanted)) {
+          const serial = normalizeSerial(wanted);
+          entries.push({ enabled: true, label: serial === null ? wanted.trim() : null, serial, host: null, found: null, lastSent: null,
+            lastSentAt: null, answered: false });
+        }
+      }
     }
-    return this.chosen.map((c) => ({
-      enabled: true,
-      label: c.label,
-      host: c.host,
-      found: c.found,
-      lastSent: c.lastSent,
-      lastSentAt: c.lastSentAt === null ? null : new Date(c.lastSentAt).toISOString(),
-      answered: c.answered,
-    }));
+    entries.push(...this.chosen.filter((c) => !listed.has(c)).map(stateOf));
+    if (entries.length === 0) {
+      return [{ enabled: this.enabled, label: null, serial: null, host: null, found: null, lastSent: null, lastSentAt: null, answered: null }];
+    }
+    return entries;
   }
 
   /**
@@ -208,20 +275,7 @@ export class LightController {
 
   /** `light.json`: `{ "bulbs": [...] }` from build 3.2, or the one object written before it. */
   private readRemembered(): Remembered[] {
-    if (!this.options.storageDir) {
-      return [];
-    }
-    const raw = readJson(lightFile(this.options.storageDir)) as { bulbs?: unknown } | null;
-    const list: unknown[] = raw && Array.isArray(raw.bulbs) ? raw.bulbs : raw ? [raw] : [];
-    const out: Remembered[] = [];
-    for (const item of list) {
-      const r = item as Partial<Remembered> | null;
-      const serial = r && typeof r.serial === 'string' ? normalizeSerial(r.serial) : null;
-      if (r && serial && typeof r.host === 'string') {
-        out.push({ serial, label: typeof r.label === 'string' ? r.label : '', host: r.host });
-      }
-    }
-    return out;
+    return this.options.storageDir ? readRememberedBulbs(this.options.storageDir) : [];
   }
 
   private remember(): void {
@@ -262,6 +316,7 @@ export class LightController {
     if (bulbs.length === 0) {
       // Keep every bulb we had: it may only be switched off.
       this.log(`none|${previous.map((c) => c.serial).join(',')}`, [{ level: 'warn', text: () => noBulb() }]);
+      this.searchFinished();
       return;
     }
     const next: Chosen[] = [];
@@ -329,6 +384,7 @@ export class LightController {
     }
     this.log(signature, lines);
     this.remember();
+    this.searched = true;
     this.options.onChange?.();
     // A bulb found at a new address, or chosen now, is sent the last color at once, on its own lane (SPEC 13.2 item 4,
     // 13.3 items 2 and 4); one whose own send is waiting on this discovery sends there itself.
@@ -336,6 +392,14 @@ export class LightController {
       if (!c.handling && hostsBefore.get(c) !== c.host) {
         this.replay(c);
       }
+    }
+  }
+
+  /** The first finished search makes the bulbs of `lifx.bulbs` it did not find count as not answering (SPEC 10.1 item 5). */
+  private searchFinished(): void {
+    if (!this.searched) {
+      this.searched = true;
+      this.options.onChange?.();
     }
   }
 

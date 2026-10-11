@@ -24,7 +24,7 @@ import { hostOf } from '../http.js';
 import { ICloudSource } from '../icloud.js';
 import { sendTestReport } from '../input-client.js';
 import { LifxClient, normalizeSerial } from '../lifx.js';
-import { matchesBulb } from '../light.js';
+import { matchesBulb, readRememberedBulbs, withRemembered } from '../light.js';
 import type { Log } from '../log.js';
 import { ADMIN_HELP_URL } from '../messages.js';
 import { MicrosoftAuth, TokenStore, postForm, readDeviceCode, refusalReason, scopeFor, storedToken, tokenFile } from '../microsoft.js';
@@ -243,8 +243,22 @@ export class BusyLightUiHandlers {
   // ---------------------------------------------------------------------------
 
   /** The state file of SPEC 10.1 as is, or `{ status: null }` before the plugin has run. */
+  /**
+   * The state file as is, with a bulb's missing serial number or name filled from light.json, so the page can name
+   * every bulb after an upgrade (SPEC 10.3, from build 3.3).
+   */
   status(): unknown {
-    return readState(this.storageDir) ?? { status: null };
+    const state = readState(this.storageDir);
+    if (!state) {
+      return { status: null };
+    }
+    const remembered = readRememberedBulbs(this.storageDir);
+    if (Array.isArray(state.lights)) {
+      state.lights = withRemembered(state.lights, remembered);
+    } else if (state.light) {
+      [state.light] = withRemembered([state.light], remembered);
+    }
+    return state;
   }
 
   // ---------------------------------------------------------------------------

@@ -20,6 +20,14 @@ export function microsoftRefused(name: string, reason: string): string {
     `Instructions to send them: ${ADMIN_HELP_URL}`;
 }
 
+/** The issues page, where a report that Microsoft 365 sign-in works lifts its experimental label (SPEC 4.3, 12). */
+export const ISSUES_URL = 'https://github.com/arodbuilds/homebridge-busy-light/issues';
+
+/** SPEC 12 "Microsoft experimental" (from build 3.3): once at startup for each Microsoft 365 calendar. */
+export function microsoftExperimental(name: string): string {
+  return `${name}: Microsoft 365 sign-in is experimental. If it works for you, please say so at ${ISSUES_URL}.`;
+}
+
 export function microsoftGaveUp(name: string): string {
   return `${name}: the sign-in code was not used. Restart Homebridge or run "homebridge-busy-light login" to try again.`;
 }
@@ -55,16 +63,27 @@ export function bulbBack(host: string): string {
   return `The LIFX bulb at ${host} is answering again.`;
 }
 
+/**
+ * The CLI `status` line under a bulb that did not answer its last send (SPEC 10.2 item 1, from build 3.3), the sentence
+ * Right now shows (11.3 B): a bulb that lost the network keeps its last color.
+ */
+export function bulbNotAnswering(label: string): string {
+  return `${label} is not answering, so it may still show an old color.`;
+}
+
 /** `1 minute`, `2 minutes`: a count with its noun, singular when the count is 1. */
 export function count(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? '' : 's'}`;
 }
 
-/** A time as `h:mm AM/PM` in the host's locale and time zone, 12-hour (SPEC 12). */
+/**
+ * A time as `h:mm AM` or `h:mm PM` in the host's time zone (SPEC 12). From build 3.3 it is built from the clock, not the
+ * locale, so every locale writes it the same way: on the Pi the locale gave `9:00 am`.
+ */
 export function formatTime(ms: number): string {
-  return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', hour12: true })
-    .format(new Date(ms))
-    .replace(/[\u202f\u00a0]/g, ' ');
+  const d = new Date(ms);
+  const hours = d.getHours();
+  return `${hours % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')} ${hours < 12 ? 'AM' : 'PM'}`;
 }
 
 /** Calendar days from one time to another in the host's time zone: 0 the same day, 1 the next, and so on. */
@@ -97,11 +116,16 @@ export function formatWhen(ms: number, now: number): string {
   return `${date.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} at ${time}`;
 }
 
-/** `light on at {host}`, `light on` while the bulb is still being found, or `light off`. */
-/** `light on ({n} bulbs)` from build 3.2, when more than one bulb is chosen (SPEC 12). */
-export function startup(version: string, calendars: number, light: { enabled: boolean; hosts: string[] }, sensors: number): string {
-  const n = light.hosts.length;
-  const lightPart = !light.enabled ? 'off' : n > 1 ? `on (${n} bulbs)` : n === 1 ? `on at ${light.hosts[0]}` : 'on';
+/**
+ * `light on ({n} bulbs)` when more than one bulb is configured, `light on at {host}` for one bulb (or none named) at a
+ * known address, `light on` while it is still being found, or `light off` (SPEC 12). From build 3.3 `configured` counts
+ * the entries of `lifx.host`, or else of `lifx.bulbs`, not the bulbs remembered in light.json; `hosts` are the
+ * addresses known at startup.
+ */
+export function startup(version: string, calendars: number, light: { enabled: boolean; configured: number; hosts: string[] }, sensors: number): string {
+  const lightPart = !light.enabled ? 'off'
+    : light.configured > 1 ? `on (${light.configured} bulbs)`
+      : light.hosts.length === 1 ? `on at ${light.hosts[0]}` : 'on';
   return `Busy Light ${version}: ${count(calendars, 'calendar')}, light ${lightPart}, ${count(sensors, 'sensor')}.`;
 }
 
@@ -157,7 +181,7 @@ export function sourceRecovered(name: string): string {
 }
 
 export function icloudRejected(name: string): string {
-  return `${name}: iCloud did not accept the Apple ID and app-specific password. Check them in the plugin settings.`;
+  return `${name}: iCloud did not accept the Apple Account email and app-specific password. Check them in the plugin settings.`;
 }
 
 /** `{path}: {message}` for a configuration issue. */

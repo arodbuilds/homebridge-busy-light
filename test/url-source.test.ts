@@ -48,7 +48,7 @@ function assertRedacted(message: string): void {
 test('webcal:// is rewritten to https://', async () => {
   fake.on('https://calendar.example.com/', () => text(fixture('calendar.ics')));
   const events = await source('webcal://calendar.example.com/feed.ics').fetchEvents(now);
-  assert.equal(events.length, 9);
+  assert.equal(events.length, 15, 'the fixture\'s events in the window, 24 hours back and 7 days ahead (SPEC 5)');
   assert.equal(fake.calls[0].url, 'https://calendar.example.com/feed.ics');
   assert.equal(fake.calls[0].method, 'GET');
 });
@@ -114,7 +114,7 @@ test('a body over 10 MB is refused, with or without Content-Length', async () =>
 test('redirects are followed only to https://', async () => {
   fake.on('https://calendar.example.com/', () => redirect('https://other.example.net/moved.ics'));
   fake.on('https://other.example.net/', () => text(fixture('calendar.ics')));
-  assert.equal((await source(FEED).fetchEvents(now)).length, 9);
+  assert.equal((await source(FEED).fetchEvents(now)).length, 15);
   assert.equal(fake.calls[0].init.redirect, 'manual');
 
   fake.on('https://calendar.example.com/', () => redirect('http://insecure.example.net/feed.ics', 301));
@@ -179,4 +179,19 @@ test('use outOfOffice keeps only the out of office events, on a Google source an
     assert.deepEqual((await src.fetchEvents(now + 60_000)).filter((e) => e.showAs !== 'free').map((e) => e.showAs), ['oof']);
     fake.on('https://calendar.example.com/', () => text(fixture('calendar.ics'), 200, { etag: '"v1"' }));
   }
+});
+
+test('the window reaches 7 days ahead: an event 6 days away is read, one 8 days away is not (SPEC 5, build 3.3)', async () => {
+  const day = 86_400_000;
+  const stamp = (ms: number) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  const event = (uid: string, start: number) => ['BEGIN:VEVENT', `UID:${uid}`, `DTSTART:${stamp(start)}`, `DTEND:${stamp(start + 3_600_000)}`,
+    `SUMMARY:Synthetic ${uid}`, 'END:VEVENT'];
+  const body = ['BEGIN:VCALENDAR', 'VERSION:2.0', ...event('yesterday', now - 20 * 3_600_000), ...event('monday', now + 6 * day),
+    ...event('later', now + 8 * day), 'END:VCALENDAR'].join('\r\n');
+  fake.on('https://calendar.example.com/', () => text(body, 200, { etag: '"v1"' }));
+  const s = source(FEED);
+  assert.deepEqual((await s.fetchEvents(now)).map((e) => e.start), [now - 20 * 3_600_000, now + 6 * day]);
+  // A 304 keeps the parsed events, filtered by the same window as it moves.
+  fake.on('https://calendar.example.com/', () => new Response(null, { status: 304 }));
+  assert.deepEqual((await s.fetchEvents(now + 5 * 3_600_000)).map((e) => e.start), [now + 6 * day], 'yesterday\'s event has left the window');
 });

@@ -2,9 +2,9 @@ import { callServer, setSaveEnabled, toastError } from './api.js';
 import type { App, Section, StatusData, UiState } from './app.js';
 import { BANNER, CALENDARS, COLORS, INTRO, LIGHTS, RIGHT_NOW, SETTINGS, SHELL, STATUS_INPUT } from './copy.js';
 import { button, clear, el, linkButton, outlineButton } from './dom.js';
-import { clearDraft, readDraft, saveDraft, stableStringify } from './draft.js';
+import { clearDraft, comparableBlock, readDraft, saveDraft } from './draft.js';
 import { renderFooter, type FooterHandle } from './footer.js';
-import { exportConfig, isInputKey, newInputKey, PLATFORM, readConfig, restoreSecrets, withoutSecrets, type UiConfig } from './model.js';
+import { exportConfig, isInputKey, newInputKey, PLATFORM, readConfig, restoreSecrets, type UiConfig } from './model.js';
 import { calendarsOnStatus, renderCalendars } from './sections/calendars.js';
 import { colorsOnStatus, renderColors } from './sections/colors.js';
 import { lightsOnStatus, renderLights } from './sections/lights.js';
@@ -80,11 +80,12 @@ export class Page implements App {
   private shown = new Map<string, string>();
   /** The summary box entries, by path, so a validation pass updates them in place and never replaces one under the pointer. */
   private readonly entries = new Map<string, HTMLElement>();
-  private pushTimer: number | undefined;
   private pollTimer: number | undefined;
   private otherBlocks: Array<Record<string, unknown>> = [];
   /** A draft is written only once the user has changed something (shell rule M1). */
   private draftAllowed = false;
+  /** This visit wrote the stored draft, so it may delete it; a draft offered under the banner is left for Restore or Discard. */
+  private wroteDraft = false;
   /** A pointer button is down; a message from leaving a field waits until it is released (SPEC 11.2 item 11). */
   private pointerDown = false;
   /** Fields left while a pointer was down: touched once it is released, so no redraw meanwhile shows their message. */
@@ -97,7 +98,12 @@ export class Page implements App {
     this.draftHolder = el('div', { class: 'ns-draft-holder' });
     root.appendChild(this.draftHolder);
     root.appendChild(el('p', { class: 'lead-copy' }, INTRO.one));
-    root.appendChild(el('p', { class: 'lead-copy' }, INTRO.two));
+    // The path through the page for a first-timer (SPEC 11.3 A, from build 3.3), as numbered steps.
+    root.appendChild(el('ol', { class: 'ns-steps bl-intro-steps' }, ...INTRO.steps.map((step, i) => el('li', { class: 'ns-step' },
+      el('span', { class: 'ns-step-number', 'aria-hidden': 'true' }, String(i + 1)),
+      el('span', { class: 'ns-step-text' }, step),
+    ))));
+    root.appendChild(el('p', { class: 'lead-copy bl-intro-optional' }, INTRO.optional));
     root.appendChild(el('p', { class: 'form-text bl-affiliation' }, INTRO.affiliation));
     for (const section of SECTIONS) {
       const container = el('div', { class: 'section-body' });
@@ -110,7 +116,6 @@ export class Page implements App {
     }
     this.issuesBox = el('div', { class: 'alert alert-warning ns-issues', role: 'status', hidden: true });
     root.appendChild(this.issuesBox);
-    root.appendChild(el('p', { class: 'lead-copy mt-3' }, INTRO.closing));
     this.footer = renderFooter();
     root.appendChild(this.footer.el);
 
@@ -197,7 +202,29 @@ export class Page implements App {
     this.draftAllowed = true;
     this.revalidate();
     this.push();
-    saveDraft(exportConfig(this.config));
+    this.keepDraft();
+  }
+
+  /** Whether the page's block differs from the saved configuration, as a draft compares them (SPEC 11.2 item 12). */
+  private differsFromSaved(): boolean {
+    const { names, bulbs } = this.ui.lifx;
+    return comparableBlock(exportConfig(this.config), names, bulbs ?? []) !== comparableBlock(exportConfig(this.saved), names, bulbs ?? []);
+  }
+
+  /**
+   * The draft (shell rule M1) is kept only while the page differs from the saved configuration: a search that finds the
+   * saved bulbs, the rewrite of lifx.bulb to lifx.bulbs, or opening a card is not a change, and a change undone deletes
+   * the draft this visit wrote. A draft from an earlier visit, offered under the banner, stays until Restore, Discard or
+   * a change (SPEC 11.2 item 12, from build 3.3).
+   */
+  private keepDraft(): void {
+    if (this.differsFromSaved()) {
+      saveDraft(exportConfig(this.config));
+      this.wroteDraft = true;
+    } else if (this.wroteDraft) {
+      clearDraft();
+      this.wroteDraft = false;
+    }
   }
 
   replaceConfig(config: UiConfig, opts: { draft?: boolean } = {}): void {
@@ -211,7 +238,7 @@ export class Page implements App {
       this.draftAllowed = false;
       clearDraft();
     } else if (this.draftAllowed) {
-      saveDraft(exportConfig(this.config));
+      this.keepDraft();
     }
   }
 
@@ -318,8 +345,9 @@ export class Page implements App {
     if (!draft) {
       return;
     }
-    const savedBlock = stableStringify(withoutSecrets(exportConfig(this.saved)));
-    if (stableStringify(draft.config) === savedBlock) {
+    // Compared as the page would write it, so a draft from an earlier beta (with lifx.bulb, say) equal to the saved
+    // configuration is not offered (SPEC 11.2 item 12).
+    if (comparableBlock(exportConfig(readConfig(draft.config))) === comparableBlock(exportConfig(this.saved))) {
       clearDraft();
       return;
     }
@@ -358,16 +386,14 @@ export class Page implements App {
     setSaveEnabled(issues.length === 0);
   }
 
+  /**
+   * Gives the host the block at once, on every change: the host's Save reads the block it was last given, so a delay
+   * here lost a change made just before Save (SPEC 11.2 item 13, from build 3.3).
+   */
   private push(): void {
-    if (this.pushTimer !== undefined) {
-      window.clearTimeout(this.pushTimer);
-    }
-    this.pushTimer = window.setTimeout(() => {
-      this.pushTimer = undefined;
-      window.homebridge.updatePluginConfig([exportConfig(this.config), ...this.otherBlocks]).catch(() => {
-        toastError(SHELL.updateFailed);
-      });
-    }, 150);
+    window.homebridge.updatePluginConfig([exportConfig(this.config), ...this.otherBlocks]).catch(() => {
+      toastError(SHELL.updateFailed);
+    });
   }
 
   private isTouched(path: string): boolean {

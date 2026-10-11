@@ -78,20 +78,19 @@ afterEach(() => {
 });
 
 describe('settings page: anatomy (SPEC 11.1)', () => {
-  it('draws the banner, the intro, the affiliation line, the six sections, the closing line and the footer, in order', () => {
+  it('draws the banner, the intro with its three steps, the affiliation line, the six sections and the footer, in order', () => {
     const { root } = mount();
     const kids = root.children.map((c) => `${c.tagName.toLowerCase()}${c.id ? `#${c.id}` : ''}.${c.className.split(' ').join('.')}`);
     assert.deepEqual(kids, [
-      'img.ns-banner', 'div.ns-draft-holder', 'p.lead-copy', 'p.lead-copy', 'p.form-text.bl-affiliation',
+      'img.ns-banner', 'div.ns-draft-holder', 'p.lead-copy', 'ol.ns-steps.bl-intro-steps', 'p.lead-copy.bl-intro-optional', 'p.form-text.bl-affiliation',
       'section#section-rightNow.ns-section', 'section#section-calendars.ns-section', 'section#section-statusInput.ns-section',
       'section#section-colors.ns-section',
-      'section#section-lights.ns-section', 'section#section-settings.ns-section', 'div.alert.alert-warning.ns-issues', 'p.lead-copy.mt-3',
+      'section#section-lights.ns-section', 'section#section-settings.ns-section', 'div.alert.alert-warning.ns-issues',
       'footer.ns-footer.form-text',
     ]);
     assert.equal(root.children[0].getAttribute('alt'), copy.BANNER.alt);
     assert.equal(root.children[0].getAttribute('src'), 'busy-light-banner.png');
-    assert.equal(text(root.children[4]), INTRO.affiliation);
-    assert.equal(text(root.children[12]), INTRO.closing);
+    assert.equal(text(root.children[5]), INTRO.affiliation);
     assert.deepEqual(root.querySelectorAll('h2').map((h) => text(h)), ['Right now', 'Calendars', 'Status from other apps', 'Colors', 'Lights', 'Settings']);
     const footer = root.querySelector('footer')!;
     assert.equal(text(footer), 'Busy Light · Made by Alex Rodriguez · alex-rodriguez.com · Report an issue');
@@ -357,7 +356,7 @@ describe('settings page: the iCloud card (SPEC 11.3 C)', () => {
   it('shows the state pill and Last checked from /status, and the error line in the pill\'s tone', async () => {
     answers.set('/version', { version: '0.1.0-beta.2' });
     answers.set('/status', state({ sources: [{ id: 'icloud', name: 'iCloud', type: 'icloud', state: 'signInNeeded',
-      lastChecked: new Date(T - 120_000).toISOString(), events: null, error: 'iCloud did not accept the Apple ID and app-specific password' }] }));
+      lastChecked: new Date(T - 120_000).toISOString(), events: null, error: 'iCloud did not accept the Apple Account email and app-specific password' }] }));
     const { root, page } = mount(PI);
     page.startPolling();
     await flush();
@@ -365,7 +364,7 @@ describe('settings page: the iCloud card (SPEC 11.3 C)', () => {
     assert.deepEqual(node.querySelectorAll('.badge').map((b) => text(b)), ['iCloud', 'Sign-in needed']);
     assert.ok(node.querySelector('.bl-badge-warning'));
     assert.match(text(node.querySelector('.ns-card-meta')), /^Last checked \d+ minutes ago$/);
-    assert.equal(text(node.querySelector('.bl-card-error.bl-tone-warning')), 'iCloud did not accept the Apple ID and app-specific password');
+    assert.equal(text(node.querySelector('.bl-card-error.bl-tone-warning')), 'iCloud did not accept the Apple Account email and app-specific password');
   });
 
   it('Connect lists the calendars with counts and badges, ticks the saved one by its new id, and writes ids and Counts for', async () => {
@@ -441,14 +440,14 @@ describe('settings page: the iCloud card (SPEC 11.3 C)', () => {
     }
   });
 
-  it('Connect on a new card first asks for the Apple ID and password', async () => {
+  it('Connect on a new card first asks for the Apple Account email and password', async () => {
     const { root, page } = mount();
     buttonNamed(root, copy.CALENDARS.add).click();
     root.querySelectorAll('.ns-chooser-tile')[0].click();
     const id = page.config.calendars[0].id;
     buttonNamed(cardOf(root, id), copy.ICLOUD.connect).click();
     assert.equal(requests.length, 0);
-    assert.equal(feedback(root, `calendars.${id}.appleId`), 'Apple ID email is required.');
+    assert.equal(feedback(root, `calendars.${id}.appleId`), 'Apple Account email is required.');
     assert.equal(feedback(root, `calendars.${id}.appPassword`), 'App-specific password is required.');
     fill(root, `calendars.${id}.appleId`, 'not-an-email');
     assert.equal(feedback(root, `calendars.${id}.appleId`), VALIDATION.email);
@@ -537,6 +536,14 @@ describe('settings page: the Microsoft 365 card (SPEC 11.3 C)', () => {
     openCard(mounted.root, 'cal-work');
     return mounted;
   }
+
+  it('is marked experimental: the type badge and the note say so (SPEC 4.3, 11.3 C, build 3.3)', () => {
+    const { root } = work();
+    const node = cardOf(root, 'cal-work');
+    assert.ok(node.querySelectorAll('.badge').map((b) => text(b)).includes('Microsoft 365 (experimental)'));
+    assert.equal(text(node.querySelector('.bl-ms-note')), 'Experimental. Needs your Microsoft 365 administrator to set up an app registration first. '
+      + 'If you only need your calendar, the published Outlook link is simpler. What do I ask for?');
+  });
 
   it('shows the note with its link, the two IDs, the two checkboxes and, for a saved source with no list, the default calendar line', () => {
     const { root } = work();
@@ -1105,7 +1112,7 @@ describe('settings page: Lights (SPEC 11.3 E)', () => {
     assert.deepEqual(page.config.lifx.bulbs, ['d073d5000002', 'd073d5000001'], 'the found bulb, then the saved one not found');
   });
 
-  it('the sensors to create, named from the platform name, the other seven under Show all statuses, and the three steps', async () => {
+  it('the sensors to create, named from the platform name, the other seven under Show all statuses, and the four steps', async () => {
     const { root, page } = mount({ platform: 'BusyLight', name: 'Door' });
     const section = root.querySelector('#section-lights')!;
     const labels = (node: FakeElement) => node.querySelectorAll('.form-check-label').map((l) => text(l));
@@ -1126,6 +1133,7 @@ describe('settings page: Lights (SPEC 11.3 E)', () => {
     assert.deepEqual(lastBlock().sensors, ['busyAny', 'outOfOffice', 'inMeeting']);
     assert.deepEqual(section.querySelectorAll('.ns-step-text').map((s) => text(s)), [
       'In the Home app, add an automation: A sensor detects something.', 'Choose Door Busy, then Detects occupancy.', 'Set your light to red.',
+      'Add a second automation: when Door Busy stops detecting occupancy, set your light back.',
     ]);
     assert.equal(mount({ platform: 'BusyLight', sensors: ['away'] }).root.querySelector('details.bl-all-sensors')!.open, true,
       'open when one of the seven is ticked');
@@ -1277,10 +1285,130 @@ describe('settings page: the draft (shell rule M1)', () => {
   it('a draft equal to the saved block (it was saved) is deleted without a banner', () => {
     const first = mount(RAW);
     fill(first.root, 'name', 'Door');
-    fill(first.root, 'name', 'Busy Light');
     assert.ok(dom.storage.getItem('homebridge-busy-light:draft'));
-    assert.equal(mount(RAW).root.querySelector('.ns-draft-banner'), null);
+    first.root.remove();
+    assert.equal(mount({ ...RAW, name: 'Door' }).root.querySelector('.ns-draft-banner'), null);
     assert.equal(dom.storage.getItem('homebridge-busy-light:draft'), null);
+  });
+
+  it('a change undone deletes the draft (SPEC 11.2 item 12, build 3.3)', () => {
+    const { root } = mount(RAW);
+    fill(root, 'name', 'Door');
+    assert.ok(dom.storage.getItem('homebridge-busy-light:draft'));
+    fill(root, 'name', 'Busy Light');
+    assert.equal(dom.storage.getItem('homebridge-busy-light:draft'), null);
+  });
+});
+
+// Build 3.3 (SPEC 11.2 items 12 and 13, 15 item 42): a draft only when the page differs from the saved configuration,
+// and every change given to the host at once.
+
+describe('settings page: only looking leaves no draft, and Save right after a change keeps it (build 3.3)', () => {
+  const FLOOR = { label: 'Floor', serial: 'd073d5000001', ip: '192.168.4.50' };
+  const STATUS_LIGHT = { label: 'Status Light', serial: 'd073d5000004', ip: '192.168.4.21' };
+  /** The owner's configuration, with synthetic values (CLAUDE.md). */
+  const OWNER = {
+    platform: 'BusyLight', name: 'Busy Light',
+    calendars: [
+      { type: 'icloud', id: 'cal-icloud', name: 'iCloud', appleId: 'person@example.com', appPassword: 'abcd-efgh-ijkl-mnop',
+        calendars: [{ id: '/123456789/calendars/home/', name: 'Alex', use: 'all' }] },
+      { type: 'url', id: 'cal-office', name: 'Office', url: 'https://outlook.office365.com/owa/calendar/synthetic/reachcalendar.ics', use: 'all' },
+    ],
+    lifx: { enabled: true, bulbs: [FLOOR.serial, STATUS_LIGHT.serial], host: '', brightness: 100, refreshSeconds: 300 },
+    sensors: ['available', 'busyAny', 'outOfOffice'],
+    statusInput: { enabled: true, port: 8582, key: 'k'.repeat(43), allowPlainKey: true },
+    callSwitch: { enabled: true, hours: 3 },
+    workingSwitch: { enabled: true },
+    meetingWarningSeconds: 60,
+  };
+  const draft = (): string | null => dom.storage.getItem('homebridge-busy-light:draft');
+  const lifxCard = (root: FakeElement): FakeElement => root.querySelector('#section-lights .bl-lifx-card')!;
+  const info = { hostname: 'homebridge.local', addresses: ['192.168.4.10'], port: 8582, id: 'q3Lr8vT0cXw2mN5a', addressChange: null };
+
+  it('the owner\'s configuration opens with no banner, and Search again finding the saved bulbs leaves no draft', async () => {
+    answers.set('/input/info', info);
+    const { root } = mount(OWNER);
+    await settle();
+    assert.equal(root.querySelector('.ns-draft-banner'), null);
+    answers.set('/lifx/discover', { bulbs: [STATUS_LIGHT, FLOOR] });
+    buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
+    await settle();
+    assert.equal(draft(), null, 'found in another order, and nothing else changed');
+    root.remove();
+    assert.equal(mount(OWNER).root.querySelector('.ns-draft-banner'), null, 'the next visit opens with no banner');
+  });
+
+  it('a saved name or serial in another form that a search finds is not a change, nor is lifx.bulb read as lifx.bulbs', async () => {
+    for (const lifx of [{ enabled: true, bulb: 'Floor' }, { enabled: true, bulb: 'D0:73:D5:00:00:01' }, { enabled: true, bulbs: ['floor'] }]) {
+      const { root, page } = mount({ platform: 'BusyLight', lifx });
+      assert.equal(draft(), null, JSON.stringify(lifx));
+      answers.set('/lifx/discover', { bulbs: [FLOOR] });
+      buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
+      await settle();
+      assert.deepEqual(page.config.lifx.bulbs, [FLOOR.serial], 'written as its serial number from now on');
+      assert.equal(draft(), null, JSON.stringify(lifx));
+      root.remove();
+      assert.equal(mount({ platform: 'BusyLight', lifx }).root.querySelector('.ns-draft-banner'), null);
+    }
+  });
+
+  it('a draft written by an earlier beta with lifx.bulb, equal to the saved block, is not offered', () => {
+    dom.storage.setItem('homebridge-busy-light:draft', JSON.stringify({ savedAt: Date.now(),
+      config: { platform: 'BusyLight', lifx: { enabled: true, bulb: FLOOR.serial } } }));
+    const { root } = mount({ platform: 'BusyLight', lifx: { enabled: true, bulbs: [FLOOR.serial] } });
+    assert.equal(root.querySelector('.ns-draft-banner'), null);
+    assert.equal(draft(), null);
+  });
+
+  it('opening a card or a disclosure, or a browser filling in the saved password again, is not a change', async () => {
+    answers.set('/input/info', info);
+    const { root } = mount(OWNER);
+    await settle();
+    openCard(root, 'cal-icloud');
+    openCard(root, 'cal-office');
+    for (const details of root.querySelectorAll('details')) {
+      details.open = true;
+      details.dispatchEvent(new FakeEvent('toggle', false));
+    }
+    // A password manager fills the field with what it already holds, and the browser sends an input event.
+    field(root, 'calendars.cal-icloud.appPassword').dispatchEvent(new FakeEvent('input', true));
+    await settle();
+    assert.equal(draft(), null);
+  });
+
+  it('two bulbs sharing the saved name: Search again finding them leaves no draft (the review)', async () => {
+    const LAMP_A = { label: 'Lamp', serial: 'd073d5000001', ip: '192.168.4.50' };
+    const LAMP_B = { label: 'Lamp', serial: 'd073d5000002', ip: '192.168.4.51' };
+    const { root } = mount({ platform: 'BusyLight', lifx: { enabled: true, bulbs: ['Lamp'] } });
+    answers.set('/lifx/discover', { bulbs: [LAMP_A, LAMP_B] });
+    buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
+    await settle();
+    assert.equal(draft(), null);
+  });
+
+  it('a draft offered under the banner stays when nothing is changed, until Restore or Discard (the review)', async () => {
+    const raw = { platform: 'BusyLight', calendars: [{ type: 'icloud', id: 'icloud', name: 'iCloud', appleId: 'person@example.com',
+      appPassword: 'abcd-efgh-ijkl-mnop', calendars: [] }] };
+    const first = mount(raw);
+    fill(first.root, 'name', 'Door');
+    assert.ok(draft());
+    first.root.remove();
+    const { root } = mount(raw);
+    assert.ok(root.querySelector('.ns-draft-banner'));
+    openCard(root, 'icloud');
+    field(root, 'calendars.icloud.appPassword').dispatchEvent(new FakeEvent('input', true));
+    await settle();
+    assert.ok(root.querySelector('.ns-draft-banner'), 'the banner still offers it');
+    assert.ok(draft()?.includes('"name":"Door"'), 'and it is still there for the next visit');
+  });
+
+  it('a change and then Save 10 ms later saves the change', async () => {
+    const { root } = mount(OWNER);
+    pushed.length = 0;
+    fill(root, 'name', 'Office Light');
+    await dom.clock.advance(10);
+    // The host's Save reads the block it was last given.
+    assert.equal(lastBlock().name, 'Office Light');
   });
 });
 
@@ -1716,10 +1844,11 @@ describe('settings page: the masked setup code (SPEC 11.3 I)', () => {
     return root;
   }
 
-  it('is masked when the section opens, one dot per character, with no part of the key', async () => {
+  it('is masked when the section opens, with 20 dots on one line whatever its length, and no part of the key (build 3.3)', async () => {
     const root = await open();
     assert.equal(keyInput(root).getAttribute('type'), 'password');
-    assert.equal(codeLine(root), '\u2022'.repeat(CODE.length));
+    assert.equal(codeLine(root), '\u2022'.repeat(20));
+    assert.ok(section(root).querySelector('.bl-setup-code .bl-readonly-line')!.className.includes('bl-masked'), 'kept on one line');
     assert.ok(!text(section(root)).includes(KEY), 'the key is nowhere in the text of the section');
     assert.equal(text(toggle(root)), copy.SHELL.show);
   });
@@ -1729,12 +1858,13 @@ describe('settings page: the masked setup code (SPEC 11.3 I)', () => {
     toggle(root).click();
     assert.equal(keyInput(root).getAttribute('type'), 'text');
     assert.equal(codeLine(root), CODE);
+    assert.ok(!section(root).querySelector('.bl-setup-code .bl-readonly-line')!.className.includes('bl-masked'), 'shown, it wraps');
     assert.equal(text(toggle(root)), copy.SHELL.hide);
     assert.equal(section(root).querySelectorAll('button').filter((b) => text(b) === copy.SHELL.show || text(b) === copy.SHELL.hide).length, 1,
       'one toggle for both');
     toggle(root).click();
     assert.equal(keyInput(root).getAttribute('type'), 'password');
-    assert.equal(codeLine(root), '\u2022'.repeat(CODE.length));
+    assert.equal(codeLine(root), '\u2022'.repeat(20));
     assert.equal(text(toggle(root)), copy.SHELL.show);
   });
 
@@ -1962,12 +2092,14 @@ describe('settings page: Outlook or Microsoft 365 (SPEC 11.3 C)', () => {
     const { root, page } = mount();
     const section = chooserOf(root);
     outlookTile(section).click();
+    assert.equal(text(section.querySelector('.bl-outlook-signin .ns-tile-title')), 'Sign in with Microsoft 365 (experimental)',
+      'marked experimental (build 3.3)');
     section.querySelector('.bl-outlook-signin')!.click();
     await settle();
     const s = page.config.calendars[0];
     assert.equal(s.type, 'microsoft');
     const node = cardOf(root, s.id);
-    assert.deepEqual(node.querySelectorAll('.badge').map((b) => text(b)), ['Microsoft 365', 'Not saved yet']);
+    assert.deepEqual(node.querySelectorAll('.badge').map((b) => text(b)), ['Microsoft 365 (experimental)', 'Not saved yet'], 'marked experimental (build 3.3)');
     assert.ok(node.querySelector(`[data-path="calendars.${s.id}.tenantId"]`));
     assert.equal(dom.document.activeElement, field(root, `calendars.${s.id}.name`));
   });
@@ -2056,5 +2188,145 @@ describe('settings page: the owner\'s configuration, opened and saved back (buil
     assert.ok(root.querySelectorAll('#section-lights .form-check-label').some((l) => text(l) === 'Busy Light Meeting Soon'));
     assert.equal(requests.filter((r) => r.path !== '/version' && r.path !== '/status' && r.path !== '/input/info').length, 0,
       'opening it asks nothing else');
+  });
+});
+
+// Build 3.3 (SPEC 11.3, 15 item 42): the first-time setup copy, from Appendix A of the build prompt.
+
+describe('settings page: the first-time setup copy (build 3.3)', () => {
+  const NAME_HELP = (root: FakeElement, path: string): string => text(root.querySelector(`[data-path="${path}"] .ns-help`));
+
+  it('the intro: what Busy Light does, the three steps, that the rest is optional, and no closing line', () => {
+    const { root } = mount();
+    assert.equal(text(root.children[2]), 'Busy Light turns a light red when you are busy and green when you are free. '
+      + 'It reads your calendars, and can also take your status from other apps or from Teams.');
+    const steps = root.querySelector('.bl-intro-steps')!;
+    assert.deepEqual(steps.querySelectorAll('.ns-step-number').map((n) => text(n)), ['1', '2', '3']);
+    assert.deepEqual(steps.querySelectorAll('.ns-step-text').map((t) => text(t)), [
+      'Add a calendar.', 'Under Lights, tick Use LIFX bulbs, or use the sensors in the Home app.', 'Save, then restart Homebridge.',
+    ]);
+    assert.equal(text(root.querySelector('.bl-intro-optional')), 'The other sections are optional.');
+    assert.ok(!text(root).includes('Your status also appears in the Home app as sensors.'), 'no closing line');
+    assert.equal(text(root.querySelector('#section-calendars .section-copy')), 'Add the calendars that should make you busy. Busy Light combines them.');
+  });
+
+  it('Apple Account on the iCloud card, and the Calendar URL help says what such a link looks like', () => {
+    const rota = { type: 'url', id: 'rota', name: 'Rota', url: 'https://rota.example.net/a.ics' };
+    const { root } = mount({ platform: 'BusyLight', calendars: [ICLOUD_SOURCE, rota] });
+    openCard(root, 'icloud');
+    assert.ok(text(root.querySelector('[data-path="calendars.icloud.appleId"] label')).startsWith('Apple Account email'));
+    assert.ok(NAME_HELP(root, 'calendars.icloud.appPassword').startsWith('Not your Apple Account password.'));
+    assert.ok(!text(root).includes('Apple ID'));
+    openCard(root, 'rota');
+    assert.equal(NAME_HELP(root, 'calendars.rota.url'), 'A calendar subscription link (often ending in .ics) that starts with https:// or webcal://.');
+  });
+
+  it('Lights: the roll-ups say when they are on, a fourth Home app step sets the light back, and one line sets the three switches side by side', () => {
+    const { root } = mount();
+    const lights = root.querySelector('#section-lights')!;
+    assert.equal(NAME_HELP(lights, 'sensors.available'), 'On when you are free.');
+    assert.equal(NAME_HELP(lights, 'sensors.busyAny'), 'On during a meeting, a call, Do not disturb or Busy.');
+    assert.equal(NAME_HELP(lights, 'sensors.outOfOffice'), 'On while you are out of office.');
+    const steps = lights.querySelectorAll('.bl-other-lights .ns-step-text').map((t) => text(t));
+    assert.equal(steps.length, 4);
+    assert.equal(steps[3], 'Add a second automation: when Busy Light Busy stops detecting occupancy, set your light back.');
+    const working = lights.querySelector('.bl-working-switch')!;
+    assert.equal(text(working.querySelector('.bl-switches')), 'The Working switch keeps the light off while it is off. '
+      + 'On a Call, under Status from other apps, shows In a call. The Override switch, under Settings, shows Do not disturb.');
+  });
+
+  it('Settings: each interval says what it does', () => {
+    const { root } = mount();
+    assert.equal(NAME_HELP(root, 'pollSeconds'), 'How often Busy Light works out your status from what it has already read.');
+    assert.equal(NAME_HELP(root, 'calendarSeconds'), 'How often Busy Light downloads your calendars. Each calendar can change this under its Advanced.');
+  });
+
+  it('Status from other apps: which of the three to use, the plain key in plain words, and the On a Call switch', async () => {
+    answers.set('/input/info', { hostname: 'homebridge.local', addresses: ['192.168.4.10'], port: 8582, id: 'q3Lr8vT0cXw2mN5a', addressChange: null });
+    const { root } = mount({ platform: 'BusyLight', statusInput: { enabled: true, key: 'k'.repeat(43) }, callSwitch: { enabled: true } });
+    await settle();
+    const section = root.querySelector('#section-statusInput')!;
+    const hint = section.querySelector('.bl-setup-hint')!;
+    assert.equal(text(hint), 'Most apps need only the setup code. Some ask for the address and key separately.');
+    const kinds = ['bl-setup-hint', 'bl-input-addresses', 'bl-input-key', 'bl-setup-code'];
+    const order = section.querySelectorAll(kinds.map((k) => `.${k}`).join(', ')).map((n) => kinds.find((k) => n.className.includes(k)));
+    assert.deepEqual(order, kinds, 'above the address, the key and the setup code');
+    assert.ok(NAME_HELP(section, 'statusInput.allowPlainKey').startsWith('Leave this on if you use Apple Shortcuts or curl:'));
+    assert.equal(NAME_HELP(section, 'callSwitch.enabled'), 'Turn it on from a shortcut, Siri or a Home tile while you are on a call. No app needed.');
+    assert.equal(text(section.querySelector('[data-path="callSwitch.hours"] label')), 'Turn off automatically after (hours)');
+  });
+});
+
+// Addendum to build 3.3 (SPEC 11.3 B and E, 15 item 43): every bulb named, and the one not answering said.
+
+describe('settings page: a missing bulb named, and a bulb not answering (A7 and A8 of build 3.3)', () => {
+  const FLOOR = { label: 'Floor', serial: 'd073d5000001', ip: '192.168.4.99' };
+  const STATUS_LIGHT = { label: 'Status Light', serial: 'd073d5000004', ip: '192.168.4.21' };
+  const RAW = { platform: 'BusyLight', calendars: [ICLOUD_SOURCE], lifx: { enabled: true, bulbs: [FLOOR.serial, STATUS_LIGHT.serial] } };
+  const light = (bulb: typeof FLOOR, answered: boolean) => ({
+    enabled: true, label: bulb.label, serial: bulb.serial, host: bulb.ip, found: 'discovered', lastSent: '#00FF00', lastSentAt: null, answered,
+  });
+  const lifxCard = (root: FakeElement): FakeElement => root.querySelector('#section-lights .bl-lifx-card')!;
+  const silentLines = (root: FakeElement): string[] => root.querySelectorAll('#section-rightNow .bl-now-silent').map((l) => text(l));
+
+  async function open(lights: unknown[], status: Record<string, unknown> = {}): Promise<FakeElement> {
+    answers.set('/version', { version: '1.0.0' });
+    answers.set('/status', state({ status: 'available', reason: { source: null, until: null }, light: undefined, lights, ...status }));
+    const { root, page } = mount(RAW);
+    page.startPolling();
+    await flush();
+    return root;
+  }
+
+  it('with two bulbs saved and Floor missing, the missing line and Test light name it, not its serial number', async () => {
+    const root = await open([light(FLOOR, false), light(STATUS_LIGHT, true)]);
+    answers.set('/lifx/discover', { bulbs: [STATUS_LIGHT] });
+    buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
+    await settle();
+    const lines = lifxCard(root).querySelectorAll('.bl-lifx-results .bl-lifx-line').map((l) => text(l));
+    assert.ok(lines.includes('Floor was not found just now. It may be switched off.'), JSON.stringify(lines));
+    assert.ok(!lines.some((l) => l.includes(FLOOR.serial)));
+    answers.set('/lifx/test', { answered: false, results: [{ label: null, host: null, answered: false },
+      { label: 'Status Light', host: STATUS_LIGHT.ip, answered: true }] });
+    buttonNamed(lifxCard(root), copy.LIGHTS.testLight).click();
+    await settle();
+    assert.deepEqual(lifxCard(root).querySelectorAll('.bl-lifx-results-list .alert').map((r) => text(r)), [
+      'No answer from Floor. Check that it is on and on the same network as Homebridge.', 'Status Light answered.',
+    ]);
+  });
+
+  it('Right now says which bulb is not answering, under any status, and the line goes once it answers', async () => {
+    const root = await open([light(FLOOR, false), light(STATUS_LIGHT, true)]);
+    assert.deepEqual(silentLines(root), ['Floor is not answering, so it may still show an old color.']);
+    const row = root.querySelector('#section-rightNow .bl-now')!;
+    const kids = root.querySelector('#section-rightNow .section-body')!.children;
+    assert.ok(kids.indexOf(row) < kids.indexOf(root.querySelector('#section-rightNow .bl-now-silent')!), 'under the status');
+    for (const status of [{ status: 'unknown', reason: null }, { status: 'notWorking', reason: null }]) {
+      answers.set('/status', state({ ...status, light: undefined, lights: [light(FLOOR, false), light(STATUS_LIGHT, true)] }));
+      await dom.clock.advance(15_000);
+      assert.deepEqual(silentLines(root), ['Floor is not answering, so it may still show an old color.'], status.status);
+    }
+    // A bulb with no name is named by its address; a bulb back on the network clears its line.
+    answers.set('/status', state({ status: 'available', reason: { source: null, until: null }, light: undefined,
+      lights: [{ ...light(FLOOR, true) }, { ...light(STATUS_LIGHT, false), label: null }] }));
+    await dom.clock.advance(15_000);
+    assert.deepEqual(silentLines(root), ['192.168.4.21 is not answering, so it may still show an old color.']);
+    answers.set('/status', state({ status: 'available', reason: { source: null, until: null }, light: undefined,
+      lights: [light(FLOOR, true), light(STATUS_LIGHT, true)] }));
+    await dom.clock.advance(15_000);
+    assert.deepEqual(silentLines(root), []);
+  });
+
+  it('a bulb never found is said not answering by its serial number, or by the name a search in this visit found (the release review)', async () => {
+    const missing = { enabled: true, label: null, serial: FLOOR.serial, host: null, found: null, lastSent: null, lastSentAt: null, answered: false };
+    const root = await open([missing, light(STATUS_LIGHT, true)]);
+    assert.deepEqual(silentLines(root), [`${FLOOR.serial} is not answering, so it may still show an old color.`]);
+    assert.deepEqual(lifxCard(root).querySelectorAll('.bl-lifx-in-use').map((l) => text(l)), [`Busy Light is using Status Light (${STATUS_LIGHT.ip}).`],
+      'the card lists the bulbs in use, with an address');
+    answers.set('/lifx/discover', { bulbs: [FLOOR, STATUS_LIGHT] });
+    buttonNamed(lifxCard(root), copy.LIGHTS.searchAgain).click();
+    await settle();
+    await dom.clock.advance(15_000);
+    assert.deepEqual(silentLines(root), ['Floor is not answering, so it may still show an old color.']);
   });
 });

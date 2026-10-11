@@ -433,7 +433,7 @@ test('calendar: the request selects only the fields of SPEC 5.3 and pages up to 
       assert.equal(url.searchParams.get('$select'), 'showAs,start,end,isAllDay,isCancelled');
       assert.equal(url.searchParams.get('$top'), '200');
       assert.equal(url.searchParams.get('startDateTime'), new Date(T0 - 86_400_000).toISOString());
-      assert.equal(url.searchParams.get('endDateTime'), new Date(T0 + 86_400_000).toISOString());
+      assert.equal(url.searchParams.get('endDateTime'), new Date(T0 + 7 * 86_400_000).toISOString(), 'from build 3.3, 7 days ahead (SPEC 5)');
     }
     return json({
       'value': [{ showAs: 'busy', isAllDay: false, isCancelled: false, start: { dateTime: `2026-10-08T1${i}:00:00.0000000`, timeZone: 'UTC' },

@@ -104,7 +104,7 @@ test('a status change: the line, the sensors, the state file and the bulb', asyn
     id: 'rota', name: 'Rota', type: 'url', state: 'connected', lastChecked: new Date(T0).toISOString(), events: 1, error: null,
   }]);
   assert.deepEqual(state.lights, [{
-    enabled: true, label: null, host: DOOR.host, found: 'configured', lastSent: '#FF0000', lastSentAt: new Date(T0).toISOString(), answered: true,
+    enabled: true, label: null, serial: null, host: DOOR.host, found: 'configured', lastSent: '#FF0000', lastSentAt: new Date(T0).toISOString(), answered: true,
   }]);
   assert.equal(state.light, undefined, 'from build 3.2 the state file has lights only');
   assert.equal(state.signIn, null);
@@ -185,11 +185,12 @@ test('iCloud Sign-in needed is retried hourly, with its own line', async () => {
   await engine!.tick();
   assert.equal(fake.calls.length, 2);
   assert.deepEqual(log.lines('warn'), [
-    'Family: iCloud did not accept the Apple ID and app-specific password. Check them in the plugin settings.',
+    'Family: iCloud did not accept the Apple Account email and app-specific password. Check them in the plugin settings.',
     'Status unknown: none of your calendars could be read.',
   ]);
   const state = readState(dir)!;
-  assert.deepEqual([state.sources[0].state, state.sources[0].error], ['signInNeeded', 'iCloud did not accept the Apple ID and app-specific password']);
+  assert.deepEqual([state.sources[0].state, state.sources[0].error],
+    ['signInNeeded', 'iCloud did not accept the Apple Account email and app-specific password']);
   assert.ok(!JSON.stringify(state).includes('synthetic-app-password'));
 });
 
@@ -424,6 +425,20 @@ test('Microsoft: Teams presence decides, and a calendar-only source works withou
   await engine!.idle();
   assert.equal(log.lines('info').at(-1), 'Status: Do not disturb (Teams).');
   assert.equal(readState(dir)!.sources[0].events, 0);
+  // Microsoft 365 sign-in is marked experimental: one line at startup, after the startup line (SPEC 4.3, 12, build 3.3).
+  assert.deepEqual(log.lines('info').slice(0, 2), ['Busy Light 0.1.0-beta.1: 1 calendar, light off, 3 sensors.',
+    'Work: Microsoft 365 sign-in is experimental. If it works for you, please say so at https://github.com/arodbuilds/homebridge-busy-light/issues.']);
+  assert.equal(log.lines('info').filter((l) => l.includes('experimental')).length, 1, 'once');
+});
+
+test('the experimental line is written only for Microsoft 365 calendars, once each (SPEC 12, build 3.3)', async () => {
+  make({ calendars: [{ type: 'url', name: 'Office', url: 'https://outlook.office365.com/owa/calendar/synthetic/reachcalendar.ics' },
+    { type: 'url', name: 'Rota', url: FEED }] });
+  fake.on('https://', () => text(icsOf([])));
+  engine!.start();
+  await settle();
+  await engine!.idle();
+  assert.deepEqual(log.lines('info').filter((l) => l.includes('experimental')), [], 'the published Outlook link is not marked');
 });
 
 test('redaction: a failing URL source names the host only, and no line carries an event title', async () => {
@@ -911,3 +926,144 @@ test('one silent bulb\'s tries do not hold up the next color on the bulb that an
   assert.deepEqual(sentTo.filter(([h]) => h === STATUS_LIGHT.host).map(([, c]) => c), ['#00FF00', config.colors.doNotDisturb],
     'then Status Light is sent the newest color, once');
 });
+
+// Build 3.3: the review fixes (A1, A2 and A4 of the build prompt).
+
+test('the calendars going stale during the fade: Unknown sends the Available color once, then nothing (SPEC 6.7 item 4, 6.5 item 4)', async () => {
+  const start = T0 + 17 * MIN;
+  const statuses: Status[] = [];
+  const e = make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }], lifx: { enabled: true, host: DOOR.host, refreshSeconds: 60 },
+    meetingWarningSeconds: 300 }, statuses);
+  net.bulbs = [{ ...DOOR }];
+  let up = true;
+  fake.on('https://calendar.example.com/', () => (up ? text(icsOf([['meeting', start, start + 30 * MIN]])) : text('', 500)));
+  e.start();
+  await settle();
+  await e.idle();
+  up = false;
+  await clock.advance(12 * MIN);
+  await e.idle();
+  assert.deepEqual(e.meetingWarning, { meetingAt: start }, 'the warning is running');
+  assert.deepEqual(packets().slice(-2), [['power', FULL, 0], ['color', RED, FULL, 300_000]]);
+  net.sent = [];
+  await clock.advance(3 * MIN);
+  await e.idle();
+  assert.deepEqual(statuses, ['available', 'unknown'], 'the events went stale 15 minutes after the last check that worked');
+  assert.equal(e.meetingWarning, null);
+  assert.deepEqual(packets(), [['color', GREEN, FULL, 1000], ['power', FULL, 1000]], 'the Available color once, with the 1 second fade');
+  net.sent = [];
+  await clock.advance(30 * MIN);
+  await e.idle();
+  assert.deepEqual(packets(), [], 'then nothing: no refresh, and nothing at the meeting\'s start');
+  assert.deepEqual(statuses, ['available', 'unknown']);
+});
+
+test('a meeting read inside the warning time starts its fade at once while another calendar is still being read (SPEC 6.7 item 2)', async () => {
+  const e = make({ calendars: [{ type: 'url', name: 'Rota', url: FEED, calendarSeconds: 60 }, { type: 'url', name: 'Team', url: OTHER, calendarSeconds: 60 }],
+    lifx: { enabled: true, host: DOOR.host, refreshSeconds: 0 }, meetingWarningSeconds: 300 });
+  net.bulbs = [{ ...DOOR }];
+  const start = T0 + 5 * MIN; // read at T0 + 1 minute, 4 minutes ahead
+  let added = false;
+  fake.on('https://calendar.example.com/', () => text(icsOf(added ? [['meeting', start, start + 30 * MIN]] : [])));
+  fake.on('https://rota.example.net/', (_call, index) => (index === 0 ? text(icsOf([])) : new Promise<Response>(() => undefined)));
+  e.start();
+  await settle();
+  await e.idle();
+  assert.equal(e.status, 'available');
+  net.sent = [];
+  added = true;
+  await clock.advance(MIN);
+  await e.idle();
+  assert.equal(fake.callsTo('https://rota.example.net/').length, 2, 'Team is still being read');
+  assert.deepEqual(e.meetingWarning, { meetingAt: start }, 'begun at once, not when the slow check ends');
+  assert.deepEqual(packets(), [['power', FULL, 0], ['color', RED, FULL, 4 * MIN]], 'the fade over the time left');
+});
+
+test('the startup line counts the bulbs configured, not those remembered in light.json (SPEC 12)', async () => {
+  // Floor and Status Light chosen, and light.json still remembering one bulb at an old address, as on the Pi.
+  fs.writeFileSync(`${dir}/light.json`, JSON.stringify({ serial: DOOR.serial, label: DOOR.label, host: '192.168.4.99' }));
+  make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }], lifx: { enabled: true, bulbs: [DOOR.serial, STATUS_LIGHT.serial] } });
+  fake.on('https://calendar.example.com/', () => text(icsOf([])));
+  engine!.start();
+  assert.equal(log.lines('info')[0], 'Busy Light 0.1.0-beta.1: 1 calendar, light on (2 bulbs), 3 sensors.');
+  await settle();
+  engine!.stop();
+
+  log = fakeLog();
+  make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }], lifx: { enabled: true, host: `${DOOR.host}, ${STATUS_LIGHT.host}` } });
+  engine!.start();
+  assert.equal(log.lines('info')[0], 'Busy Light 0.1.0-beta.1: 1 calendar, light on (2 bulbs), 3 sensors.', 'two addresses in lifx.host');
+  await settle();
+  engine!.stop();
+
+  log = fakeLog();
+  make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }], lifx: { enabled: true, bulbs: [DOOR.serial] } });
+  engine!.start();
+  assert.equal(log.lines('info')[0], 'Busy Light 0.1.0-beta.1: 1 calendar, light on at 192.168.4.99, 3 sensors.', 'one bulb at its remembered address');
+  await settle();
+});
+
+test('the state file\'s lights carry each bulb\'s serial number (SPEC 10.1 item 5, A7 of build 3.3)', async () => {
+  make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }], lifx: { enabled: true, bulbs: [DOOR.serial, STATUS_LIGHT.serial] } });
+  net.bulbs = [{ ...DOOR }, { ...STATUS_LIGHT }];
+  fake.on('https://calendar.example.com/', () => text(icsOf([])));
+  await engine!.light.start();
+  await engine!.tick();
+  assert.deepEqual(readState(dir)!.lights!.map((l) => [l.label, l.serial]), [[DOOR.label, DOOR.serial], [STATUS_LIGHT.label, STATUS_LIGHT.serial]]);
+});
+
+test('a bulb of lifx.bulbs never found is in the state file, marked not answering (SPEC 10.1 item 5, the release review)', async () => {
+  make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }], lifx: { enabled: true, bulbs: [DOOR.serial, STATUS_LIGHT.serial] } });
+  net.bulbs = [{ ...DOOR }];
+  fake.on('https://calendar.example.com/', () => text(icsOf([])));
+  await engine!.light.start();
+  await engine!.tick();
+  assert.deepEqual(readState(dir)!.lights!.map((l) => [l.label, l.serial, l.host, l.answered]),
+    [[DOOR.label, DOOR.serial, DOOR.host, true], [null, STATUS_LIGHT.serial, null, false]]);
+});
+
+test('at startup, a fast calendar alone does not start a warning before the others have answered (the review, SPEC 6.7 item 2)', async () => {
+  const statuses: Status[] = [];
+  const e = make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }, { type: 'url', name: 'Team', url: OTHER }],
+    lifx: { enabled: true, host: DOOR.host, refreshSeconds: 0 }, meetingWarningSeconds: 300 }, statuses);
+  net.bulbs = [{ ...DOOR }];
+  // Rota answers at once with a meeting in 3 minutes, inside the warning time; Team answers later with a meeting on now.
+  fake.on('https://calendar.example.com/', () => text(icsOf([['next', T0 + 3 * MIN, T0 + 33 * MIN]])));
+  const gate: { answer: (() => void) | null } = { answer: null };
+  fake.on('https://rota.example.net/', () => new Promise<Response>((resolve) => {
+    gate.answer = () => resolve(text(icsOf([['now', T0 - 10 * MIN, T0 + 30 * MIN]])));
+  }));
+  e.start();
+  await settle();
+  assert.ok(gate.answer, 'Team is still being read');
+  assert.deepEqual([statuses, lifxColors().length, e.meetingWarning], [[], 0, null], 'nothing is decided from Rota alone');
+  gate.answer!();
+  await settle();
+  await e.idle();
+  assert.deepEqual(statuses, ['inMeeting']);
+  assert.ok(lifxColors().every((s) => s.buf.readUInt32LE(45) <= 1000), 'no fade was started');
+});
+
+test('at startup, a boundary that comes while the other calendars are read does not decide the first status (the second review, SPEC 6.7 item 2)',
+  async () => {
+    const statuses: Status[] = [];
+    const e = make({ calendars: [{ type: 'url', name: 'Rota', url: FEED }, { type: 'url', name: 'Team', url: OTHER }],
+      lifx: { enabled: true, host: DOOR.host, refreshSeconds: 0 }, meetingWarningSeconds: 300 }, statuses);
+    net.bulbs = [{ ...DOOR }];
+    // Rota answers at once with a meeting at 3:05:10 PM, so its warning begins 10 seconds after startup; Team answers later
+    // with a meeting on until 3:30 PM.
+    fake.on('https://calendar.example.com/', () => text(icsOf([['next', T0 + 5 * MIN + 10_000, T0 + 35 * MIN]])));
+    const gate: { answer: (() => void) | null } = { answer: null };
+    fake.on('https://rota.example.net/', () => new Promise<Response>((resolve) => {
+      gate.answer = () => resolve(text(icsOf([['now', T0 - 10 * MIN, T0 + 30 * MIN]])));
+    }));
+    e.start();
+    await settle();
+    await clock.advance(10_000);
+    await settle();
+    assert.deepEqual([statuses, lifxColors().length, e.meetingWarning], [[], 0, null], 'nothing is decided from Rota alone');
+    gate.answer!();
+    await settle();
+    await e.idle();
+    assert.deepEqual(statuses, ['inMeeting']);
+  });

@@ -4,7 +4,8 @@
 
 | Version | Supported |
 |---|---|
-| 0.1.0-beta.x | Yes |
+| 1.x | Yes |
+| 0.1.0-beta.x | No |
 
 Only the newest release receives security fixes. Older versions do not.
 

@@ -8,7 +8,7 @@ import {
   KELVIN, LifxClient, MSG, SOURCE_ID, buildGetLabel, buildGetService, buildSetColor, buildSetPower, header, hexToHsb,
   interfaceBroadcasts, normalizeSerial, parseHeader, parseStateLabel,
 } from '../src/lifx.js';
-import { LightController, REDISCOVER_MS, lightFile, matchesBulb } from '../src/light.js';
+import { LightController, REDISCOVER_MS, lightFile, matchesBulb, readRememberedBulbs, withRemembered } from '../src/light.js';
 import { FakeNetwork, fakeLog, settle, tmpDir } from './helpers.js';
 import type { FakeBulb } from './helpers.js';
 
@@ -183,7 +183,7 @@ test('choosing: exactly one bulb is used and remembered', async () => {
   const { light, log } = controller();
   await light.start();
   assert.deepEqual(first(light), {
-    enabled: true, label: 'Office Door', host: DOOR.host, found: 'discovered', lastSent: null, lastSentAt: null, answered: null,
+    enabled: true, label: 'Office Door', serial: DOOR.serial, host: DOOR.host, found: 'discovered', lastSent: null, lastSentAt: null, answered: null,
   });
   assert.deepEqual(log.lines('info'), ['LIFX bulbs found: Office Door (192.168.4.50). Using Office Door.']);
   assert.deepEqual(JSON.parse(fs.readFileSync(lightFile(dir), 'utf8')), { bulbs: [{ serial: DOOR.serial, label: 'Office Door', host: DOOR.host }] });
@@ -591,3 +591,68 @@ test('two entries of lifx.bulbs naming the same bulb: no discovery at a restart,
   }
   assert.equal(discoveries(), after, 'every bulb wanted is found');
 });
+
+test('a bulb given by its address in lifx.host is not named from light.json, and a serial number matches by itself alone (SPEC 10.1 item 5, the second review)',
+  async () => {
+    // light.json from an earlier discovery, when Desk had this address. With lifx.host set the plugin never runs discovery,
+    // so light.json is never rewritten, and the address may now belong to another bulb.
+    fs.writeFileSync(lightFile(dir), JSON.stringify({ bulbs: [{ serial: DESK.serial, label: 'Desk', host: DOOR.host }] }));
+    net.bulbs = [{ ...DOOR, answers: false }];
+    const { light } = controller({ hosts: [DOOR.host] });
+    await light.start();
+    await light.send('#FF0000', 1000);
+    assert.deepEqual(withRemembered(light.lights(), readRememberedBulbs(dir)).map((l) => [l.label, l.serial, l.host, l.found, l.answered]),
+      [[null, null, DOOR.host, 'configured', false]]);
+
+    const entry = { enabled: true, label: null, host: DOOR.host, found: 'remembered' as const, lastSent: null, lastSentAt: null, answered: false };
+    const remembered = [{ serial: DESK.serial, label: 'Desk', host: DOOR.host }, { serial: DOOR.serial, label: 'Office Door', host: '192.168.4.40' }];
+    assert.deepEqual(withRemembered([{ ...entry, serial: DOOR.serial }], remembered).map((l) => [l.label, l.serial]), [['Office Door', DOOR.serial]],
+      'by its serial number, not by the address another bulb had');
+    assert.deepEqual(withRemembered([{ ...entry, serial: null }], remembered).map((l) => [l.label, l.serial]), [[null, null]], 'a null serial stays unnamed');
+    assert.deepEqual(withRemembered([entry], remembered).map((l) => [l.label, l.serial]), [['Desk', DESK.serial]],
+      'a state file written before 1.0.0, with no serial, by its address');
+  });
+
+test('a bulb of lifx.bulbs never found has an entry marked not answering after a search, in the order of lifx.bulbs (SPEC 10.1 item 5, the release review)',
+  async () => {
+    const MISSING = 'd073d5000003';
+    net.bulbs = [{ ...DOOR }];
+    const { light, log } = controller({ bulbs: [MISSING, DOOR.serial] });
+    const starting = light.start();
+    assert.deepEqual(light.lights().map((l) => [l.host, l.answered]), [[null, null]], 'while the first search runs: not found yet');
+    await starting;
+    const row = (l: { label: string | null; serial?: string | null; host: string | null; found: string | null; answered: boolean | null }) =>
+      [l.label, l.serial, l.host, l.found, l.answered];
+    assert.deepEqual(light.lights().map(row), [[null, MISSING, null, null, false], ['Office Door', DOOR.serial, DOOR.host, 'discovered', null]]);
+    assert.deepEqual(withRemembered(light.lights(), readRememberedBulbs(dir)).map(row)[0], [null, MISSING, null, null, false], 'nothing in light.json');
+    assert.deepEqual(log.lines('warn'), [`No LIFX bulb named ${MISSING} was found. Bulbs found: Office Door (${DOOR.host}).`],
+      'the log line is unchanged');
+    assert.deepEqual((await light.send('#FF0000', 1000)).map((r) => r.host), [DOOR.host], 'only the bulb found is sent the color');
+
+    // Found later: rediscovery chooses it, and its entry is the bulb's own.
+    net.bulbs = [{ ...DOOR }, { serial: MISSING, label: 'Floor', host: '192.168.4.52', answers: true }];
+    clock += REDISCOVER_MS;
+    assert.equal(await light.maintain(), true);
+    assert.deepEqual(light.lights().map(row),
+      [['Floor', MISSING, '192.168.4.52', 'discovered', null], ['Office Door', DOOR.serial, DOOR.host, 'discovered', true]]);
+  });
+
+test('a bulb never found that lifx.bulbs names keeps its name, and with no bulb found each bulb wanted has an entry (SPEC 10.1 item 5, the release review)',
+  async () => {
+    net.bulbs = [{ ...DOOR }];
+    const named = controller({ bulbs: ['Kitchen', DOOR.serial] });
+    await named.light.start();
+    assert.deepEqual(named.light.lights().map((l) => [l.label, l.serial, l.host, l.answered]),
+      [['Kitchen', null, null, false], ['Office Door', DOOR.serial, DOOR.host, null]]);
+    net.bulbs = [];
+    fs.rmSync(lightFile(dir), { force: true });
+    const none = controller({ bulbs: [DOOR.serial, DESK.serial] });
+    await none.light.start();
+    assert.deepEqual(none.light.lights().map((l) => [l.label, l.serial, l.host, l.answered]),
+      [[null, DOOR.serial, null, false], [null, DESK.serial, null, false]],
+      'in place of the one entry with no address');
+    // Without lifx.bulbs, a search that finds no bulb still gives the one entry with no address.
+    const unnamed = controller();
+    await unnamed.light.start();
+    assert.deepEqual(unnamed.light.lights().map((l) => [l.host, l.answered]), [[null, null]]);
+  });

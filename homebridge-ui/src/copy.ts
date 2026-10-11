@@ -15,11 +15,16 @@ export const BANNER = {
 };
 
 export const INTRO = {
-  one: 'Busy Light shows whether you are free on a light. It reads your calendars and, if you use Microsoft 365, your Teams status, '
-    + 'then sets a color for each.',
-  two: 'Add at least one calendar, then choose how the light is controlled.',
+  one: 'Busy Light turns a light red when you are busy and green when you are free. It reads your calendars, and can also take your status '
+    + 'from other apps or from Teams.',
+  /** The path through the page (from build 3.3), numbered with the shell Step component. */
+  steps: [
+    'Add a calendar.',
+    'Under Lights, tick Use LIFX bulbs, or use the sensors in the Home app.',
+    'Save, then restart Homebridge.',
+  ],
+  optional: 'The other sections are optional.',
   affiliation: 'Not affiliated with or endorsed by Apple, Google, Microsoft or LIFX.',
-  closing: 'Your status also appears in the Home app as sensors. Use them in automations to set any other light or scene.',
 };
 
 /** SPEC 11.3 B. */
@@ -43,6 +48,8 @@ export const RIGHT_NOW = {
   noCalendars: 'Add a calendar to see your status here.',
   notStarted: 'Busy Light has not started yet. Save, then restart Homebridge.',
   unknown: 'Status unknown. None of your calendars could be read.',
+  /** A chosen bulb that did not answer its last send (SPEC 11.3 B, from build 3.3): it may still show an old color. */
+  notAnswering: (label: string): string => `${label} is not answering, so it may still show an old color.`,
   stale: (relative: string): string => `Last updated ${relative}. Is Homebridge running?`,
 };
 
@@ -71,7 +78,7 @@ export type StatusKey = keyof typeof STATUS_NAMES;
 /** SPEC 11.3 C. */
 export const CALENDARS = {
   heading: 'Calendars',
-  help: 'Add every calendar that should count. Events from all of them are combined.',
+  help: 'Add the calendars that should make you busy. Busy Light combines them.',
   empty: 'No calendars yet.',
   add: 'Add calendar',
   newCalendar: 'New calendar',
@@ -103,7 +110,8 @@ export const CALENDARS = {
 export const SOURCE_TYPES = {
   icloud: { title: 'iCloud', help: 'Calendars in your Apple account.' },
   google: { title: 'Google Calendar', help: 'One Google calendar, by its secret address.' },
-  microsoft: { title: 'Microsoft 365' },
+  /** Marked experimental from build 3.3 (SPEC 4.3). */
+  microsoft: { title: 'Microsoft 365 (experimental)' },
   url: { title: 'Calendar URL', help: 'Any calendar link that starts with https:// or webcal://.' },
 } as const;
 
@@ -114,7 +122,7 @@ export const CHOOSER = {
   published: 'Published calendar link',
   recommended: 'Recommended',
   publishedText: 'Works with any Outlook or Microsoft 365 calendar, with no IT approval. Shows busy, tentative and out of office.',
-  signIn: 'Sign in with Microsoft 365',
+  signIn: 'Sign in with Microsoft 365 (experimental)',
   signInText: 'Also shows your Teams status, such as in a call. Your IT department must approve Busy Light first.',
 };
 
@@ -142,10 +150,10 @@ export const PILLS = {
 };
 
 export const ICLOUD = {
-  appleId: 'Apple ID email',
+  appleId: 'Apple Account email',
   appleIdPlaceholder: 'e.g. you@icloud.com',
   appPassword: 'App-specific password',
-  appPasswordHelp: 'Not your Apple ID password. Create one at account.apple.com under Sign-In and Security, then App-Specific Passwords.',
+  appPasswordHelp: 'Not your Apple Account password. Create one at account.apple.com under Sign-In and Security, then App-Specific Passwords.',
   /** The part of the help that links to Apple's site (SPEC section 17, October 8, 2026). */
   accountSite: 'account.apple.com',
   accountUrl: 'https://account.apple.com',
@@ -154,7 +162,7 @@ export const ICLOUD = {
   connect: 'Connect',
   connecting: 'Connecting…',
   refresh: 'Refresh list',
-  rejected: 'iCloud did not accept that Apple ID and app-specific password. Check both, or create a new app-specific password.',
+  rejected: 'iCloud did not accept that Apple Account email and app-specific password. Check both, or create a new app-specific password.',
   network: 'Could not reach iCloud. Try again in a minute.',
   unexpected: 'iCloud answered in a way Busy Light did not expect. Try again, and report an issue if it keeps happening.',
   calendarsHelp: 'Tick the calendars that should count. Calendars you add to iCloud later stay off until you tick them here.',
@@ -171,7 +179,7 @@ export const GOOGLE = {
 
 export const URL_CARD = {
   address: 'Address',
-  addressHelp: 'Any calendar link that starts with https:// or webcal://.',
+  addressHelp: 'A calendar subscription link (often ending in .ics) that starts with https:// or webcal://.',
 };
 
 /** The Test button and its results, on the Google Calendar and Calendar URL cards. */
@@ -189,7 +197,8 @@ export const TEST = {
 };
 
 export const MICROSOFT = {
-  note: 'Needs an app registration from your Microsoft 365 administrator.',
+  note: 'Experimental. Needs your Microsoft 365 administrator to set up an app registration first. If you only need your calendar, '
+    + 'the published Outlook link is simpler.',
   whatToAsk: 'What do I ask for?',
   adminUrl: 'https://github.com/arodbuilds/homebridge-busy-light/blob/latest/docs/microsoft-365-admin-request.md',
   tenantId: 'Directory (tenant) ID',
@@ -302,6 +311,12 @@ export const LIGHTS = {
   otherHeading: 'Other lights in the Home app',
   otherText: 'Busy Light cannot control other HomeKit lights itself. It adds sensors to the Home app, and an automation there sets the light.',
   sensors: 'Sensors to create',
+  /** The help of the three roll-ups (from build 3.3). */
+  sensorHelp: {
+    available: 'On when you are free.',
+    busyAny: 'On during a meeting, a call, Do not disturb or Busy.',
+    outOfOffice: 'On while you are out of office.',
+  },
   /** A sensor's checkbox: the accessory name of SPEC section 7. */
   sensor: (name: string, ending: string): string => `${name} ${ending}`,
   showAll: 'Show all statuses',
@@ -313,10 +328,15 @@ export const LIGHTS = {
   workingSwitch: 'Add a Working switch to the Home app',
   workingSwitchHelp: 'Turn it off at the end of the day, for example in a Home scene, and the light stays off whatever your calendars say. '
     + 'Turn it on when you start work.',
+  /** Below the Working switch (from build 3.3): the three switches side by side. */
+  switches: 'The Working switch keeps the light off while it is off. On a Call, under Status from other apps, shows In a call. '
+    + 'The Override switch, under Settings, shows Do not disturb.',
   steps: [
     (): string => 'In the Home app, add an automation: A sensor detects something.',
     (name: string): string => `Choose ${name} Busy, then Detects occupancy.`,
     (): string => 'Set your light to red.',
+    /** From build 3.3, so the light does not stay red after the meeting. */
+    (name: string): string => `Add a second automation: when ${name} Busy stops detecting occupancy, set your light back.`,
   ],
 };
 
@@ -330,6 +350,8 @@ export const STATUS_INPUT = {
   howAppsConnect: 'How apps connect',
   docsUrl: 'https://github.com/arodbuilds/homebridge-busy-light/blob/latest/docs/status-input.md',
   enable: 'Let other apps set your status',
+  /** Above the Address, Key and Setup code (from build 3.3). */
+  setupHint: 'Most apps need only the setup code. Some ask for the address and key separately.',
   address: 'Address',
   /** Beside each address line (from build 3.2); `copied` once it is copied. */
   copy: 'Copy',
@@ -355,8 +377,8 @@ export const STATUS_INPUT = {
   unauthorized: 'The running Busy Light has a different key. Save and restart Homebridge, then test again.',
   portError: (port: number | string): string => `Busy Light could not open port ${port}. Another program may be using it. Choose another port under Advanced.`,
   allowPlainKey: 'Allow the plain key',
-  allowPlainKeyHelp: 'Apps that sign their requests never send the key. Apple Shortcuts and curl send the key itself, so anyone watching your network '
-    + 'could copy it. Turn this off once every app below shows Signed. If the key may have been seen, replace it too.',
+  allowPlainKeyHelp: 'Leave this on if you use Apple Shortcuts or curl: they send the key itself, so someone on your network could see it. '
+    + 'Apps that sign their requests show Signed below and do not need it. Turn this off once every app shows Signed.',
   port: 'Port',
   portHelp: (port: number | string): string => `Change it only if another program on this computer already uses ${port}.`,
   reporting: 'Apps reporting now',
@@ -371,8 +393,8 @@ export const STATUS_INPUT = {
   signed: 'Signed',
   plainKey: 'Plain key',
   callSwitch: 'Add an On a Call switch to the Home app',
-  callSwitchHelp: 'Turn it on from a shortcut, Siri or a Home tile while you are on a call. Useful for apps that should not make network requests themselves.',
-  callSwitchHours: 'Turn it off by itself after (hours)',
+  callSwitchHelp: 'Turn it on from a shortcut, Siri or a Home tile while you are on a call. No app needed.',
+  callSwitchHours: 'Turn off automatically after (hours)',
 };
 
 /** SPEC 11.3 F. */
@@ -381,7 +403,9 @@ export const SETTINGS = {
   name: 'Name',
   nameHelp: 'Starts the name of every sensor, for example "Busy Light Available".',
   pollSeconds: 'Check status every',
+  pollSecondsHelp: 'How often Busy Light works out your status from what it has already read.',
   calendarSeconds: 'Reload calendars every',
+  calendarSecondsHelp: 'How often Busy Light downloads your calendars. Each calendar can change this under its Advanced.',
   ignoreAllDayBusy: 'Ignore all-day events marked busy',
   ignoreAllDayBusyHelp: 'All-day out of office events always count.',
   outOfOfficeWords: 'Out of office words',

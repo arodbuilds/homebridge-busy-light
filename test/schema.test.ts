@@ -71,7 +71,9 @@ test('every title and description of SPEC 9.2, verbatim', () => {
     switch (field) {
     case '`calendars[].type`':
       assert.equal(item.type.title, title);
-      assert.deepEqual(item.type.oneOf!.map((o) => o.title), ['iCloud', 'Google Calendar', 'Microsoft 365', 'Calendar URL']);
+      // Microsoft 365 sign-in is marked experimental from build 3.3 (SPEC 4.3, 9.2 form detail 10).
+      assert.deepEqual(item.type.oneOf!.map((o) => o.title), ['iCloud', 'Google Calendar', 'Microsoft 365 (experimental)', 'Calendar URL']);
+      assert.ok(description.includes('Microsoft 365 (experimental)'));
       assert.deepEqual(item.type.oneOf!.map((o) => o.enum[0]), ['icloud', 'google', 'microsoft', 'url']);
       break;
     case '`url` (Google)':

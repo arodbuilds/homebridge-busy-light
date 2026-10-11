@@ -3,7 +3,7 @@
  * are requested: availability, activity and out of office from presence, and showAs, start, end, isAllDay and
  * isCancelled from events.
  */
-import { WINDOW_MS, applyUse } from './calendar.js';
+import { applyUse, readingWindow } from './calendar.js';
 import type { CalendarReport, CalendarSource } from './calendar.js';
 import type { CalendarChoice } from './config.js';
 import { SourceError } from './errors.js';
@@ -197,8 +197,7 @@ export class GraphClient implements CalendarSource {
    * reported; the others are read.
    */
   async fetchEvents(now: number): Promise<CalEvent[]> {
-    const from = now - WINDOW_MS;
-    const to = now + WINDOW_MS;
+    const { from, to } = readingWindow(now);
     if (this.calendars.length === 0) {
       return this.calendarView(`${GRAPH}/me/calendarView`, from, to);
     }

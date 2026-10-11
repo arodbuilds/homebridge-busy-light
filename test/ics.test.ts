@@ -193,6 +193,16 @@ test('the review\'s feed reads in under 1 second (SPEC 5.4 item 3, 15 item 25)',
   assert.equal(events.filter((e) => e.end - e.start === 60 * 60_000).length, 100, 'Friday of each weekly series (Wednesday\'s ends as the window starts)');
 });
 
+test('the review\'s feed reads in under 1 second over the 7 day window too (SPEC 5, build 3.3)', () => {
+  const feed = reviewFeed();
+  const started = performance.now();
+  const events = readIcs(feed, now - DAY, now + 7 * DAY, opts);
+  const took = performance.now() - started;
+  assert.ok(took < 1000, `took ${Math.round(took)} ms`);
+  assert.equal(events.filter((e) => e.end - e.start === 30 * 60_000).length, 2400, 'each open daily series on each of the 8 days');
+  assert.equal(events.filter((e) => e.end - e.start === 60 * 60_000).length, 300, 'Friday, Monday and Wednesday of each weekly series');
+});
+
 // Build 3.1's reader, kept as the reference (SPEC 5.4 item 3.6): every series walked from DTSTART in full, with no cap.
 
 function walkInFull(text: string, from: number, to: number): CalEvent[] {

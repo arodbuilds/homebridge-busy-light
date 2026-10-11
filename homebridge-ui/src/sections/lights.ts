@@ -73,6 +73,30 @@ async function search(app: App): Promise<void> {
   app.rerender('lights');
 }
 
+/**
+ * The label a saved bulb is shown by when no search in this visit found it: the name a search in this visit found, else
+ * from build 3.3 the name of the state file's bulb with that serial number (SPEC 11.3 E, A7), else the saved entry as
+ * written. A state file written before 1.0.0 has no serial numbers: there a single bulb's name stands for a single saved
+ * serial, as in build 3.2.
+ */
+function savedLabel(app: App, wanted: string): string {
+  const serial = serialOf(wanted);
+  if (serial && app.ui.lifx.names[serial]) {
+    return app.ui.lifx.names[serial];
+  }
+  if (serial && app.status) {
+    const lights = lightsOf(app.status).filter((l) => l.label);
+    const bySerial = lights.find((l) => l.serial === serial);
+    if (bySerial) {
+      return bySerial.label!;
+    }
+    if (lights.length === 1 && lights[0].serial === undefined && app.config.lifx.bulbs.length === 1) {
+      return lights[0].label!;
+    }
+  }
+  return wanted.trim();
+}
+
 /** The bulbs Test light tests: each address under Advanced, or each ticked bulb (by serial, at the address found). */
 function testTargets(app: App): { body: Record<string, unknown>; labels: string[] } {
   const config = app.config.lifx;
@@ -84,7 +108,8 @@ function testTargets(app: App): { body: Record<string, unknown>; labels: string[
   const bulbs = config.bulbs.map((w) => {
     const bulb = found.find((b) => isChosen(w, b));
     const serial = serialOf(w) ?? bulb?.serial ?? null;
-    return { target: { ...(serial ? { serial } : {}), ...(bulb ? { host: bulb.ip } : {}) }, label: bulb ? bulbName(bulb) : w };
+    // A bulb not found is named as the missing line names it (SPEC 11.3 E, from build 3.3), not by its serial number.
+    return { target: { ...(serial ? { serial } : {}), ...(bulb ? { host: bulb.ip } : {}) }, label: bulb ? bulbName(bulb) : savedLabel(app, w) };
   });
   return { body: { bulbs: bulbs.map((b) => b.target) }, labels: bulbs.map((b) => b.label) };
 }
@@ -139,25 +164,6 @@ function inUse(app: App): HTMLElement[] {
     const label = light.label || host;
     return paragraph(light.answered === false ? LIGHTS.usingBulbSilent(label, host) : LIGHTS.usingBulb(label, host), 'bl-lifx-line bl-lifx-in-use');
   });
-}
-
-/**
- * The label a saved bulb is shown by when it is missing: its name, or for a serial the name an earlier search in this
- * visit found, or the name the state file has for a single bulb.
- */
-function savedLabel(app: App, wanted: string): string {
-  const serial = serialOf(wanted);
-  if (serial && app.ui.lifx.names[serial]) {
-    return app.ui.lifx.names[serial];
-  }
-  if (serial && app.status) {
-    // The state file has names, not serial numbers: a single bulb's name stands for a single saved serial.
-    const lights = lightsOf(app.status).filter((l) => l.label);
-    if (lights.length === 1 && app.config.lifx.bulbs.length === 1) {
-      return lights[0].label!;
-    }
-  }
-  return wanted.trim();
 }
 
 /** One checkbox per bulb found, ticked for each bulb in `lifx.bulbs`. */
@@ -306,10 +312,13 @@ function sensorCanHappen(app: App, key: (typeof SENSOR_KEYS)[number]): boolean {
   return key in STATUS_NAMES ? canHappen(app, key as StatusKey) : true;
 }
 
-/** A sensor's help: Meeting Soon always says what it detects; one that cannot happen says so. */
+/**
+ * A sensor's help: each roll-up says when it is on (from build 3.3, so Busy is told apart from Busy in Teams), Meeting
+ * Soon always says what it detects, and one that cannot happen says so.
+ */
 function sensorHelp(app: App, key: (typeof SENSOR_KEYS)[number]): string | undefined {
-  const lines = [key === 'meetingSoon' ? LIGHTS.meetingSoonHelp : null, sensorCanHappen(app, key) ? null : LIGHTS.nothingReports]
-    .filter((l): l is string => l !== null);
+  const own = key === 'meetingSoon' ? LIGHTS.meetingSoonHelp : key in LIGHTS.sensorHelp ? LIGHTS.sensorHelp[key as keyof typeof LIGHTS.sensorHelp] : null;
+  const lines = [own, sensorCanHappen(app, key) ? null : LIGHTS.nothingReports].filter((l): l is string => l !== null);
   return lines.length ? lines.join(' ') : undefined;
 }
 
@@ -342,6 +351,8 @@ export function renderLights(app: App, container: HTMLElement): void {
     el('div', { class: 'bl-working-switch' }, checkboxField(LIGHTS.workingSwitch, app.config.workingSwitch.enabled, (v) => {
       app.config.workingSwitch.enabled = v;
       app.changed();
-    }, { path: 'workingSwitch.enabled', help: LIGHTS.workingSwitchHelp })),
+    }, { path: 'workingSwitch.enabled', help: LIGHTS.workingSwitchHelp }),
+    // The three switches side by side, and where each one is (SPEC 11.3 E, from build 3.3).
+    paragraph(LIGHTS.switches, 'form-text bl-switches')),
   ));
 }
