@@ -12,7 +12,7 @@ Rules for working in this repository. They apply to every build, every commit an
 
 - The default branch is `latest`. Work on a branch and open one pull request against `latest`. Never push to `latest` directly.
 - One commit per scope item of the build prompt, in order.
-- Before opening the pull request, `npm test` (lint, build, unit tests) is clean on Node 20, 22 and 24 where available, and the pull request description says so.
+- Before opening the pull request, `npm test` (lint, build, unit tests) is clean on Node 20, 22, 24 and 26 where available, and the pull request description says so.
 
 ## Attribution
 

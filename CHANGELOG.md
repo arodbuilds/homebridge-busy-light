@@ -2,6 +2,12 @@
 
 All notable changes to Busy Light are recorded here. Versions follow [semantic versioning](https://semver.org).
 
+## 1.0.1 (2026-10-28)
+
+### Added
+
+- Node.js 26 is supported. The `node` engine is now `^20.18.0 || ^22.10.0 || ^24.0.0 || ^26.0.0`, and CI builds and tests on Node 26.
+
 ## 1.0.0 (2026-10-10)
 
 The first stable release. Busy Light turns a light red when you are busy and green when you are free:

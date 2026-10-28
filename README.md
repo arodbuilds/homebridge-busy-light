@@ -100,7 +100,7 @@ If none of your calendars can be read for 15 minutes, no app is reporting a stat
 
 ## Install
 
-Requirements: Node.js 20, 22 or 24 (20.18 and 22.10 at least), and Homebridge 1.8 or newer (2.x included).
+Requirements: Node.js 20, 22, 24 or 26 (20.18 and 22.10 at least), and Homebridge 1.8 or newer (2.x included).
 
 - **Homebridge UI**: on the Plugins page, search for the exact name `homebridge-busy-light` and click **Install**.
 - **Command line**: `sudo npm install -g homebridge-busy-light` for a global install, or on the Homebridge Raspberry Pi image `sudo hb-service add homebridge-busy-light`

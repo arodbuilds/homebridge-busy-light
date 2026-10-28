@@ -17,7 +17,7 @@ test('package.json follows SPEC section 3', () => {
   assert.deepEqual(pkg.bin, { 'homebridge-busy-light': 'dist/cli.js' });
   assert.equal(pkg.license, 'Apache-2.0');
   assert.equal(pkg.author, 'Alex Rodriguez (https://alex-rodriguez.com)');
-  assert.deepEqual(pkg.engines, { node: '^20.18.0 || ^22.10.0 || ^24.0.0', homebridge: '^1.8.0 || ^2.0.0-beta.0' });
+  assert.deepEqual(pkg.engines, { node: '^20.18.0 || ^22.10.0 || ^24.0.0 || ^26.0.0', homebridge: '^1.8.0 || ^2.0.0-beta.0' });
   assert.deepEqual(pkg.files, [
     'dist', 'homebridge-ui/public', 'homebridge-ui/server.js', 'config.schema.json', 'LICENSE', 'NOTICE', 'README.md', 'CHANGELOG.md', 'SECURITY.md',
   ]);
@@ -43,10 +43,10 @@ test('names and version', () => {
   assert.equal(packageVersion(), pkg.version);
 });
 
-test('version 1.0.0 as SPEC section 3 gives it, with no beta wording where a user reads it (build 3.3)', () => {
+test('version 1.0.1 as SPEC section 3 gives it, with no beta wording where a user reads it (build 3.3, Node 26 in 1.0.1)', () => {
   const spec = fs.readFileSync(path.join(root, 'SPEC.md'), 'utf8');
   assert.equal(pkg.version, /^\| Version \| `([^`]+)`/m.exec(spec)![1]);
-  assert.equal(pkg.version, '1.0.0');
+  assert.equal(pkg.version, '1.0.1');
   assert.equal(pkg.description, /^\| Description \| "([^"]+)" \|$/m.exec(spec)![1]);
   assert.ok(!/beta/i.test(pkg.description));
   const schema = fs.readFileSync(path.join(root, 'config.schema.json'), 'utf8');
